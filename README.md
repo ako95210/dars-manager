@@ -1,11 +1,11 @@
-# Audio Course Cutter
+# Dars Manager (`drsm`)
 
 Application locale pour analyser un cours audio, le découper en parties avec timestamps, puis exporter une ou plusieurs parties choisies en fichier audio indépendant.
 
 Les analyses sont sauvegardées dans le répertoire de travail:
 
 ```text
-/home/ayoub/audio_course_cutter/work/analyses
+/home/ayoub/dev/perso/dars-manager/work/analyses
 ```
 
 ## Lancer
@@ -13,19 +13,19 @@ Les analyses sont sauvegardées dans le répertoire de travail:
 Version desktop Tkinter:
 
 ```bash
-python3 /home/ayoub/audio_course_cutter/course_cutter.py
+python3 /home/ayoub/dev/perso/dars-manager/dars_manager.py
 ```
 
 ou:
 
 ```bash
-/home/ayoub/audio_course_cutter/run_course_cutter.sh
+/home/ayoub/dev/perso/dars-manager/drsm_desktop.sh
 ```
 
 Version web Streamlit:
 
 ```bash
-/home/ayoub/audio_course_cutter/run_streamlit.sh
+/home/ayoub/dev/perso/dars-manager/drsm_streamlit.sh
 ```
 
 Puis ouvre:
@@ -37,8 +37,8 @@ http://localhost:8501
 Si le port `8501` est occupé:
 
 ```bash
-cd /home/ayoub/audio_course_cutter
-streamlit run streamlit_app.py --server.port 8502
+cd /home/ayoub/dev/perso/dars-manager
+streamlit run drsm_streamlit.py --server.port 8502
 ```
 
 ## Diffusion Streamlit Cloud
@@ -47,7 +47,7 @@ Pour publier rapidement:
 
 1. Mets ce dossier dans un dépôt GitHub.
 2. Dans Streamlit Community Cloud, choisis le dépôt.
-3. Indique `streamlit_app.py` comme fichier principal.
+3. Indique `drsm_streamlit.py` comme fichier principal.
 4. Streamlit installera les dépendances depuis `requirements.txt`.
 
 La version Streamlit couvre la V1 diffusable:
@@ -117,4 +117,4 @@ Si le fichier audio original a été déplacé, l'application te demandera de le
 - L'export est en `.wav`, ce qui évite une dépendance à `ffmpeg` installé sur le système.
 - La lecture intégrée utilise GStreamer via Python.
 - La correction ponctuelle fonctionne sur les WAV générés par l'application.
-- Les prises voix sont sauvegardées dans `/home/ayoub/audio_course_cutter/work/recordings`.
+- Les prises voix sont sauvegardées dans `/home/ayoub/dev/perso/dars-manager/work/recordings`.

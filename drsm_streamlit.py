@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from audio_core import (
+from drsm_core import (
     ANALYSIS_DIR,
     APP_TITLE,
     APP_VERSION,

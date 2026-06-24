@@ -18,7 +18,7 @@ from av.audio.resampler import AudioResampler
 from faster_whisper import WhisperModel
 
 
-APP_TITLE = "Audio Course Cutter"
+APP_TITLE = "Dars Manager"
 APP_VERSION = "1.0.0"
 DEFAULT_MODEL = "base"
 MIN_PART_SECONDS = 150
@@ -310,7 +310,7 @@ def analysis_filename(audio_path: Path) -> str:
     except OSError:
         identity = str(audio_path)
     digest = hashlib.sha1(identity.encode("utf-8")).hexdigest()[:12]
-    return f"{safe_name}_{digest}.course_parts.json"
+    return f"{safe_name}_{digest}.drsm_analysis.json"
 
 
 def save_analysis(audio_path: Path, segments: list[TranscriptSegment], parts: list[CoursePart]) -> Path:

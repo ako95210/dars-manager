@@ -53,7 +53,7 @@ except Exception:
     Gst = None
 
 
-APP_TITLE = "Audio Course Cutter"
+APP_TITLE = "Dars Manager"
 APP_VERSION = "1.0.0"
 DEFAULT_MODEL = "base"
 MIN_PART_SECONDS = 150
@@ -604,7 +604,7 @@ def analysis_filename(audio_path: Path) -> str:
     except OSError:
         identity = str(audio_path)
     digest = hashlib.sha1(identity.encode("utf-8")).hexdigest()[:12]
-    return f"{safe_name}_{digest}.course_parts.json"
+    return f"{safe_name}_{digest}.drsm_analysis.json"
 
 
 def load_analysis(path: Path) -> tuple[Path, list[TranscriptSegment], list[CoursePart]]:
@@ -719,7 +719,7 @@ class GstAudioPlayer:
     def __init__(self) -> None:
         if Gst is None:
             raise RuntimeError("GStreamer Python n'est pas disponible.")
-        self.pipeline = Gst.ElementFactory.make("playbin", "course-cutter-player")
+        self.pipeline = Gst.ElementFactory.make("playbin", "drsm-player")
         if self.pipeline is None:
             raise RuntimeError("Impossible de créer le lecteur GStreamer.")
         self.rate = 1.0
@@ -772,7 +772,7 @@ class GstAudioRecorder:
         if Gst is None:
             raise RuntimeError("GStreamer Python n'est pas disponible.")
         self.output_path = output_path
-        self.pipeline = Gst.Pipeline.new("course-cutter-recorder")
+        self.pipeline = Gst.Pipeline.new("drsm-recorder")
         elements = [
             Gst.ElementFactory.make("autoaudiosrc", "mic"),
             Gst.ElementFactory.make("audioconvert", "convert"),
