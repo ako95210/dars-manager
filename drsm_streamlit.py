@@ -50,6 +50,20 @@ st.markdown(
         color: rgba(49, 51, 63, 0.72);
         font-size: 0.92rem;
     }
+    section[data-testid="stSidebar"] div[role="radiogroup"] label {
+        min-height: 2.6rem;
+        padding: 0.35rem 0.2rem;
+    }
+    section[data-testid="stSidebar"] div[role="radiogroup"] label p {
+        font-size: 1.08rem;
+        font-weight: 650;
+    }
+    section[data-testid="stSidebar"] h2 {
+        font-size: 1.18rem;
+    }
+    section[data-testid="stSidebar"] .stButton button {
+        width: 100%;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -107,6 +121,7 @@ st.title(APP_TITLE)
 st.caption(f"Version web Streamlit {APP_VERSION}")
 
 with st.sidebar:
+    st.markdown("### Menu")
     page = st.radio(
         "Navigation",
         ["Analyse", "Export", "Audios générés", "Help"],
