@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+INSTALLER="$ROOT_DIR/install_macos.command"
+
+if [ ! -f "$INSTALLER" ]; then
+  osascript -e 'display dialog "install_macos.command est introuvable. Garde l’application dans le dossier dars-manager." buttons {"OK"} default button "OK" with icon caution'
+  exit 1
+fi
+
+chmod +x "$INSTALLER" || true
+osascript <<EOF
+tell application "Terminal"
+  activate
+  do script "bash " & quoted form of "$INSTALLER"
+end tell
+EOF

@@ -2,13 +2,21 @@
 
 Application locale pour analyser un cours audio, le découper en parties avec timestamps, puis exporter une ou plusieurs parties choisies en fichier audio indépendant.
 
-Les analyses sont sauvegardées dans le répertoire de travail:
+Les analyses sont sauvegardées dans le répertoire de travail local.
+
+Par défaut:
 
 ```text
-/home/ayoub/dev/perso/dars-manager/work/analyses
+./work/analyses
 ```
 
-Ce répertoire peut être remplacé par la variable d'environnement `DRSM_WORK_DIR`, utile pour un déploiement serveur avec volume persistant.
+Sur Mac avec l'installateur simplifié:
+
+```text
+~/Documents/DarsManager/analyses
+```
+
+Ce répertoire peut être remplacé par la variable d'environnement `DRSM_WORK_DIR`.
 
 ## Lancer En Local
 
@@ -16,17 +24,23 @@ Ce répertoire peut être remplacé par la variable d'environnement `DRSM_WORK_D
 
 Pour un utilisateur Mac, le mode recommandé est l'application web locale. Les fichiers restent sur la machine de l'utilisateur.
 
-1. Installe Python 3 depuis `https://www.python.org/downloads/macos/` si Python n'est pas déjà installé.
-2. Télécharge le projet depuis GitHub.
-3. Double-clique sur `drsm_mac.command`.
-4. Ouvre `http://localhost:8501` si le navigateur ne s'ouvre pas tout seul.
+Procédure simplifiée:
+
+1. Télécharge le projet depuis GitHub.
+2. Double-clique sur `Installer Dars Manager.app`.
+3. Si macOS bloque l'ouverture, fais clic droit sur `Installer Dars Manager.app`, puis **Ouvrir**.
+4. Ensuite, lance l'application avec le raccourci `Dars Manager.command` créé sur le Bureau.
+
+Alternative: double-cliquer sur `install_macos.command`.
+
+Si Python 3 manque, l'installateur ouvre la page officielle de téléchargement Python. Il suffit d'installer Python, puis de relancer `install_macos.command`.
 
 Le premier lancement installe les dépendances dans `.venv`. Cela peut prendre plusieurs minutes.
 
-Si macOS refuse d'ouvrir le fichier, fais clic droit sur `drsm_mac.command`, puis **Ouvrir**. Si le fichier n'est pas exécutable après un téléchargement ZIP, lance une fois:
+Mode d'emploi détaillé:
 
-```bash
-chmod +x drsm_mac.command
+```text
+MODE_D_EMPLOI_MAC.md
 ```
 
 Les données locales sont stockées ici:
