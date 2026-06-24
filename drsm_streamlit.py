@@ -155,6 +155,14 @@ with st.sidebar:
     model_name = st.selectbox("Modèle Whisper", ["tiny", "base", "small", "medium"], index=0)
     st.caption("En ligne, commence par `tiny`. Les modèles plus grands peuvent dépasser les ressources gratuites.")
     language = st.text_input("Langue", value="fr")
+    cloud_safe_mode = st.checkbox("Mode cloud sécurisé", value=True)
+    cloud_limit_minutes = st.number_input(
+        "Limite analyse cloud (minutes)",
+        min_value=1,
+        max_value=60,
+        value=10,
+        disabled=not cloud_safe_mode,
+    )
 
     if uploaded_audio is not None:
         if st.button("Utiliser cet audio"):
@@ -211,7 +219,13 @@ if page == "Analyse":
         with col_meta:
             if audio_path.exists():
                 try:
-                    st.metric("Durée", format_time(audio_duration(audio_path)))
+                    current_duration = audio_duration(audio_path)
+                    st.metric("Durée", format_time(current_duration))
+                    if cloud_safe_mode and current_duration > cloud_limit_minutes * 60:
+                        st.warning(
+                            f"Mode cloud: limite {cloud_limit_minutes} min. "
+                            "Cet audio est trop long pour l'analyse en ligne."
+                        )
                 except Exception:
                     st.metric("Durée", "inconnue")
             if st.session_state.analysis_path:
@@ -223,6 +237,29 @@ if page == "Analyse":
         if not audio_path.exists():
             st.error("Le fichier audio est introuvable. Recharge l'audio.")
         else:
+            try:
+                duration = audio_duration(audio_path)
+            except Exception:
+                duration = 0.0
+            size_mb = audio_path.stat().st_size / (1024 * 1024)
+            if cloud_safe_mode and duration > cloud_limit_minutes * 60:
+                st.error(
+                    "Analyse bloquée en mode cloud sécurisé: "
+                    f"audio de {format_time(duration)} pour une limite de {cloud_limit_minutes} min."
+                )
+                st.info(
+                    "Sur Streamlit Cloud gratuit, les longs cours font souvent redémarrer l'app. "
+                    "Utilise la version desktop pour l'audio complet, ou teste en ligne avec un extrait court."
+                )
+                st.stop()
+            if cloud_safe_mode and size_mb > 150:
+                st.error(
+                    "Analyse bloquée en mode cloud sécurisé: "
+                    f"fichier de {size_mb:.0f} Mo pour une limite recommandée de 150 Mo."
+                )
+                st.info("Réduis ou découpe l'audio avant de l'analyser en ligne.")
+                st.stop()
+
             status = st.empty()
             progress_bar = st.progress(0.0)
             progress_text = st.empty()

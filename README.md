@@ -66,6 +66,8 @@ Limite actuelle de la version web: le lecteur avancé, l'enregistrement micro et
 
 Sur Streamlit Cloud, commence avec le modèle Whisper `tiny`. Les modèles `base`, `small` et `medium` peuvent dépasser les ressources gratuites, surtout avec des cours longs.
 
+Le **mode cloud sécurisé** bloque volontairement l'analyse des audios trop longs, par défaut au-delà de 10 minutes. Pour analyser un cours complet d'une heure, utilise plutôt la version desktop locale.
+
 ## Utilisation
 
 1. Clique sur **Choisir audio**.
