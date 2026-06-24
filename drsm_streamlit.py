@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
+import platform
 import re
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -14,9 +17,12 @@ from drsm_core import (
     EXPORTS_DIR,
     UPLOADS_DIR,
     audio_duration,
+    dependency_status,
     export_clips,
     export_title_for,
     format_time,
+    import_av,
+    import_whisper_model_class,
     load_analysis,
     parse_time,
     safe_filename,
@@ -159,8 +165,8 @@ with st.sidebar:
     cloud_limit_minutes = st.number_input(
         "Limite analyse cloud (minutes)",
         min_value=1,
-        max_value=60,
-        value=10,
+        max_value=15,
+        value=3,
         disabled=not cloud_safe_mode,
     )
 
@@ -218,16 +224,23 @@ if page == "Analyse":
                 st.warning("Le chemin audio de l'analyse n'existe pas dans cet environnement.")
         with col_meta:
             if audio_path.exists():
+                size_mb = audio_path.stat().st_size / (1024 * 1024)
+                st.metric("Taille", f"{size_mb:.1f} Mo")
                 try:
-                    current_duration = audio_duration(audio_path)
-                    st.metric("Durée", format_time(current_duration))
-                    if cloud_safe_mode and current_duration > cloud_limit_minutes * 60:
-                        st.warning(
-                            f"Mode cloud: limite {cloud_limit_minutes} min. "
-                            "Cet audio est trop long pour l'analyse en ligne."
-                        )
-                except Exception:
+                    if cloud_safe_mode and size_mb > 50:
+                        st.warning("Mode cloud: fichier trop lourd pour une analyse fiable en ligne.")
+                    else:
+                        current_duration = audio_duration(audio_path)
+                        st.metric("Durée", format_time(current_duration))
+                        if cloud_safe_mode and current_duration > cloud_limit_minutes * 60:
+                            st.warning(
+                                f"Mode cloud: limite {cloud_limit_minutes} min. "
+                                "Cet audio est trop long pour l'analyse en ligne."
+                            )
+                except Exception as exc:
                     st.metric("Durée", "inconnue")
+                    with st.expander("Erreur lecture durée"):
+                        st.exception(exc)
             if st.session_state.analysis_path:
                 st.caption(f"Analyse: `{Path(st.session_state.analysis_path).name}`")
     else:
@@ -237,11 +250,27 @@ if page == "Analyse":
         if not audio_path.exists():
             st.error("Le fichier audio est introuvable. Recharge l'audio.")
         else:
+            model_for_analysis = model_name
+            size_mb = audio_path.stat().st_size / (1024 * 1024)
+            if cloud_safe_mode and model_name != "tiny":
+                st.warning("Mode cloud sécurisé: le modèle `tiny` est utilisé pour éviter un redémarrage serveur.")
+                model_for_analysis = "tiny"
+            if cloud_safe_mode and size_mb > 50:
+                st.error(
+                    "Analyse bloquée en mode cloud sécurisé: "
+                    f"fichier de {size_mb:.0f} Mo pour une limite recommandée de 50 Mo."
+                )
+                st.info("Pour un cours complet, utilise la version desktop locale ou découpe d'abord un extrait court.")
+                st.stop()
             try:
                 duration = audio_duration(audio_path)
-            except Exception:
+            except Exception as exc:
+                if cloud_safe_mode:
+                    st.error("Analyse bloquée: impossible de lire la durée audio en mode cloud sécurisé.")
+                    with st.expander("Détails techniques"):
+                        st.exception(exc)
+                    st.stop()
                 duration = 0.0
-            size_mb = audio_path.stat().st_size / (1024 * 1024)
             if cloud_safe_mode and duration > cloud_limit_minutes * 60:
                 st.error(
                     "Analyse bloquée en mode cloud sécurisé: "
@@ -251,13 +280,6 @@ if page == "Analyse":
                     "Sur Streamlit Cloud gratuit, les longs cours font souvent redémarrer l'app. "
                     "Utilise la version desktop pour l'audio complet, ou teste en ligne avec un extrait court."
                 )
-                st.stop()
-            if cloud_safe_mode and size_mb > 150:
-                st.error(
-                    "Analyse bloquée en mode cloud sécurisé: "
-                    f"fichier de {size_mb:.0f} Mo pour une limite recommandée de 150 Mo."
-                )
-                st.info("Réduis ou découpe l'audio avant de l'analyser en ligne.")
                 st.stop()
 
             status = st.empty()
@@ -270,7 +292,7 @@ if page == "Analyse":
                 update_analysis_progress(message, status, progress_bar, progress_text)
 
             try:
-                segments = transcribe_audio(audio_path, model_name, language.strip(), report)
+                segments = transcribe_audio(audio_path, model_for_analysis, language.strip(), report)
                 progress_bar.progress(1.0)
                 parts = segment_course(segments)
                 analysis_path = save_analysis(audio_path, segments, parts)
@@ -425,6 +447,27 @@ elif page == "Audios générés":
 
 else:
     st.header("Help")
+    st.subheader("Diagnostic")
+    diag = {
+        "Python": sys.version.split()[0],
+        "Plateforme": platform.platform(),
+        "Dossier app": str(Path(__file__).resolve().parent),
+        "Dossier travail": str(Path("work").resolve()),
+        "STREAMLIT_SHARING": os.environ.get("STREAMLIT_SHARING", ""),
+        "STREAMLIT_RUNTIME_ENV": os.environ.get("STREAMLIT_RUNTIME_ENV", ""),
+    }
+    st.json(diag)
+    st.dataframe(pd.DataFrame(dependency_status()), use_container_width=True, hide_index=True)
+    if st.button("Tester imports audio lourds"):
+        try:
+            import_av()
+            import_whisper_model_class()
+            st.success("Imports PyAV et faster-whisper OK.")
+        except Exception as exc:
+            st.error("Un import audio a échoué.")
+            st.exception(exc)
+
+    st.divider()
     readme = Path(__file__).with_name("README.md")
     if readme.exists():
         st.markdown(readme.read_text(encoding="utf-8"))

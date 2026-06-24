@@ -50,6 +50,8 @@ Pour publier rapidement:
 3. Indique `drsm_streamlit.py` comme fichier principal.
 4. Streamlit installera les dépendances depuis `requirements.txt`.
 
+Le fichier `runtime.txt` force Python 3.10, proche de l'environnement local utilisé pour développer l'application. Sans ce fichier, Streamlit Cloud peut choisir une version Python plus récente qui casse certaines dépendances audio.
+
 La version Streamlit couvre la V1 diffusable:
 
 - upload audio;
@@ -64,9 +66,11 @@ La version Streamlit couvre la V1 diffusable:
 
 Limite actuelle de la version web: le lecteur avancé, l'enregistrement micro et la correction par prise voix restent dans la version desktop.
 
-Sur Streamlit Cloud, commence avec le modèle Whisper `tiny`. Les modèles `base`, `small` et `medium` peuvent dépasser les ressources gratuites, surtout avec des cours longs.
+Sur Streamlit Cloud, garde le modèle Whisper `tiny`. Les modèles `base`, `small` et `medium` peuvent dépasser les ressources gratuites, surtout avec des cours longs.
 
-Le **mode cloud sécurisé** bloque volontairement l'analyse des audios trop longs, par défaut au-delà de 10 minutes. Pour analyser un cours complet d'une heure, utilise plutôt la version desktop locale.
+Le **mode cloud sécurisé** bloque volontairement l'analyse des audios trop longs, par défaut au-delà de 3 minutes ou 50 Mo. Pour analyser un cours complet d'une heure, utilise plutôt la version desktop locale.
+
+Si l'app plante encore en ligne, ouvre l'onglet **Help** puis regarde le bloc **Diagnostic**. Il permet de vérifier la version Python et les paquets audio installés sans lancer une transcription.
 
 ## Utilisation
 

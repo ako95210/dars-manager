@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
+import importlib.util
 import json
+import os
 import re
 import time
 import unicodedata
@@ -13,10 +16,6 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-
-import av
-from av.audio.resampler import AudioResampler
-from faster_whisper import WhisperModel
 
 
 APP_TITLE = "Dars Manager"
@@ -29,6 +28,11 @@ WORK_DIR = APP_DIR / "work"
 UPLOADS_DIR = WORK_DIR / "uploads"
 ANALYSIS_DIR = WORK_DIR / "analyses"
 EXPORTS_DIR = WORK_DIR / "exports"
+
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 
 @dataclass
@@ -276,13 +280,56 @@ def segment_course(segments: list[TranscriptSegment]) -> list[CoursePart]:
     return refine_repeated_titles(merged)
 
 
+def dependency_status() -> list[dict[str, str]]:
+    packages = ["streamlit", "pandas", "numpy", "av", "faster-whisper", "ctranslate2"]
+    status = []
+    for package in packages:
+        module = package.replace("-", "_")
+        installed = importlib.util.find_spec(module) is not None
+        try:
+            version = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            version = "non installé"
+        status.append(
+            {
+                "package": package,
+                "module": module,
+                "statut": "ok" if installed else "introuvable",
+                "version": version,
+            }
+        )
+    return status
+
+
+def import_av():
+    try:
+        import av
+    except Exception as exc:
+        raise RuntimeError(
+            "La dépendance PyAV n'est pas disponible. Vérifie l'installation du paquet `av`."
+        ) from exc
+    return av
+
+
+def import_whisper_model_class():
+    try:
+        from faster_whisper import WhisperModel
+    except Exception as exc:
+        raise RuntimeError(
+            "La dépendance faster-whisper n'est pas disponible. "
+            "Sur Streamlit Cloud, vérifie `runtime.txt` et `requirements.txt`."
+        ) from exc
+    return WhisperModel
+
+
 @lru_cache(maxsize=1)
-def load_whisper_model(model_name: str) -> WhisperModel:
+def load_whisper_model(model_name: str):
+    WhisperModel = import_whisper_model_class()
     return WhisperModel(
         model_name,
         device="cpu",
         compute_type="int8",
-        cpu_threads=2,
+        cpu_threads=1,
         num_workers=1,
     )
 
@@ -295,7 +342,7 @@ def transcribe_audio(path: Path, model_name: str, language: str, progress) -> li
         str(path),
         language=language or None,
         vad_filter=True,
-        beam_size=5,
+        beam_size=1,
         word_timestamps=False,
     )
     progress(
@@ -378,6 +425,7 @@ def export_title_for(parts: list[CoursePart]) -> str:
 
 
 def audio_duration(path: Path) -> float:
+    av = import_av()
     container = av.open(str(path))
     try:
         stream = next((item for item in container.streams if item.type == "audio"), None)
@@ -409,6 +457,9 @@ def export_clips(input_path: Path, output_path: Path, ranges: list[tuple[float, 
             raise ValueError("Chaque fin doit être après le début.")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    av = import_av()
+    from av.audio.resampler import AudioResampler
+
     container = av.open(str(input_path))
     audio_stream = next((stream for stream in container.streams if stream.type == "audio"), None)
     if audio_stream is None:

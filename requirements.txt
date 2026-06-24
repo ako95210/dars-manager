@@ -1,5 +1,5 @@
-streamlit
-pandas
-faster-whisper
-av
-numpy
+streamlit>=1.36,<2
+pandas>=2,<3
+faster-whisper>=1.1,<2
+av>=12,<18
+numpy>=1.24,<3
