@@ -9,8 +9,5 @@ services:
       HF_HOME: /data/hf_cache
       XDG_CACHE_HOME: /data/cache
     volumes:
-      - dars-manager-data:/data
+      - ./work:/data
     restart: unless-stopped
-
-volumes:
-  dars-manager-data:

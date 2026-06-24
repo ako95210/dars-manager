@@ -141,9 +141,18 @@ http://localhost:8501
 Dans ce mode:
 
 - le mode cloud sécurisé est désactivé par défaut;
-- les uploads, analyses, exports et caches Whisper sont stockés dans le volume Docker `dars-manager-data`;
+- les uploads, analyses, exports et caches Whisper sont stockés dans le dossier local `./work`;
 - le répertoire de travail dans le conteneur est `/data`;
 - `HF_HOME=/data/hf_cache` évite de retélécharger le modèle Whisper à chaque redémarrage.
+
+Correspondance des dossiers:
+
+```text
+./work/uploads   -> /data/uploads
+./work/analyses  -> /data/analyses
+./work/exports   -> /data/exports
+./work/hf_cache  -> /data/hf_cache
+```
 
 Variables utiles:
 
