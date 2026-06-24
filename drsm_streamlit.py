@@ -16,6 +16,7 @@ from drsm_core import (
     DEFAULT_MODEL,
     EXPORTS_DIR,
     UPLOADS_DIR,
+    WORK_DIR,
     audio_duration,
     dependency_status,
     export_clips,
@@ -83,6 +84,27 @@ def init_state() -> None:
     st.session_state.setdefault("parts", [])
     st.session_state.setdefault("analysis_path", None)
     st.session_state.setdefault("exports", [])
+
+
+def env_flag(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+def env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
 
 
 def save_uploaded_file(uploaded, directory: Path) -> Path:
@@ -161,12 +183,14 @@ with st.sidebar:
     model_name = st.selectbox("Modèle Whisper", ["tiny", "base", "small", "medium"], index=0)
     st.caption("En ligne, commence par `tiny`. Les modèles plus grands peuvent dépasser les ressources gratuites.")
     language = st.text_input("Langue", value="fr")
-    cloud_safe_mode = st.checkbox("Mode cloud sécurisé", value=True)
+    cloud_safe_mode = st.checkbox("Mode cloud sécurisé", value=env_flag("DRSM_CLOUD_SAFE_DEFAULT", True))
+    cloud_limit_default = max(1, min(env_int("DRSM_CLOUD_LIMIT_MINUTES", 3), 60))
+    cloud_file_limit_mb = env_float("DRSM_CLOUD_MAX_UPLOAD_MB", 50.0)
     cloud_limit_minutes = st.number_input(
         "Limite analyse cloud (minutes)",
         min_value=1,
-        max_value=15,
-        value=3,
+        max_value=60,
+        value=cloud_limit_default,
         disabled=not cloud_safe_mode,
     )
 
@@ -227,7 +251,7 @@ if page == "Analyse":
                 size_mb = audio_path.stat().st_size / (1024 * 1024)
                 st.metric("Taille", f"{size_mb:.1f} Mo")
                 try:
-                    if cloud_safe_mode and size_mb > 50:
+                    if cloud_safe_mode and size_mb > cloud_file_limit_mb:
                         st.warning("Mode cloud: fichier trop lourd pour une analyse fiable en ligne.")
                     else:
                         current_duration = audio_duration(audio_path)
@@ -255,10 +279,10 @@ if page == "Analyse":
             if cloud_safe_mode and model_name != "tiny":
                 st.warning("Mode cloud sécurisé: le modèle `tiny` est utilisé pour éviter un redémarrage serveur.")
                 model_for_analysis = "tiny"
-            if cloud_safe_mode and size_mb > 50:
+            if cloud_safe_mode and size_mb > cloud_file_limit_mb:
                 st.error(
                     "Analyse bloquée en mode cloud sécurisé: "
-                    f"fichier de {size_mb:.0f} Mo pour une limite recommandée de 50 Mo."
+                    f"fichier de {size_mb:.0f} Mo pour une limite recommandée de {cloud_file_limit_mb:.0f} Mo."
                 )
                 st.info("Pour un cours complet, utilise la version desktop locale ou découpe d'abord un extrait court.")
                 st.stop()
@@ -452,7 +476,8 @@ else:
         "Python": sys.version.split()[0],
         "Plateforme": platform.platform(),
         "Dossier app": str(Path(__file__).resolve().parent),
-        "Dossier travail": str(Path("work").resolve()),
+        "Dossier travail": str(WORK_DIR),
+        "Mode cloud par défaut": env_flag("DRSM_CLOUD_SAFE_DEFAULT", True),
         "STREAMLIT_SHARING": os.environ.get("STREAMLIT_SHARING", ""),
         "STREAMLIT_RUNTIME_ENV": os.environ.get("STREAMLIT_RUNTIME_ENV", ""),
     }

@@ -8,6 +8,8 @@ Les analyses sont sauvegardées dans le répertoire de travail:
 /home/ayoub/dev/perso/dars-manager/work/analyses
 ```
 
+Ce répertoire peut être remplacé par la variable d'environnement `DRSM_WORK_DIR`, utile pour un déploiement serveur avec volume persistant.
+
 ## Lancer
 
 Version desktop Tkinter:
@@ -71,6 +73,51 @@ Sur Streamlit Cloud, garde le modèle Whisper `tiny`. Les modèles `base`, `smal
 Le **mode cloud sécurisé** bloque volontairement l'analyse des audios trop longs, par défaut au-delà de 3 minutes ou 50 Mo. Pour analyser un cours complet d'une heure, utilise plutôt la version desktop locale.
 
 Si l'app plante encore en ligne, ouvre l'onglet **Help** puis regarde le bloc **Diagnostic**. Il permet de vérifier la version Python et les paquets audio installés sans lancer une transcription.
+
+## Déploiement Réel Avec Docker
+
+Pour analyser de vrais cours longs, la cible recommandée est un serveur avec Docker et un volume persistant. Streamlit Community Cloud est adapté à une démo courte, pas à une transcription Whisper complète.
+
+Lancer localement avec Docker Compose:
+
+```bash
+cd /home/ayoub/dev/perso/dars-manager
+docker compose up --build
+```
+
+Puis ouvre:
+
+```text
+http://localhost:8501
+```
+
+Dans ce mode:
+
+- le mode cloud sécurisé est désactivé par défaut;
+- les uploads, analyses, exports et caches Whisper sont stockés dans le volume Docker `dars-manager-data`;
+- le répertoire de travail dans le conteneur est `/data`;
+- `HF_HOME=/data/hf_cache` évite de retélécharger le modèle Whisper à chaque redémarrage.
+
+Variables utiles:
+
+```bash
+DRSM_WORK_DIR=/data
+DRSM_CLOUD_SAFE_DEFAULT=false
+DRSM_CLOUD_LIMIT_MINUTES=60
+DRSM_CLOUD_MAX_UPLOAD_MB=1024
+```
+
+Sur un VPS, les commandes minimales sont:
+
+```bash
+git clone https://github.com/ako95210/dars-manager.git
+cd dars-manager
+docker compose up -d --build
+```
+
+Ensuite expose le port `8501` derrière un reverse proxy HTTPS, par exemple Nginx ou Caddy.
+
+Pour un service managé, il faut choisir une offre avec disque persistant ou volume attaché. Sans stockage persistant, les analyses et exports peuvent disparaître au redémarrage.
 
 ## Utilisation
 

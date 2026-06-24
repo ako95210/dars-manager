@@ -1,0 +1,16 @@
+services:
+  dars-manager:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      DRSM_WORK_DIR: /data
+      DRSM_CLOUD_SAFE_DEFAULT: "false"
+      HF_HOME: /data/hf_cache
+      XDG_CACHE_HOME: /data/cache
+    volumes:
+      - dars-manager-data:/data
+    restart: unless-stopped
+
+volumes:
+  dars-manager-data:
