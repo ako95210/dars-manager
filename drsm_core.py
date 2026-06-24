@@ -11,6 +11,7 @@ import wave
 from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 
 import av
@@ -275,9 +276,20 @@ def segment_course(segments: list[TranscriptSegment]) -> list[CoursePart]:
     return refine_repeated_titles(merged)
 
 
+@lru_cache(maxsize=1)
+def load_whisper_model(model_name: str) -> WhisperModel:
+    return WhisperModel(
+        model_name,
+        device="cpu",
+        compute_type="int8",
+        cpu_threads=2,
+        num_workers=1,
+    )
+
+
 def transcribe_audio(path: Path, model_name: str, language: str, progress) -> list[TranscriptSegment]:
     progress(f"Chargement du modèle Whisper '{model_name}'...")
-    model = WhisperModel(model_name, device="cpu", compute_type="int8")
+    model = load_whisper_model(model_name)
     progress("Transcription en cours...")
     segments_iter, info = model.transcribe(
         str(path),

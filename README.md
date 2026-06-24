@@ -64,6 +64,8 @@ La version Streamlit couvre la V1 diffusable:
 
 Limite actuelle de la version web: le lecteur avancé, l'enregistrement micro et la correction par prise voix restent dans la version desktop.
 
+Sur Streamlit Cloud, commence avec le modèle Whisper `tiny`. Les modèles `base`, `small` et `medium` peuvent dépasser les ressources gratuites, surtout avec des cours longs.
+
 ## Utilisation
 
 1. Clique sur **Choisir audio**.

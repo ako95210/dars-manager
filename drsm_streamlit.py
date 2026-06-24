@@ -119,6 +119,10 @@ def selected_parts_from_editor(edited: pd.DataFrame):
 def update_analysis_progress(message: str, status, progress_bar, progress_text) -> None:
     status.info(message)
     progress_text.caption(message)
+    if "Chargement du modèle" in message:
+        progress_bar.progress(0.02)
+    elif "Transcription en cours" in message:
+        progress_bar.progress(0.05)
     match = re.search(r"Transcription:\s*([0-9:.]+)\s*/\s*([0-9:.]+)", message)
     if match:
         try:
@@ -148,7 +152,8 @@ with st.sidebar:
         "Uploader un audio",
         type=["aac", "m4a", "mp3", "wav", "ogg", "flac", "opus"],
     )
-    model_name = st.selectbox("Modèle Whisper", ["tiny", "base", "small", "medium"], index=1)
+    model_name = st.selectbox("Modèle Whisper", ["tiny", "base", "small", "medium"], index=0)
+    st.caption("En ligne, commence par `tiny`. Les modèles plus grands peuvent dépasser les ressources gratuites.")
     language = st.text_input("Langue", value="fr")
 
     if uploaded_audio is not None:
@@ -227,14 +232,23 @@ if page == "Analyse":
                 progress_messages.append(message)
                 update_analysis_progress(message, status, progress_bar, progress_text)
 
-            segments = transcribe_audio(audio_path, model_name, language.strip(), report)
-            progress_bar.progress(1.0)
-            parts = segment_course(segments)
-            analysis_path = save_analysis(audio_path, segments, parts)
-            st.session_state.segments = segments
-            st.session_state.parts = parts
-            st.session_state.analysis_path = str(analysis_path)
-            status.success(f"Analyse terminée: {analysis_path.name}")
+            try:
+                segments = transcribe_audio(audio_path, model_name, language.strip(), report)
+                progress_bar.progress(1.0)
+                parts = segment_course(segments)
+                analysis_path = save_analysis(audio_path, segments, parts)
+                st.session_state.segments = segments
+                st.session_state.parts = parts
+                st.session_state.analysis_path = str(analysis_path)
+                status.success(f"Analyse terminée: {analysis_path.name}")
+            except Exception as exc:
+                progress_bar.empty()
+                status.error(
+                    "L'analyse a échoué. Sur Streamlit Cloud, utilise le modèle `tiny` "
+                    "et teste avec un extrait plus court si l'audio est long."
+                )
+                with st.expander("Détails techniques"):
+                    st.exception(exc)
 
     if st.session_state.parts:
         st.subheader("Parties détectées")
