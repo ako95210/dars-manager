@@ -63,19 +63,20 @@ st.markdown(
         color: rgba(49, 51, 63, 0.72);
         font-size: 0.92rem;
     }
-    section[data-testid="stSidebar"] div[role="radiogroup"] label {
-        min-height: 2.6rem;
-        padding: 0.35rem 0.2rem;
-    }
-    section[data-testid="stSidebar"] div[role="radiogroup"] label p {
-        font-size: 1.08rem;
-        font-weight: 650;
-    }
     section[data-testid="stSidebar"] h2 {
         font-size: 1.18rem;
     }
     section[data-testid="stSidebar"] .stButton button {
         width: 100%;
+    }
+    div[data-testid="stTabs"] button[role="tab"] {
+        min-height: 3rem;
+        padding-left: 1.25rem;
+        padding-right: 1.25rem;
+    }
+    div[data-testid="stTabs"] button[role="tab"] p {
+        font-size: 1.05rem;
+        font-weight: 650;
     }
     </style>
     """,
@@ -167,24 +168,6 @@ def progress_fraction_from_message(message: str, fallback: float = 0.0) -> float
         except ValueError:
             pass
     return fallback
-
-
-def update_analysis_progress(message: str, status, progress_bar, progress_text) -> None:
-    status.info(message)
-    progress_text.caption(message)
-    if "Chargement du modèle" in message:
-        progress_bar.progress(0.02)
-    elif "Transcription en cours" in message:
-        progress_bar.progress(0.05)
-    match = re.search(r"Transcription:\s*([0-9:.]+)\s*/\s*([0-9:.]+)", message)
-    if match:
-        try:
-            current = parse_time(match.group(1))
-            total = parse_time(match.group(2))
-            if total > 0:
-                progress_bar.progress(min(current / total, 1.0))
-        except ValueError:
-            pass
 
 
 def analysis_job_active(job) -> bool:
@@ -345,13 +328,6 @@ st.title(APP_TITLE)
 st.caption(f"Version web Streamlit {APP_VERSION}")
 
 with st.sidebar:
-    st.markdown("### Menu")
-    page = st.radio(
-        "Navigation",
-        ["Analyse", "Export", "Audios générés", "Help"],
-        label_visibility="collapsed",
-    )
-    st.divider()
     st.header("Sources")
     uploaded_audio = st.file_uploader(
         "Uploader un audio",
@@ -410,7 +386,9 @@ with st.sidebar:
 
 audio_path = Path(st.session_state.audio_path) if st.session_state.audio_path else None
 
-if page == "Analyse":
+tab_analyse, tab_export, tab_generated, tab_help = st.tabs(["Analyse", "Export", "Audios générés", "Help"])
+
+with tab_analyse:
     st.header("Analyse audio")
     if audio_path:
         col_audio, col_meta = st.columns([2, 1], vertical_alignment="top")
@@ -503,7 +481,7 @@ if page == "Analyse":
         with st.expander("Transcription complète"):
             st.write("\n\n".join(part.transcript for part in st.session_state.parts))
 
-elif page == "Export":
+with tab_export:
     st.header("Sélection et export")
     if not st.session_state.parts:
         st.info("Analyse ou charge d'abord une analyse.")
@@ -574,7 +552,7 @@ elif page == "Export":
             else:
                 st.info("Coche une ou plusieurs parties à exporter.")
 
-elif page == "Audios générés":
+with tab_generated:
     st.header("Audios générés")
     EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
     all_exports = sorted(set([Path(p) for p in st.session_state.exports] + list(EXPORTS_DIR.glob("*.wav"))))
@@ -628,7 +606,7 @@ elif page == "Audios générés":
                     mime="audio/wav",
                 )
 
-else:
+with tab_help:
     st.header("Help")
     st.subheader("Diagnostic")
     diag = {
