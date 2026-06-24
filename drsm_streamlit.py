@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import os
 import platform
+import queue
 import re
 import sys
+import threading
+import time
+import traceback
 from pathlib import Path
 
 import pandas as pd
@@ -17,6 +21,7 @@ from drsm_core import (
     EXPORTS_DIR,
     UPLOADS_DIR,
     WORK_DIR,
+    AnalysisCancelled,
     audio_duration,
     dependency_status,
     export_clips,
@@ -84,6 +89,7 @@ def init_state() -> None:
     st.session_state.setdefault("parts", [])
     st.session_state.setdefault("analysis_path", None)
     st.session_state.setdefault("exports", [])
+    st.session_state.setdefault("analysis_job", None)
 
 
 def env_flag(name: str, default: bool) -> bool:
@@ -144,6 +150,25 @@ def selected_parts_from_editor(edited: pd.DataFrame):
     return selected
 
 
+def progress_fraction_from_message(message: str, fallback: float = 0.0) -> float:
+    if "Chargement du modèle" in message:
+        return max(fallback, 0.02)
+    if "Transcription en cours" in message:
+        return max(fallback, 0.05)
+    if "Découpage" in message:
+        return max(fallback, 0.95)
+    match = re.search(r"Transcription:\s*([0-9:.]+)\s*/\s*([0-9:.]+)", message)
+    if match:
+        try:
+            current = parse_time(match.group(1))
+            total = parse_time(match.group(2))
+            if total > 0:
+                return min(max(current / total, fallback), 1.0)
+        except ValueError:
+            pass
+    return fallback
+
+
 def update_analysis_progress(message: str, status, progress_bar, progress_text) -> None:
     status.info(message)
     progress_text.caption(message)
@@ -162,7 +187,159 @@ def update_analysis_progress(message: str, status, progress_bar, progress_text) 
             pass
 
 
+def analysis_job_active(job) -> bool:
+    if not job:
+        return False
+    return job.get("state") in {"running", "paused", "cancelling"}
+
+
+def analysis_worker(job: dict) -> None:
+    def report(message: str) -> None:
+        job["queue"].put(("progress", message))
+
+    def should_pause() -> bool:
+        return job["pause_event"].is_set()
+
+    def should_cancel() -> bool:
+        return job["cancel_event"].is_set()
+
+    try:
+        segments = transcribe_audio(
+            Path(job["audio_path"]),
+            job["model_name"],
+            job["language"],
+            report,
+            should_pause=should_pause,
+            should_cancel=should_cancel,
+        )
+        if should_cancel():
+            raise AnalysisCancelled("Analyse annulée.")
+        report("Découpage du cours...")
+        parts = segment_course(segments)
+        if should_cancel():
+            raise AnalysisCancelled("Analyse annulée.")
+        analysis_path = save_analysis(Path(job["audio_path"]), segments, parts)
+        job["queue"].put(("done", segments, parts, str(analysis_path)))
+    except AnalysisCancelled:
+        job["queue"].put(("cancelled",))
+    except Exception as exc:
+        job["queue"].put(("error", str(exc), traceback.format_exc()))
+
+
+def start_analysis_job(audio_path: Path, model_name: str, language: str) -> None:
+    job = {
+        "audio_path": str(audio_path),
+        "model_name": model_name,
+        "language": language,
+        "queue": queue.Queue(),
+        "pause_event": threading.Event(),
+        "cancel_event": threading.Event(),
+        "thread": None,
+        "state": "running",
+        "progress": 0.0,
+        "message": "Analyse démarrée.",
+        "error": "",
+        "traceback": "",
+        "started_at": time.time(),
+    }
+    thread = threading.Thread(target=analysis_worker, args=(job,), daemon=True)
+    job["thread"] = thread
+    st.session_state.analysis_job = job
+    thread.start()
+
+
+def consume_analysis_events() -> None:
+    job = st.session_state.analysis_job
+    if not job:
+        return
+    while True:
+        try:
+            event = job["queue"].get_nowait()
+        except queue.Empty:
+            break
+        kind = event[0]
+        if kind == "progress":
+            message = event[1]
+            job["message"] = message
+            job["progress"] = progress_fraction_from_message(message, job.get("progress", 0.0))
+        elif kind == "done":
+            _, segments, parts, analysis_path = event
+            st.session_state.segments = segments
+            st.session_state.parts = parts
+            st.session_state.analysis_path = analysis_path
+            job["state"] = "done"
+            job["progress"] = 1.0
+            job["message"] = f"Analyse terminée: {Path(analysis_path).name}"
+        elif kind == "cancelled":
+            job["state"] = "cancelled"
+            job["message"] = "Analyse annulée."
+        elif kind == "error":
+            _, error, tb = event
+            job["state"] = "error"
+            job["error"] = error
+            job["traceback"] = tb
+            job["message"] = "L'analyse a échoué."
+
+
+def render_analysis_job() -> None:
+    job = st.session_state.analysis_job
+    if not job:
+        return
+
+    state = job.get("state")
+    progress_value = float(job.get("progress", 0.0))
+    st.progress(progress_value)
+    st.caption(job.get("message", ""))
+
+    if state == "running":
+        col_pause, col_cancel = st.columns(2)
+        if col_pause.button("Pause", use_container_width=True):
+            job["pause_event"].set()
+            job["state"] = "paused"
+            job["message"] = "Pause demandée..."
+            st.rerun()
+        if col_cancel.button("Annuler", use_container_width=True):
+            job["cancel_event"].set()
+            job["pause_event"].clear()
+            job["state"] = "cancelling"
+            job["message"] = "Annulation demandée..."
+            st.rerun()
+    elif state == "paused":
+        col_resume, col_cancel = st.columns(2)
+        if col_resume.button("Reprendre", use_container_width=True):
+            job["pause_event"].clear()
+            job["state"] = "running"
+            job["message"] = "Reprise demandée..."
+            st.rerun()
+        if col_cancel.button("Annuler", use_container_width=True):
+            job["cancel_event"].set()
+            job["pause_event"].clear()
+            job["state"] = "cancelling"
+            job["message"] = "Annulation demandée..."
+            st.rerun()
+    elif state == "cancelling":
+        st.warning("Annulation en cours...")
+    elif state == "done":
+        st.success(job.get("message", "Analyse terminée."))
+        if st.button("Masquer le statut d'analyse"):
+            st.session_state.analysis_job = None
+            st.rerun()
+    elif state == "cancelled":
+        st.warning("Analyse annulée. Aucune analyse n'a été sauvegardée.")
+        if st.button("Nouvelle analyse"):
+            st.session_state.analysis_job = None
+            st.rerun()
+    elif state == "error":
+        st.error(job.get("message", "L'analyse a échoué."))
+        with st.expander("Détails techniques"):
+            st.code(job.get("traceback") or job.get("error") or "Erreur inconnue.")
+        if st.button("Réessayer"):
+            st.session_state.analysis_job = None
+            st.rerun()
+
+
 init_state()
+consume_analysis_events()
 
 st.title(APP_TITLE)
 st.caption(f"Version web Streamlit {APP_VERSION}")
@@ -270,7 +447,10 @@ if page == "Analyse":
     else:
         st.info("Charge un fichier audio dans la barre latérale.")
 
-    if audio_path and st.button("Analyser avec Whisper", type="primary"):
+    active_job = analysis_job_active(st.session_state.analysis_job)
+    render_analysis_job()
+
+    if audio_path and not active_job and st.button("Analyser avec Whisper", type="primary"):
         if not audio_path.exists():
             st.error("Le fichier audio est introuvable. Recharge l'audio.")
         else:
@@ -306,32 +486,11 @@ if page == "Analyse":
                 )
                 st.stop()
 
-            status = st.empty()
-            progress_bar = st.progress(0.0)
-            progress_text = st.empty()
-            progress_messages = []
-
-            def report(message: str) -> None:
-                progress_messages.append(message)
-                update_analysis_progress(message, status, progress_bar, progress_text)
-
-            try:
-                segments = transcribe_audio(audio_path, model_for_analysis, language.strip(), report)
-                progress_bar.progress(1.0)
-                parts = segment_course(segments)
-                analysis_path = save_analysis(audio_path, segments, parts)
-                st.session_state.segments = segments
-                st.session_state.parts = parts
-                st.session_state.analysis_path = str(analysis_path)
-                status.success(f"Analyse terminée: {analysis_path.name}")
-            except Exception as exc:
-                progress_bar.empty()
-                status.error(
-                    "L'analyse a échoué. Sur Streamlit Cloud, utilise le modèle `tiny` "
-                    "et teste avec un extrait plus court si l'audio est long."
-                )
-                with st.expander("Détails techniques"):
-                    st.exception(exc)
+            st.session_state.segments = []
+            st.session_state.parts = []
+            st.session_state.analysis_path = None
+            start_analysis_job(audio_path, model_for_analysis, language.strip())
+            st.rerun()
 
     if st.session_state.parts:
         st.subheader("Parties détectées")
@@ -498,3 +657,8 @@ else:
         st.markdown(readme.read_text(encoding="utf-8"))
     else:
         st.write(f"{APP_TITLE} {APP_VERSION}")
+
+job = st.session_state.analysis_job
+if job and job.get("state") in {"running", "cancelling"}:
+    time.sleep(1)
+    st.rerun()

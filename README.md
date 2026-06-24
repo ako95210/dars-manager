@@ -104,6 +104,7 @@ La version Streamlit couvre la V1 diffusable:
 
 - upload audio;
 - analyse Whisper;
+- pause, reprise et annulation d'analyse;
 - chargement d'analyses;
 - affichage des parties;
 - sélection multi-parties;
@@ -212,6 +213,7 @@ Si le fichier audio original a été déplacé, l'application te demandera de le
 ## Notes
 
 - La première analyse peut être lente: Whisper travaille localement sur CPU.
+- Pause, reprise et annulation d'analyse sont prises en compte entre deux segments Whisper. Sur certains passages longs, la réaction peut donc prendre quelques secondes.
 - Le découpage est automatique et heuristique. Les titres combinent un thème général et un angle spécifique pour différencier les parties d'un même sujet.
 - Tu peux modifier les temps avant export.
 - Tu peux modifier le titre proposé avant d'enregistrer l'audio exporté.

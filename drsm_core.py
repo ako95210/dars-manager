@@ -19,7 +19,7 @@ from pathlib import Path
 
 
 APP_TITLE = "Dars Manager"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 DEFAULT_MODEL = "base"
 MIN_PART_SECONDS = 150
 MAX_PART_SECONDS = 600
@@ -50,6 +50,10 @@ class CoursePart:
     title: str
     description: str
     transcript: str
+
+
+class AnalysisCancelled(Exception):
+    """Raised when a user cancels an audio analysis."""
 
 
 TRANSITION_RE = re.compile(
@@ -334,9 +338,32 @@ def load_whisper_model(model_name: str):
     )
 
 
-def transcribe_audio(path: Path, model_name: str, language: str, progress) -> list[TranscriptSegment]:
+def transcribe_audio(
+    path: Path,
+    model_name: str,
+    language: str,
+    progress,
+    should_pause=None,
+    should_cancel=None,
+) -> list[TranscriptSegment]:
+    def wait_if_requested() -> None:
+        if should_cancel and should_cancel():
+            raise AnalysisCancelled("Analyse annulée.")
+        paused_notified = False
+        while should_pause and should_pause():
+            if should_cancel and should_cancel():
+                raise AnalysisCancelled("Analyse annulée.")
+            if not paused_notified:
+                progress("Analyse en pause.")
+                paused_notified = True
+            time.sleep(0.25)
+        if paused_notified:
+            progress("Analyse reprise.")
+
+    wait_if_requested()
     progress(f"Chargement du modèle Whisper '{model_name}'...")
     model = load_whisper_model(model_name)
+    wait_if_requested()
     progress("Transcription en cours...")
     segments_iter, info = model.transcribe(
         str(path),
@@ -345,6 +372,7 @@ def transcribe_audio(path: Path, model_name: str, language: str, progress) -> li
         beam_size=1,
         word_timestamps=False,
     )
+    wait_if_requested()
     progress(
         f"Langue détectée: {info.language} "
         f"({info.language_probability:.0%}), durée {format_time(info.duration)}"
@@ -352,6 +380,7 @@ def transcribe_audio(path: Path, model_name: str, language: str, progress) -> li
     segments: list[TranscriptSegment] = []
     last_update = time.monotonic()
     for segment in segments_iter:
+        wait_if_requested()
         text = segment.text.strip()
         if text:
             segments.append(TranscriptSegment(segment.start, segment.end, text))
