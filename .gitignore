@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+work/uploads/
+work/exports/
+work/recordings/
+work/analyses/
