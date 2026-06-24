@@ -10,7 +10,39 @@ Les analyses sont sauvegardées dans le répertoire de travail:
 
 Ce répertoire peut être remplacé par la variable d'environnement `DRSM_WORK_DIR`, utile pour un déploiement serveur avec volume persistant.
 
-## Lancer
+## Lancer En Local
+
+### macOS
+
+Pour un utilisateur Mac, le mode recommandé est l'application web locale. Les fichiers restent sur la machine de l'utilisateur.
+
+1. Installe Python 3 depuis `https://www.python.org/downloads/macos/` si Python n'est pas déjà installé.
+2. Télécharge le projet depuis GitHub.
+3. Double-clique sur `drsm_mac.command`.
+4. Ouvre `http://localhost:8501` si le navigateur ne s'ouvre pas tout seul.
+
+Le premier lancement installe les dépendances dans `.venv`. Cela peut prendre plusieurs minutes.
+
+Si macOS refuse d'ouvrir le fichier, fais clic droit sur `drsm_mac.command`, puis **Ouvrir**. Si le fichier n'est pas exécutable après un téléchargement ZIP, lance une fois:
+
+```bash
+chmod +x drsm_mac.command
+```
+
+Les données locales sont stockées ici:
+
+```text
+~/Documents/DarsManager
+```
+
+Ce dossier contient:
+
+- `uploads`: audios chargés;
+- `analyses`: analyses sauvegardées;
+- `exports`: audios générés;
+- `hf_cache`: cache des modèles Whisper.
+
+### Linux
 
 Version desktop Tkinter:
 
@@ -27,7 +59,7 @@ ou:
 Version web Streamlit:
 
 ```bash
-/home/ayoub/dev/perso/dars-manager/drsm_streamlit.sh
+/home/ayoub/dev/perso/dars-manager/drsm_local.sh
 ```
 
 Puis ouvre:
