@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -115,6 +116,20 @@ def selected_parts_from_editor(edited: pd.DataFrame):
     return selected
 
 
+def update_analysis_progress(message: str, status, progress_bar, progress_text) -> None:
+    status.info(message)
+    progress_text.caption(message)
+    match = re.search(r"Transcription:\s*([0-9:.]+)\s*/\s*([0-9:.]+)", message)
+    if match:
+        try:
+            current = parse_time(match.group(1))
+            total = parse_time(match.group(2))
+            if total > 0:
+                progress_bar.progress(min(current / total, 1.0))
+        except ValueError:
+            pass
+
+
 init_state()
 
 st.title(APP_TITLE)
@@ -204,13 +219,16 @@ if page == "Analyse":
             st.error("Le fichier audio est introuvable. Recharge l'audio.")
         else:
             status = st.empty()
+            progress_bar = st.progress(0.0)
+            progress_text = st.empty()
             progress_messages = []
 
             def report(message: str) -> None:
                 progress_messages.append(message)
-                status.info(message)
+                update_analysis_progress(message, status, progress_bar, progress_text)
 
             segments = transcribe_audio(audio_path, model_name, language.strip(), report)
+            progress_bar.progress(1.0)
             parts = segment_course(segments)
             analysis_path = save_analysis(audio_path, segments, parts)
             st.session_state.segments = segments
