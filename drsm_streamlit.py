@@ -27,6 +27,34 @@ from drsm_core import (
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
+st.markdown(
+    """
+    <style>
+    .block-container {
+        padding-top: 1.2rem;
+        padding-bottom: 2rem;
+        max-width: 1500px;
+    }
+    div[data-testid="stDataFrame"],
+    div[data-testid="stDataEditor"] {
+        width: 100%;
+    }
+    .drsm-panel {
+        border: 1px solid rgba(49, 51, 63, 0.18);
+        border-radius: 8px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        background: rgba(250, 250, 250, 0.55);
+    }
+    .drsm-muted {
+        color: rgba(49, 51, 63, 0.72);
+        font-size: 0.92rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 def init_state() -> None:
     st.session_state.setdefault("audio_path", None)
@@ -79,6 +107,12 @@ st.title(APP_TITLE)
 st.caption(f"Version web Streamlit {APP_VERSION}")
 
 with st.sidebar:
+    page = st.radio(
+        "Navigation",
+        ["Analyse", "Export", "Audios générés", "Help"],
+        label_visibility="collapsed",
+    )
+    st.divider()
     st.header("Sources")
     uploaded_audio = st.file_uploader(
         "Uploader un audio",
@@ -116,27 +150,37 @@ with st.sidebar:
     st.divider()
     st.header("Exports")
     EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    for export_path in st.session_state.exports:
-        st.write(Path(export_path).name)
+    all_sidebar_exports = sorted(set([Path(p) for p in st.session_state.exports] + list(EXPORTS_DIR.glob("*.wav"))))
+    if all_sidebar_exports:
+        st.caption(f"{len(all_sidebar_exports)} fichier(s) généré(s)")
+        for export_path in all_sidebar_exports[-5:]:
+            st.write(export_path.name)
+    else:
+        st.caption("Aucun export")
 
 audio_path = Path(st.session_state.audio_path) if st.session_state.audio_path else None
 
-tab_analyze, tab_export, tab_generated, tab_help = st.tabs(
-    ["Analyse", "Export", "Audios générés", "Help"]
-)
-
-with tab_analyze:
-    st.subheader("Analyse audio")
+if page == "Analyse":
+    st.header("Analyse audio")
     if audio_path:
-        st.write(f"Audio courant: `{audio_path}`")
-        if audio_path.exists():
-            try:
-                st.audio(str(audio_path))
-                st.caption(f"Durée: {format_time(audio_duration(audio_path))}")
-            except Exception:
-                pass
-        else:
-            st.warning("Le chemin audio de l'analyse n'existe pas dans cet environnement.")
+        col_audio, col_meta = st.columns([2, 1], vertical_alignment="top")
+        with col_audio:
+            st.markdown(f"**Audio courant**  \n`{audio_path}`")
+            if audio_path.exists():
+                try:
+                    st.audio(str(audio_path))
+                except Exception:
+                    pass
+            else:
+                st.warning("Le chemin audio de l'analyse n'existe pas dans cet environnement.")
+        with col_meta:
+            if audio_path.exists():
+                try:
+                    st.metric("Durée", format_time(audio_duration(audio_path)))
+                except Exception:
+                    st.metric("Durée", "inconnue")
+            if st.session_state.analysis_path:
+                st.caption(f"Analyse: `{Path(st.session_state.analysis_path).name}`")
     else:
         st.info("Charge un fichier audio dans la barre latérale.")
 
@@ -165,83 +209,138 @@ with tab_analyze:
             parts_dataframe(st.session_state.parts).drop(columns=["Inclure"]),
             use_container_width=True,
             hide_index=True,
+            height=560,
         )
         with st.expander("Transcription complète"):
             st.write("\n\n".join(part.transcript for part in st.session_state.parts))
 
-with tab_export:
-    st.subheader("Sélection et export")
+elif page == "Export":
+    st.header("Sélection et export")
     if not st.session_state.parts:
         st.info("Analyse ou charge d'abord une analyse.")
     else:
-        edited = st.data_editor(
-            parts_dataframe(st.session_state.parts),
-            use_container_width=True,
-            hide_index=True,
-            disabled=["#", "Début", "Fin", "Titre", "Description"],
-            key="parts_editor",
-        )
+        col_table, col_panel = st.columns([3, 1.25], gap="large")
+        with col_table:
+            st.caption("Coche une ou plusieurs parties. La sélection est exportée dans l'ordre du cours.")
+            edited = st.data_editor(
+                parts_dataframe(st.session_state.parts),
+                use_container_width=True,
+                hide_index=True,
+                disabled=["#", "Début", "Fin", "Titre", "Description"],
+                key="parts_editor",
+                height=650,
+                column_config={
+                    "Inclure": st.column_config.CheckboxColumn("Inclure", width="small"),
+                    "#": st.column_config.NumberColumn("#", width="small"),
+                    "Début": st.column_config.TextColumn("Début", width="small"),
+                    "Fin": st.column_config.TextColumn("Fin", width="small"),
+                    "Titre": st.column_config.TextColumn("Titre", width="large"),
+                    "Description": st.column_config.TextColumn("Description", width="large"),
+                },
+            )
         selected_parts = selected_parts_from_editor(edited)
-        if selected_parts:
-            suggested_title = export_title_for(selected_parts)
-            title = st.text_input("Titre export", value=suggested_title, key=f"export_title_{'_'.join(str(p.index) for p in selected_parts)}")
-            if len(selected_parts) == 1:
-                col1, col2 = st.columns(2)
-                start_value = col1.text_input("Début", value=format_time(selected_parts[0].start))
-                end_value = col2.text_input("Fin", value=format_time(selected_parts[0].end))
-                ranges = [(parse_time(start_value), parse_time(end_value))]
-            else:
-                ranges = [(part.start, part.end) for part in selected_parts]
-                st.caption("Plusieurs parties sélectionnées: elles seront concaténées dans l'ordre du cours.")
-
-            if st.button("Générer WAV", type="primary"):
-                if not audio_path or not audio_path.exists():
-                    st.error("Audio original introuvable.")
+        with col_panel:
+            st.subheader("Export")
+            if selected_parts:
+                total_duration = sum(part.end - part.start for part in selected_parts)
+                st.metric("Parties", len(selected_parts))
+                st.metric("Durée", format_time(total_duration))
+                suggested_title = export_title_for(selected_parts)
+                title = st.text_input(
+                    "Titre export",
+                    value=suggested_title,
+                    key=f"export_title_{'_'.join(str(p.index) for p in selected_parts)}",
+                )
+                with st.expander("Sélection", expanded=True):
+                    for part in selected_parts:
+                        st.write(f"**{part.index}.** {format_time(part.start)}-{format_time(part.end)}")
+                        st.caption(part.title)
+                if len(selected_parts) == 1:
+                    st.caption("Ajuste la plage si besoin.")
+                    start_value = st.text_input("Début", value=format_time(selected_parts[0].start))
+                    end_value = st.text_input("Fin", value=format_time(selected_parts[0].end))
+                    ranges = [(parse_time(start_value), parse_time(end_value))]
                 else:
-                    indexes = "_".join(f"{part.index:02d}" for part in selected_parts[:6])
-                    suffix = "_etc" if len(selected_parts) > 6 else ""
-                    output = EXPORTS_DIR / f"{safe_filename(title)}_{indexes}{suffix}.wav"
-                    export_clips(audio_path, output, ranges)
-                    st.session_state.exports.append(str(output))
-                    st.success(f"Export créé: {output.name}")
-                    st.audio(str(output))
-                    st.download_button(
-                        "Télécharger le WAV",
-                        data=output.read_bytes(),
-                        file_name=output.name,
-                        mime="audio/wav",
-                    )
-        else:
-            st.info("Coche une ou plusieurs parties à exporter.")
+                    ranges = [(part.start, part.end) for part in selected_parts]
+                    st.info("Les parties seront concaténées.")
 
-with tab_generated:
-    st.subheader("Audios générés")
+                if st.button("Générer WAV", type="primary", use_container_width=True):
+                    if not audio_path or not audio_path.exists():
+                        st.error("Audio original introuvable.")
+                    else:
+                        indexes = "_".join(f"{part.index:02d}" for part in selected_parts[:6])
+                        suffix = "_etc" if len(selected_parts) > 6 else ""
+                        output = EXPORTS_DIR / f"{safe_filename(title)}_{indexes}{suffix}.wav"
+                        export_clips(audio_path, output, ranges)
+                        st.session_state.exports.append(str(output))
+                        st.success(f"Export créé: {output.name}")
+                        st.audio(str(output))
+                        st.download_button(
+                            "Télécharger le WAV",
+                            data=output.read_bytes(),
+                            file_name=output.name,
+                            mime="audio/wav",
+                            use_container_width=True,
+                        )
+            else:
+                st.info("Coche une ou plusieurs parties à exporter.")
+
+elif page == "Audios générés":
+    st.header("Audios générés")
     EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
     all_exports = sorted(set([Path(p) for p in st.session_state.exports] + list(EXPORTS_DIR.glob("*.wav"))))
     if not all_exports:
         st.info("Aucun export pour l'instant.")
     else:
-        choice = st.selectbox("Choisir un export", all_exports, format_func=lambda p: p.name)
-        st.audio(str(choice))
-        st.caption(f"Durée: {format_time(audio_duration(choice))}")
-        st.download_button("Télécharger", data=choice.read_bytes(), file_name=choice.name, mime="audio/wav")
+        col_list, col_player = st.columns([1.2, 2], gap="large")
+        with col_list:
+            export_table = pd.DataFrame(
+                [
+                    {
+                        "Nom": path.name,
+                        "Durée": format_time(audio_duration(path)),
+                        "Chemin": str(path),
+                    }
+                    for path in all_exports
+                ]
+            )
+            st.dataframe(export_table[["Nom", "Durée"]], use_container_width=True, hide_index=True, height=420)
+            choice = st.selectbox("Choisir un export", all_exports, format_func=lambda p: p.name)
+        with col_player:
+            duration = audio_duration(choice)
+            st.subheader(choice.name)
+            st.audio(str(choice))
+            meta1, meta2 = st.columns(2)
+            meta1.metric("Durée", format_time(duration))
+            meta2.download_button(
+                "Télécharger",
+                data=choice.read_bytes(),
+                file_name=choice.name,
+                mime="audio/wav",
+                use_container_width=True,
+            )
 
-        st.divider()
-        st.subheader("Créer un sous-audio")
-        col1, col2, col3 = st.columns([1, 1, 2])
-        sub_start = col1.text_input("Début sous-audio", value="00:00")
-        sub_end = col2.text_input("Fin sous-audio", value=format_time(audio_duration(choice)))
-        sub_title = col3.text_input("Titre sous-audio", value=f"{choice.stem}_extrait")
-        if st.button("Exporter sous-audio"):
-            output = EXPORTS_DIR / f"{safe_filename(sub_title)}.wav"
-            export_clips(choice, output, [(parse_time(sub_start), parse_time(sub_end))])
-            st.session_state.exports.append(str(output))
-            st.success(f"Sous-audio créé: {output.name}")
-            st.audio(str(output))
-            st.download_button("Télécharger le sous-audio", data=output.read_bytes(), file_name=output.name, mime="audio/wav")
+            st.divider()
+            st.subheader("Créer un sous-audio")
+            col1, col2, col3 = st.columns([1, 1, 2])
+            sub_start = col1.text_input("Début sous-audio", value="00:00")
+            sub_end = col2.text_input("Fin sous-audio", value=format_time(duration))
+            sub_title = col3.text_input("Titre sous-audio", value=f"{choice.stem}_extrait")
+            if st.button("Exporter sous-audio", type="primary"):
+                output = EXPORTS_DIR / f"{safe_filename(sub_title)}.wav"
+                export_clips(choice, output, [(parse_time(sub_start), parse_time(sub_end))])
+                st.session_state.exports.append(str(output))
+                st.success(f"Sous-audio créé: {output.name}")
+                st.audio(str(output))
+                st.download_button(
+                    "Télécharger le sous-audio",
+                    data=output.read_bytes(),
+                    file_name=output.name,
+                    mime="audio/wav",
+                )
 
-with tab_help:
-    st.subheader("README")
+else:
+    st.header("Help")
     readme = Path(__file__).with_name("README.md")
     if readme.exists():
         st.markdown(readme.read_text(encoding="utf-8"))
