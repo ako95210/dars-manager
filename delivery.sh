@@ -37,6 +37,7 @@ VERSION="$(printf '%s' "$REF" | tr '/' '-')"
 PACKAGE_DIR="${APP_NAME}-${VERSION}"
 OUT_DIR="dist"
 OUT_ZIP="${OUT_DIR}/${APP_NAME}-${VERSION}-${PLATFORM}.zip"
+STAGING_DIR="${OUT_DIR}/.staging-${APP_NAME}-${VERSION}-${PLATFORM}"
 COMMON_FILES=(
   ".streamlit/config.toml"
   "README.md"
@@ -70,6 +71,7 @@ esac
 
 mkdir -p "$OUT_DIR"
 rm -f "$OUT_ZIP"
+rm -rf "$STAGING_DIR"
 
 git archive \
   --format=zip \
@@ -77,6 +79,17 @@ git archive \
   -o "$OUT_ZIP" \
   "$REF" \
   -- "${COMMON_FILES[@]}" "${PLATFORM_FILES[@]}"
+
+if [ "$PLATFORM" = "windows" ]; then
+  mkdir -p "$STAGING_DIR"
+  unzip -q "$OUT_ZIP" -d "$STAGING_DIR"
+  while IFS= read -r -d '' file; do
+    perl -0pi -e 's/\r?\n/\r\n/g' "$file"
+  done < <(find "$STAGING_DIR" -type f \( -name '*.bat' -o -name '*.txt' \) -print0)
+  rm -f "$OUT_ZIP"
+  (cd "$STAGING_DIR" && zip -qr "../$(basename "$OUT_ZIP")" .)
+  rm -rf "$STAGING_DIR"
+fi
 
 echo
 echo "Package ${PLATFORM} cree:"

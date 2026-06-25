@@ -36,18 +36,21 @@ if "%HAS_PYTHON%"=="0" (
   exit /b 1
 )
 
-if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
 if not exist "%DATA_DIR%" mkdir "%DATA_DIR%"
 
 echo Copie de l'application dans:
 echo %INSTALL_DIR%
 echo.
 
-robocopy "%SOURCE_DIR%" "%INSTALL_DIR%" /MIR /XD ".git" ".venv" "__pycache__" "work" "dist" /XF "*.pyc" >nul
-if errorlevel 8 (
-  echo Echec de copie de l'application.
-  pause
-  exit /b 1
+if /I not "%SOURCE_DIR%"=="%INSTALL_DIR%" (
+  if exist "%INSTALL_DIR%" rmdir /S /Q "%INSTALL_DIR%"
+  mkdir "%INSTALL_DIR%"
+  xcopy "%SOURCE_DIR%\*" "%INSTALL_DIR%\" /E /I /Y /Q >nul
+  if errorlevel 1 (
+    echo Echec de copie de l'application.
+    pause
+    exit /b 1
+  )
 )
 
 echo Creation du raccourci sur le Bureau...
