@@ -15,11 +15,11 @@ echo Installation de Dars Manager
 echo ----------------------------
 echo.
 
-where py >nul 2>nul
+py -3 --version >nul 2>nul
 if not errorlevel 1 (
   set "HAS_PYTHON=1"
 ) else (
-  where python >nul 2>nul
+  python --version >nul 2>nul
   if not errorlevel 1 (
     set "HAS_PYTHON=1"
   ) else (
@@ -54,11 +54,9 @@ if /I not "%SOURCE_DIR%"=="%INSTALL_DIR%" (
 )
 
 echo Creation du raccourci sur le Bureau...
-(
-  echo @echo off
-  echo cd /d "%INSTALL_DIR%"
-  echo call drsm_windows.bat
-) > "%LAUNCHER%"
+> "%LAUNCHER%" echo @echo off
+>> "%LAUNCHER%" echo cd /d "%INSTALL_DIR%"
+>> "%LAUNCHER%" echo call drsm_windows.bat
 
 echo Preparation des composants Python...
 call "%INSTALL_DIR%\drsm_windows.bat" --prepare

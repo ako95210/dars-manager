@@ -10,11 +10,11 @@ set "HF_HOME=%DRSM_WORK_DIR%\hf_cache"
 set "XDG_CACHE_HOME=%DRSM_WORK_DIR%\cache"
 set "DRSM_CLOUD_SAFE_DEFAULT=false"
 
-where py >nul 2>nul
+py -3 --version >nul 2>nul
 if not errorlevel 1 (
   set "PY_CMD=py -3"
 ) else (
-  where python >nul 2>nul
+  python --version >nul 2>nul
   if errorlevel 1 (
     echo Python 3 est introuvable.
     echo Une page de telechargement va s'ouvrir.
