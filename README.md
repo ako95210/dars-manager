@@ -56,6 +56,49 @@ Ce dossier contient:
 - `exports`: audios générés;
 - `hf_cache`: cache des modèles Whisper.
 
+### Windows
+
+Pour un utilisateur Windows, le mode recommandé est aussi l'application web locale.
+
+Procédure simplifiée:
+
+1. Télécharge le ZIP Windows.
+2. Dézippe le fichier.
+3. Ouvre `INSTALLATION_WINDOWS.txt`.
+4. Double-clique sur `install_windows.bat`.
+5. Ensuite, lance l'application avec le raccourci `Dars Manager.bat` créé sur le Bureau.
+
+Si Python 3 manque, l'installateur ouvre la page officielle de téléchargement Python. Il suffit d'installer Python, puis de relancer `install_windows.bat`.
+
+Les données locales sont stockées ici:
+
+```text
+Documents\DarsManager
+```
+
+Ce dossier contient les audios chargés, les analyses sauvegardées, les exports et le cache Whisper.
+
+### Packaging Livraison
+
+Créer un ZIP Mac depuis le dernier tag:
+
+```bash
+./delivery.sh mac
+```
+
+Créer un ZIP Windows depuis le dernier tag:
+
+```bash
+./delivery.sh windows
+```
+
+Créer un ZIP depuis un tag précis:
+
+```bash
+./delivery.sh mac v0.2
+./delivery.sh windows v0.3
+```
+
 ### Linux
 
 Version desktop Tkinter:

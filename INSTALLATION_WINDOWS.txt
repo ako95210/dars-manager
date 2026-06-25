@@ -1,0 +1,82 @@
+DARS MANAGER - INSTALLATION SUR WINDOWS
+=======================================
+
+Ce programme reste local sur votre ordinateur.
+Vos audios, analyses et exports ne sont pas envoyes dans le cloud.
+
+
+INSTALLATION
+------------
+
+1. Dezippez le fichier recu.
+
+2. Ouvrez le dossier dars-manager.
+
+3. Double-cliquez sur:
+
+   install_windows.bat
+
+4. Si Windows affiche une alerte de securite:
+
+   - cliquez sur "Informations complementaires";
+   - cliquez sur "Executer quand meme".
+
+5. Une fenetre noire peut s'ouvrir.
+   Laissez l'installation se terminer.
+   Le premier lancement peut prendre plusieurs minutes.
+
+6. Quand l'installation est terminee, un raccourci est cree sur le Bureau:
+
+   Dars Manager.bat
+
+
+UTILISATION
+-----------
+
+Pour lancer Dars Manager:
+
+1. Double-cliquez sur le raccourci du Bureau:
+
+   Dars Manager.bat
+
+2. L'application s'ouvre dans votre navigateur.
+
+3. Si le navigateur ne s'ouvre pas automatiquement, ouvrez cette adresse:
+
+   http://localhost:8501
+
+
+OU SONT LES FICHIERS ?
+----------------------
+
+Vos fichiers sont stockes ici:
+
+   Documents\DarsManager
+
+Ce dossier contient:
+
+   uploads    : audios charges
+   analyses   : analyses sauvegardees
+   exports    : audios generes
+   hf_cache   : cache du modele Whisper
+
+
+SI PYTHON EST DEMANDE
+---------------------
+
+Si l'installateur indique que Python 3 est introuvable:
+
+1. Installez Python depuis la page qui s'ouvre.
+2. Pendant l'installation, cochez si possible "Add python.exe to PATH".
+3. Relancez install_windows.bat.
+
+
+EN CAS DE PROBLEME
+------------------
+
+Si Dars Manager ne demarre pas:
+
+1. Verifiez que Python 3 est installe.
+2. Relancez install_windows.bat.
+3. Gardez la fenetre noire ouverte et envoyez une capture de l'erreur.
+

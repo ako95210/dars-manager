@@ -3,13 +3,30 @@ set -euo pipefail
 
 APP_NAME="dars-manager"
 PLATFORM="mac"
-REF="${1:-}"
+REF=""
 
 cd "$(dirname "$0")"
+
+if [ "${1:-}" = "mac" ] || [ "${1:-}" = "windows" ]; then
+  PLATFORM="$1"
+  REF="${2:-}"
+elif [ -n "${1:-}" ]; then
+  REF="$1"
+fi
 
 if [ -z "$REF" ]; then
   REF="$(git describe --tags --abbrev=0)"
 fi
+
+case "$PLATFORM" in
+  mac|windows)
+    ;;
+  *)
+    echo "Plateforme invalide: $PLATFORM" >&2
+    echo "Usage: ./delivery.sh [mac|windows] [tag-ou-commit]" >&2
+    exit 1
+    ;;
+esac
 
 if ! git rev-parse --verify "$REF^{commit}" >/dev/null 2>&1; then
   echo "Reference Git invalide: $REF" >&2
@@ -31,7 +48,7 @@ git archive \
   "$REF"
 
 echo
-echo "Package Mac cree:"
+echo "Package ${PLATFORM} cree:"
 echo "$OUT_ZIP"
 echo
 echo "Contenu principal:"
