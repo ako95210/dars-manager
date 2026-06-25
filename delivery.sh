@@ -37,6 +37,36 @@ VERSION="$(printf '%s' "$REF" | tr '/' '-')"
 PACKAGE_DIR="${APP_NAME}-${VERSION}"
 OUT_DIR="dist"
 OUT_ZIP="${OUT_DIR}/${APP_NAME}-${VERSION}-${PLATFORM}.zip"
+COMMON_FILES=(
+  ".streamlit/config.toml"
+  "README.md"
+  "dars_manager.py"
+  "drsm_core.py"
+  "drsm_streamlit.py"
+  "requirements.txt"
+  "runtime.txt"
+)
+
+case "$PLATFORM" in
+  mac)
+    PLATFORM_FILES=(
+      "INSTALLATION_MAC.txt"
+      "Installer Dars Manager.app/Contents/Info.plist"
+      "Installer Dars Manager.app/Contents/MacOS/install"
+      "MODE_D_EMPLOI_MAC.md"
+      "drsm_local.sh"
+      "drsm_mac.command"
+      "install_macos.command"
+    )
+    ;;
+  windows)
+    PLATFORM_FILES=(
+      "INSTALLATION_WINDOWS.txt"
+      "drsm_windows.bat"
+      "install_windows.bat"
+    )
+    ;;
+esac
 
 mkdir -p "$OUT_DIR"
 rm -f "$OUT_ZIP"
@@ -45,7 +75,8 @@ git archive \
   --format=zip \
   --prefix="${PACKAGE_DIR}/" \
   -o "$OUT_ZIP" \
-  "$REF"
+  "$REF" \
+  -- "${COMMON_FILES[@]}" "${PLATFORM_FILES[@]}"
 
 echo
 echo "Package ${PLATFORM} cree:"
