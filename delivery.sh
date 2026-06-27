@@ -58,8 +58,6 @@ case "$PLATFORM" in
   mac)
     PLATFORM_FILES=(
       "INSTALLATION_MAC.txt"
-      "Installer Dars Manager.app/Contents/Info.plist"
-      "Installer Dars Manager.app/Contents/MacOS/install"
       "MODE_D_EMPLOI_MAC.md"
       "drsm_local.sh"
       "drsm_mac.command"

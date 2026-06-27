@@ -27,11 +27,16 @@ Pour un utilisateur Mac, le mode recommandé est l'application web locale. Les f
 Procédure simplifiée:
 
 1. Télécharge le projet depuis GitHub.
-2. Double-clique sur `Installer Dars Manager.app`.
-3. Si macOS bloque l'ouverture, fais clic droit sur `Installer Dars Manager.app`, puis **Ouvrir**.
+2. Double-clique sur `install_macos.command`.
+3. Si macOS bloque l'ouverture, fais clic droit sur `install_macos.command`, puis **Ouvrir**.
 4. Ensuite, lance l'application avec le raccourci `Dars Manager.command` créé sur le Bureau.
 
-Alternative: double-cliquer sur `install_macos.command`.
+Fallback Terminal:
+
+```bash
+chmod +x install_macos.command drsm_mac.command
+./install_macos.command
+```
 
 Si Python 3 manque, l'installateur ouvre la page officielle de téléchargement Python. Il suffit d'installer Python, puis de relancer `install_macos.command`.
 

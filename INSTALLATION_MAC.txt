@@ -14,11 +14,11 @@ INSTALLATION
 
 3. Double-cliquez sur:
 
-   Installer Dars Manager.app
+   install_macos.command
 
-4. Si le Mac refuse d'ouvrir l'application:
+4. Si le Mac refuse d'ouvrir le fichier:
 
-   - faites clic droit sur "Installer Dars Manager.app";
+   - faites clic droit sur "install_macos.command";
    - cliquez sur "Ouvrir";
    - confirmez avec "Ouvrir".
 
@@ -68,7 +68,7 @@ SI PYTHON EST DEMANDE
 Si l'installateur indique que Python 3 est introuvable:
 
 1. Installez Python depuis la page qui s'ouvre.
-2. Relancez "Installer Dars Manager.app".
+2. Relancez "install_macos.command".
 
 
 EN CAS DE PROBLEME
@@ -80,3 +80,30 @@ Si le raccourci "Dars Manager.command" ne s'ouvre pas:
 2. Cliquez sur "Ouvrir".
 3. Confirmez avec "Ouvrir".
 
+
+SI LE DOUBLE-CLIC NE MARCHE PAS
+-------------------------------
+
+1. Ouvrez l'application Terminal.
+
+2. Tapez:
+
+   cd 
+
+   Attention: laissez un espace apres cd.
+
+3. Glissez le dossier dars-manager dans la fenetre Terminal.
+
+4. Appuyez sur Entree.
+
+5. Tapez:
+
+   chmod +x install_macos.command drsm_mac.command
+
+6. Appuyez sur Entree.
+
+7. Tapez:
+
+   ./install_macos.command
+
+8. Appuyez sur Entree.
