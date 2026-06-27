@@ -5,6 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     DRSM_WORK_DIR=/data \
     DRSM_CLOUD_SAFE_DEFAULT=false \
+    STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
     HF_HOME=/data/hf_cache \
     XDG_CACHE_HOME=/data/cache \
     OMP_NUM_THREADS=1 \
@@ -28,4 +29,4 @@ RUN mkdir -p /data/uploads /data/analyses /data/exports /data/hf_cache /data/cac
 
 EXPOSE 8501
 
-CMD ["sh", "-c", "streamlit run drsm_streamlit.py --server.address=0.0.0.0 --server.port=${PORT:-8501} --server.headless=true"]
+CMD ["sh", "-c", "streamlit run drsm_streamlit.py --server.address=0.0.0.0 --server.port=${PORT:-8501} --server.headless=true --browser.gatherUsageStats=false"]

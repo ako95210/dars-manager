@@ -9,6 +9,7 @@ if not defined DRSM_WORK_DIR set "DRSM_WORK_DIR=%USERPROFILE%\Documents\DarsMana
 set "HF_HOME=%DRSM_WORK_DIR%\hf_cache"
 set "XDG_CACHE_HOME=%DRSM_WORK_DIR%\cache"
 set "DRSM_CLOUD_SAFE_DEFAULT=false"
+set "STREAMLIT_BROWSER_GATHER_USAGE_STATS=false"
 
 py -3 --version >nul 2>nul
 if not errorlevel 1 (
@@ -64,7 +65,7 @@ echo Adresse: http://localhost:8501
 echo.
 
 start "" "http://localhost:8501"
-"%VENV_DIR%\Scripts\python.exe" -m streamlit run drsm_streamlit.py --server.address=localhost --server.port=8501
+"%VENV_DIR%\Scripts\python.exe" -m streamlit run drsm_streamlit.py --server.address=localhost --server.port=8501 --browser.gatherUsageStats=false
 
 echo.
 echo Dars Manager s'est arrete.

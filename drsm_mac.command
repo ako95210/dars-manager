@@ -38,6 +38,7 @@ export DRSM_WORK_DIR="$WORK_DIR"
 export DRSM_CLOUD_SAFE_DEFAULT=false
 export HF_HOME="$WORK_DIR/hf_cache"
 export XDG_CACHE_HOME="$WORK_DIR/cache"
+export STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
 
 echo
 echo "Dars Manager démarre..."
@@ -49,4 +50,4 @@ if command -v open >/dev/null 2>&1; then
   (sleep 3 && open "http://localhost:8501") >/dev/null 2>&1 &
 fi
 
-"$VENV_DIR/bin/python" -m streamlit run drsm_streamlit.py --server.address=localhost --server.port=8501
+"$VENV_DIR/bin/python" -m streamlit run drsm_streamlit.py --server.address=localhost --server.port=8501 --browser.gatherUsageStats=false

@@ -24,6 +24,7 @@ INSTALLATION
 5. Une fenetre noire peut s'ouvrir.
    Laissez l'installation se terminer.
    Le premier lancement peut prendre plusieurs minutes.
+   Si Streamlit demande un email malgre tout, laissez le champ vide et appuyez sur Entree.
 
 6. Quand l'installation est terminee, un raccourci est cree sur le Bureau:
 
@@ -79,4 +80,3 @@ Si Dars Manager ne demarre pas:
 1. Verifiez que Python 3 est installe.
 2. Relancez install_windows.bat.
 3. Gardez la fenetre noire ouverte et envoyez une capture de l'erreur.
-

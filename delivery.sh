@@ -33,6 +33,12 @@ if ! git rev-parse --verify "$REF^{commit}" >/dev/null 2>&1; then
   exit 1
 fi
 
+if [ "$REF" = "HEAD" ] && ! git diff --quiet; then
+  echo "Le repo contient des modifications non commitées." >&2
+  echo "Committe avant de packager HEAD, ou utilise un tag existant." >&2
+  exit 1
+fi
+
 VERSION="$(printf '%s' "$REF" | tr '/' '-')"
 PACKAGE_DIR="${APP_NAME}-${VERSION}"
 OUT_DIR="dist"

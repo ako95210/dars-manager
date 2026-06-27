@@ -86,6 +86,7 @@ st.markdown(
 
 def init_state() -> None:
     st.session_state.setdefault("audio_path", None)
+    st.session_state.setdefault("uploaded_audio_signature", None)
     st.session_state.setdefault("segments", [])
     st.session_state.setdefault("parts", [])
     st.session_state.setdefault("analysis_path", None)
@@ -121,6 +122,10 @@ def save_uploaded_file(uploaded, directory: Path) -> Path:
         target = directory / f"{target.stem}_{len(list(directory.glob(target.stem + '*')))}{target.suffix}"
     target.write_bytes(uploaded.getbuffer())
     return target
+
+
+def uploaded_signature(uploaded) -> tuple[str, int]:
+    return (uploaded.name, int(uploaded.size or 0))
 
 
 def parts_dataframe(parts) -> pd.DataFrame:
@@ -348,13 +353,18 @@ with st.sidebar:
     )
 
     if uploaded_audio is not None:
-        if st.button("Utiliser cet audio"):
+        signature = uploaded_signature(uploaded_audio)
+        if signature != st.session_state.uploaded_audio_signature:
             path = save_uploaded_file(uploaded_audio, UPLOADS_DIR)
+            st.session_state.uploaded_audio_signature = signature
             st.session_state.audio_path = str(path)
             st.session_state.segments = []
             st.session_state.parts = []
             st.session_state.analysis_path = None
+            st.session_state.analysis_job = None
             st.success(f"Audio chargé: {path.name}")
+        else:
+            st.caption(f"Audio chargé: {uploaded_audio.name}")
 
     st.divider()
     st.header("Analyses")
@@ -608,6 +618,24 @@ with tab_generated:
 
 with tab_help:
     st.header("Help")
+    st.info(
+        f"{APP_TITLE} {APP_VERSION} - application locale. "
+        "Les audios, analyses et exports restent sur cette machine."
+    )
+    st.subheader("Utilisation rapide")
+    st.write(
+        "- Charge un audio dans la barre latérale.\n"
+        "- Va dans l'onglet Analyse et clique sur Analyser avec Whisper.\n"
+        "- Utilise Export pour générer un ou plusieurs extraits.\n"
+        "- Retrouve les fichiers générés dans Audios générés."
+    )
+    st.subheader("Dossiers")
+    st.code(
+        f"Travail: {WORK_DIR}\n"
+        f"Analyses: {ANALYSIS_DIR}\n"
+        f"Exports: {EXPORTS_DIR}",
+        language="text",
+    )
     st.subheader("Diagnostic")
     diag = {
         "Python": sys.version.split()[0],
@@ -632,7 +660,8 @@ with tab_help:
     st.divider()
     readme = Path(__file__).with_name("README.md")
     if readme.exists():
-        st.markdown(readme.read_text(encoding="utf-8"))
+        with st.expander("README complet"):
+            st.markdown(readme.read_text(encoding="utf-8"))
     else:
         st.write(f"{APP_TITLE} {APP_VERSION}")
 

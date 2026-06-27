@@ -19,7 +19,7 @@ from pathlib import Path
 
 
 APP_TITLE = "Dars Manager"
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 DEFAULT_MODEL = "base"
 MIN_PART_SECONDS = 150
 MAX_PART_SECONDS = 600

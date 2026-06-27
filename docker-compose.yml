@@ -6,6 +6,7 @@ services:
     environment:
       DRSM_WORK_DIR: /data
       DRSM_CLOUD_SAFE_DEFAULT: "false"
+      STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
       HF_HOME: /data/hf_cache
       XDG_CACHE_HOME: /data/cache
     volumes:
