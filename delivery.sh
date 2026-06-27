@@ -58,6 +58,7 @@ case "$PLATFORM" in
   mac)
     PLATFORM_FILES=(
       "INSTALLATION_MAC.txt"
+      "INSTALLATION_MAC.html"
       "MODE_D_EMPLOI_MAC.md"
       "drsm_local.sh"
       "drsm_mac.command"

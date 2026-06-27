@@ -12,11 +12,17 @@ INSTALLATION
 
 2. Ouvrez le dossier dars-manager.
 
-3. Double-cliquez sur:
+3. Vous pouvez d'abord ouvrir:
+
+   INSTALLATION_MAC.html
+
+   Ce fichier affiche les memes instructions dans le navigateur avec une commande facile a copier.
+
+4. Double-cliquez sur:
 
    install_macos.command
 
-4. Si le Mac refuse d'ouvrir le fichier avec le message:
+5. Si le Mac refuse d'ouvrir le fichier avec le message:
 
    "install_macos.command est endommage et ne peut pas etre ouvert"
 
@@ -27,17 +33,17 @@ INSTALLATION
 
    SI LE MAC DIT QUE LE FICHIER EST ENDOMMAGE
 
-5. Si le Mac affiche seulement une alerte de securite:
+6. Si le Mac affiche seulement une alerte de securite:
 
    - faites clic droit sur "install_macos.command";
    - cliquez sur "Ouvrir";
    - confirmez avec "Ouvrir".
 
-6. Une fenetre Terminal peut s'ouvrir.
+7. Une fenetre Terminal peut s'ouvrir.
    Laissez l'installation se terminer.
    Le premier lancement peut prendre plusieurs minutes.
 
-7. Quand l'installation est terminee, un raccourci est cree sur le Bureau:
+8. Quand l'installation est terminee, un raccourci est cree sur le Bureau:
 
    Dars Manager.command
 
@@ -49,11 +55,11 @@ SI LE MAC DIT QUE LE FICHIER EST ENDOMMAGE
 
 2. Copiez-collez cette commande:
 
-   cd ~/Downloads/dars-manager-v0.8 && xattr -dr com.apple.quarantine . && chmod +x install_macos.command drsm_mac.command && ./install_macos.command
+   cd ~/Downloads/dars-manager-v0.9 && xattr -dr com.apple.quarantine . && chmod +x install_macos.command drsm_mac.command && ./install_macos.command
 
 3. Appuyez sur Entree.
 
-Si le dossier n'est pas dans Downloads ou ne s'appelle pas dars-manager-v0.8:
+Si le dossier n'est pas dans Downloads ou ne s'appelle pas dars-manager-v0.9:
 
 1. Tapez:
 

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Installation Dars Manager sur Mac</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      background: #f6f6f4;
+      color: #1f2933;
+      line-height: 1.5;
+    }
+    main {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 36px 24px 64px;
+    }
+    h1 {
+      font-size: 32px;
+      margin: 0 0 8px;
+    }
+    h2 {
+      margin-top: 32px;
+      font-size: 22px;
+    }
+    .box {
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 18px;
+      margin: 18px 0;
+    }
+    .warn {
+      border-color: #e5b454;
+      background: #fff8e6;
+    }
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    pre {
+      white-space: pre-wrap;
+      background: #111827;
+      color: white;
+      padding: 16px;
+      border-radius: 8px;
+      overflow: auto;
+    }
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 8px;
+      padding: 12px 16px;
+      background: #166534;
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    ol {
+      padding-left: 24px;
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Dars Manager - Installation sur Mac</h1>
+  <p>Les audios, analyses et exports restent localement sur votre Mac.</p>
+
+  <div class="box">
+    <h2>Installation normale</h2>
+    <ol>
+      <li>Dezippez le fichier recu.</li>
+      <li>Ouvrez le dossier <code>dars-manager</code>.</li>
+      <li>Double-cliquez sur <code>install_macos.command</code>.</li>
+      <li>Si macOS affiche une alerte simple, faites clic droit sur le fichier, puis <strong>Ouvrir</strong>.</li>
+    </ol>
+  </div>
+
+  <div class="box warn">
+    <h2>Si macOS dit que le fichier est endommage</h2>
+    <p>Ne cliquez pas sur <strong>Placer dans la corbeille</strong>. Cliquez sur <strong>Annuler</strong>.</p>
+    <p>Ensuite:</p>
+    <ol>
+      <li>Ouvrez l'application <strong>Terminal</strong>.</li>
+      <li>Copiez-collez la commande ci-dessous.</li>
+      <li>Appuyez sur Entree.</li>
+    </ol>
+    <pre id="cmd">cd ~/Downloads/dars-manager-v0.9 && xattr -dr com.apple.quarantine . && chmod +x install_macos.command drsm_mac.command && ./install_macos.command</pre>
+    <button type="button" onclick="copyCommand()">Copier la commande</button>
+    <p id="copied" aria-live="polite"></p>
+  </div>
+
+  <div class="box">
+    <h2>Si le dossier n'est pas dans Downloads</h2>
+    <ol>
+      <li>Ouvrez Terminal.</li>
+      <li>Tapez <code>cd </code> avec un espace apres <code>cd</code>.</li>
+      <li>Glissez le dossier <code>dars-manager</code> dans Terminal.</li>
+      <li>Appuyez sur Entree.</li>
+      <li>Copiez-collez cette commande:</li>
+    </ol>
+    <pre>xattr -dr com.apple.quarantine . && chmod +x install_macos.command drsm_mac.command && ./install_macos.command</pre>
+  </div>
+
+  <div class="box">
+    <h2>Apres installation</h2>
+    <p>Un raccourci est cree sur le Bureau:</p>
+    <pre>Dars Manager.command</pre>
+    <p>Les fichiers sont stockes dans:</p>
+    <pre>Documents/DarsManager</pre>
+  </div>
+</main>
+<script>
+function copyCommand() {
+  const text = document.getElementById("cmd").textContent;
+  navigator.clipboard.writeText(text).then(function () {
+    document.getElementById("copied").textContent = "Commande copiee.";
+  }, function () {
+    document.getElementById("copied").textContent = "Copie impossible. Selectionnez la commande manuellement.";
+  });
+}
+</script>
+</body>
+</html>
