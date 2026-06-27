@@ -27,19 +27,19 @@ Pour un utilisateur Mac, le mode recommandé est l'application web locale. Les f
 Le package le plus confortable est un `.pkg` construit sur macOS:
 
 ```bash
-./build_macos_pkg.sh 1.3
+./build_macos_pkg.sh 1.4
 ```
 
 Pour creer directement un zip de livraison contenant le `.pkg` et une notice simple:
 
 ```bash
-./package_macos_delivery.sh 1.3
+./package_macos_delivery.sh 1.4
 ```
 
 Le fichier a transmettre a l'utilisateur sera cree dans `dist/`, par exemple:
 
 ```text
-dist/dars-manager-v1.3-mac-livraison.zip
+dist/dars-manager-v1.4-mac-livraison.zip
 ```
 
 Le package installe:
@@ -51,7 +51,7 @@ Le package installe:
 Si tu as un certificat Apple Developer ID Installer, tu peux signer:
 
 ```bash
-MACOS_INSTALLER_CERT='Developer ID Installer: ...' ./build_macos_pkg.sh 1.3
+MACOS_INSTALLER_CERT='Developer ID Installer: ...' ./build_macos_pkg.sh 1.4
 ```
 
 Avec les variables Apple de notarisation, le script peut aussi soumettre et stapler le package.

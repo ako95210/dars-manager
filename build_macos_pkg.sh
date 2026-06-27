@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_NAME="DarsManager"
 IDENTIFIER="local.darsmanager.app"
-VERSION="${1:-1.3}"
+VERSION="${1:-1.4}"
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$ROOT_DIR/dist/macos-pkg-build"
 PAYLOAD_DIR="$BUILD_DIR/payload"
@@ -20,7 +20,18 @@ if ! command -v pkgbuild >/dev/null 2>&1; then
   exit 1
 fi
 
-rm -rf "$BUILD_DIR" "$OUT_PKG"
+mkdir -p "$ROOT_DIR/dist"
+
+if [ -e "$BUILD_DIR" ]; then
+  echo "Suppression de l'ancien dossier de build: $BUILD_DIR"
+  rm -rf "$BUILD_DIR"
+fi
+
+if [ -e "$OUT_PKG" ]; then
+  echo "Suppression de l'ancien package: $OUT_PKG"
+  rm -f "$OUT_PKG"
+fi
+
 mkdir -p "$APP_DIR" "$SCRIPTS_DIR" "$LAUNCHER_MACOS"
 
 copy_file() {
