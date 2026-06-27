@@ -54,6 +54,9 @@ Si le raccourci du Bureau ne s'ouvre pas, fais clic droit dessus, puis clique su
 Si le double-clic ne marche pas, ouvre Terminal dans le dossier `dars-manager`, puis lance:
 
 ```bash
+xattr -dr com.apple.quarantine .
 chmod +x install_macos.command drsm_mac.command
 ./install_macos.command
 ```
+
+Si macOS dit que `install_macos.command` est endommage, clique sur **Annuler**, puis utilise la commande Terminal ci-dessus.

@@ -34,9 +34,12 @@ Procédure simplifiée:
 Fallback Terminal:
 
 ```bash
+xattr -dr com.apple.quarantine .
 chmod +x install_macos.command drsm_mac.command
 ./install_macos.command
 ```
+
+Si macOS dit que `install_macos.command` est endommagé, ne le mets pas à la corbeille: enlève la quarantaine avec la commande `xattr` ci-dessus.
 
 Si Python 3 manque, l'installateur ouvre la page officielle de téléchargement Python. Il suffit d'installer Python, puis de relancer `install_macos.command`.
 
