@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_NAME="DarsManager"
 IDENTIFIER="local.darsmanager.app"
-VERSION="${1:-1.2}"
+VERSION="${1:-1.3}"
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$ROOT_DIR/dist/macos-pkg-build"
 PAYLOAD_DIR="$BUILD_DIR/payload"
