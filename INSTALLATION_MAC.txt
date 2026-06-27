@@ -5,8 +5,28 @@ Ce programme reste local sur votre Mac.
 Vos audios, analyses et exports ne sont pas envoyes dans le cloud.
 
 
+SI VOUS AVEZ UN FICHIER .PKG
+----------------------------
+
+1. Double-cliquez sur:
+
+   dars-manager-vX.Y-mac.pkg
+
+2. Suivez l'assistant d'installation.
+
+3. Apres installation, ouvrez:
+
+   Applications > Dars Manager
+
+ou utilisez le raccourci cree sur le Bureau:
+
+   Dars Manager.command
+
+
 INSTALLATION
 ------------
+
+Cette section concerne seulement le ZIP, si vous n'avez pas de fichier .pkg.
 
 1. Dezippez le fichier recu.
 

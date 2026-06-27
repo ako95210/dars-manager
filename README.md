@@ -24,6 +24,26 @@ Ce répertoire peut être remplacé par la variable d'environnement `DRSM_WORK_D
 
 Pour un utilisateur Mac, le mode recommandé est l'application web locale. Les fichiers restent sur la machine de l'utilisateur.
 
+Le package le plus confortable est un `.pkg` construit sur macOS:
+
+```bash
+./build_macos_pkg.sh 0.9
+```
+
+Le package installe:
+
+- `/Applications/DarsManager`: fichiers de l'application;
+- `/Applications/Dars Manager.app`: lanceur utilisateur;
+- `Dars Manager.command` sur le Bureau.
+
+Si tu as un certificat Apple Developer ID Installer, tu peux signer:
+
+```bash
+MACOS_INSTALLER_CERT='Developer ID Installer: ...' ./build_macos_pkg.sh 0.9
+```
+
+Avec les variables Apple de notarisation, le script peut aussi soumettre et stapler le package.
+
 Procédure simplifiée:
 
 1. Télécharge le projet depuis GitHub.
