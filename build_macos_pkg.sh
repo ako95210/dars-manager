@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_NAME="DarsManager"
 IDENTIFIER="local.darsmanager.app"
-VERSION="${1:-0.9}"
+VERSION="${1:-1.2}"
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$ROOT_DIR/dist/macos-pkg-build"
 PAYLOAD_DIR="$BUILD_DIR/payload"
@@ -84,6 +84,15 @@ EOF
 
 chmod +x "$LAUNCHER_MACOS/launch"
 
+cat > "$SCRIPTS_DIR/preinstall" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+rm -rf "/Applications/DarsManager" "/Applications/Dars Manager.app"
+
+exit 0
+EOF
+
 cat > "$SCRIPTS_DIR/postinstall" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -93,8 +102,14 @@ CONSOLE_USER="$(stat -f "%Su" /dev/console || true)"
 
 chmod +x "$APP_DIR/drsm_mac.command" "$APP_DIR/install_macos.command" "$APP_DIR/drsm_local.sh" || true
 chmod +x "/Applications/Dars Manager.app/Contents/MacOS/launch" 2>/dev/null || true
+rm -rf "$APP_DIR/.venv" 2>/dev/null || true
 xattr -dr com.apple.quarantine "$APP_DIR" 2>/dev/null || true
 xattr -dr com.apple.quarantine "/Applications/Dars Manager.app" 2>/dev/null || true
+
+if grep -q 'VENV_DIR="$APP_DIR/.venv"' "$APP_DIR/drsm_mac.command" 2>/dev/null; then
+  echo "Ancien lanceur detecte apres installation." >&2
+  exit 1
+fi
 
 if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
   USER_HOME="$(dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
@@ -120,7 +135,7 @@ fi
 exit 0
 EOF
 
-chmod +x "$SCRIPTS_DIR/postinstall"
+chmod +x "$SCRIPTS_DIR/preinstall" "$SCRIPTS_DIR/postinstall"
 
 pkgbuild \
   --root "$PAYLOAD_DIR" \
