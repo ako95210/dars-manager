@@ -14,7 +14,7 @@ if [ -z "$VERSION" ]; then
   if command -v git >/dev/null 2>&1 && git -C "$ROOT_DIR" describe --tags --abbrev=0 >/dev/null 2>&1; then
     VERSION="$(git -C "$ROOT_DIR" describe --tags --abbrev=0)"
   else
-    VERSION="v1.4"
+    VERSION="v1.5"
   fi
 fi
 
