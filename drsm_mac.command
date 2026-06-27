@@ -2,7 +2,8 @@
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
-VENV_DIR="$APP_DIR/.venv"
+STATE_DIR="${DRSM_STATE_DIR:-$HOME/Library/Application Support/DarsManager}"
+VENV_DIR="$STATE_DIR/.venv"
 WORK_DIR="${DRSM_WORK_DIR:-$HOME/Documents/DarsManager}"
 STAMP_FILE="$VENV_DIR/.drsm_requirements.sha256"
 
@@ -15,7 +16,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-mkdir -p "$WORK_DIR"
+mkdir -p "$STATE_DIR" "$WORK_DIR"
 
 if [ ! -d "$VENV_DIR" ]; then
   python3 -m venv "$VENV_DIR"

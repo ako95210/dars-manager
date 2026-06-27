@@ -128,6 +128,10 @@ Ce dossier contient:
    exports    : audios generes
    hf_cache   : cache du modele Whisper
 
+Les composants Python de l'application sont stockes ici:
+
+   Bibliotheque/Application Support/DarsManager
+
 
 SI PYTHON EST DEMANDE
 ---------------------

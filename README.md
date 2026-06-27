@@ -77,6 +77,12 @@ Les données locales sont stockées ici:
 ~/Documents/DarsManager
 ```
 
+L'environnement Python local est stocké ici:
+
+```text
+~/Library/Application Support/DarsManager/.venv
+```
+
 Ce dossier contient:
 
 - `uploads`: audios chargés;

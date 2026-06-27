@@ -99,6 +99,11 @@ xattr -dr com.apple.quarantine "/Applications/Dars Manager.app" 2>/dev/null || t
 if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
   USER_HOME="$(dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
   if [ -n "$USER_HOME" ] && [ -d "$USER_HOME/Desktop" ]; then
+    USER_STATE="$USER_HOME/Library/Application Support/DarsManager"
+    USER_DATA="$USER_HOME/Documents/DarsManager"
+    mkdir -p "$USER_STATE" "$USER_DATA"
+    chown -R "$CONSOLE_USER" "$USER_STATE" "$USER_DATA" || true
+
     LAUNCHER="$USER_HOME/Desktop/Dars Manager.command"
     cat > "$LAUNCHER" <<LAUNCHER_EOF
 #!/usr/bin/env bash
