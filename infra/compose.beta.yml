@@ -1,0 +1,54 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    environment:
+      DARSM_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DARSM_REDIS_URL: redis://redis:6379/0
+      DARSM_COOKIE_SECURE: ${DARSM_COOKIE_SECURE:-false}
+      DARSM_WHISPER_CPU_THREADS: ${DARSM_WHISPER_CPU_THREADS:-4}
+      DARSM_JOB_TTL_SECONDS: ${DARSM_JOB_TTL_SECONDS:-7200}
+      DARSM_MAX_UPLOAD_BYTES: ${DARSM_MAX_UPLOAD_BYTES:-524288000}
+      DARSM_FRONTEND_ORIGIN: ${DARSM_FRONTEND_ORIGIN:-http://localhost:5173}
+    ports:
+      - "8000:8000"
+    tmpfs:
+      - /workspaces:size=4g,mode=0700
+    volumes:
+      - model-cache:/models
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  model-cache:

@@ -7,3 +7,8 @@ work/uploads/
 work/exports/
 work/recordings/
 work/analyses/
+.env
+*.db
+node_modules/
+frontend/dist/
+*.tsbuildinfo

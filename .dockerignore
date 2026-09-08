@@ -5,3 +5,5 @@ __pycache__
 .venv
 venv
 work
+node_modules
+frontend/dist
