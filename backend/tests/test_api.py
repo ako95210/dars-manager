@@ -15,7 +15,7 @@ os.environ["DARSM_DATABASE_URL"] = f"sqlite+pysqlite:///{TEST_DATABASE}"
 os.environ["DARSM_COOKIE_SECURE"] = "false"
 
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from backend.app.database import SessionLocal, engine, init_database
 from backend.app.main import app
@@ -54,6 +54,11 @@ class ApiTests(unittest.TestCase):
     def login(self, client: TestClient, email: str, password: str) -> None:
         response = client.post("/api/auth/login", json={"email": email, "password": password})
         self.assertEqual(response.status_code, 200, response.text)
+
+    def test_database_is_migrated(self) -> None:
+        with SessionLocal() as db:
+            revision = db.scalar(text("SELECT version_num FROM alembic_version"))
+        self.assertEqual(revision, "20260908_0001")
 
     def test_authentication_and_logout(self) -> None:
         with TestClient(app) as client:

@@ -26,12 +26,18 @@ def create_user(email: str, display_name: str, password: str) -> None:
         print(f"Compte créé: {user.email} ({user.id})")
 
 
+def migrate() -> None:
+    init_database()
+    print("Base de données migrée.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Dars Manager administration")
     subparsers = parser.add_subparsers(dest="command", required=True)
     create = subparsers.add_parser("create-user")
     create.add_argument("email")
     create.add_argument("--name", required=True)
+    subparsers.add_parser("migrate")
     args = parser.parse_args()
 
     if args.command == "create-user":
@@ -40,6 +46,8 @@ def main() -> None:
         if password != confirmation:
             raise SystemExit("Les mots de passe ne correspondent pas")
         create_user(args.email, args.name, password)
+    elif args.command == "migrate":
+        migrate()
 
 
 if __name__ == "__main__":

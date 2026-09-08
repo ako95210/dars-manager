@@ -63,9 +63,17 @@ de couverture et la vidéo statique.
 
 ### Prochain lot
 
-1. migrations Alembic ;
+1. ~~migrations Alembic~~ — migration initiale versionnée et reprise des bases
+   créées par la fondation précédente ;
 2. état temporaire des jobs dans Redis ;
 3. persistance des métadonnées `JobRecord` et `Artifact` ;
 4. limitation globale de la concurrence ;
 5. édition des segments et personnalisation de la couverture ;
 6. reverse proxy HTTPS.
+
+La migration est appliquée automatiquement au démarrage de l'API. Elle peut
+aussi être lancée explicitement :
+
+```bash
+python backend/manage.py migrate
+```

@@ -25,11 +25,13 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends fonts-dejavu-core libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt backend/requirements.txt ./
+COPY requirements.txt ./requirements.txt
+COPY backend/requirements.txt ./backend/requirements.txt
 RUN python -m pip install --upgrade pip \
     && python -m pip install -r requirements.txt -r backend/requirements.txt
 
 COPY drsm_core.py ./drsm_core.py
+COPY alembic.ini ./alembic.ini
 COPY backend ./backend
 COPY --from=frontend-build /web/dist ./frontend/dist
 

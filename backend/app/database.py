@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import create_engine, event
+from sqlalchemy import inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -16,6 +20,8 @@ class Base(DeclarativeBase):
 engine = create_engine(settings.database_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
+INITIAL_REVISION = "20260908_0001"
+
 
 if settings.database_url.startswith("sqlite"):
     @event.listens_for(Engine, "connect")
@@ -25,10 +31,35 @@ if settings.database_url.startswith("sqlite"):
         cursor.close()
 
 
+def _alembic_config() -> Config:
+    project_root = Path(__file__).resolve().parents[2]
+    config = Config(str(project_root / "alembic.ini"))
+    config.set_main_option(
+        "script_location",
+        str(project_root / "backend" / "migrations"),
+    )
+    return config
+
+
 def init_database() -> None:
     from . import models  # noqa: F401
 
-    Base.metadata.create_all(engine)
+    config = _alembic_config()
+    with engine.begin() as connection:
+        config.attributes["connection"] = connection
+        tables = set(inspect(connection).get_table_names())
+        managed_tables = set(Base.metadata.tables)
+
+        # The first web foundation used create_all(). Mark that exact schema as
+        # the initial revision before applying later migrations.
+        if (
+            "alembic_version" not in tables
+            and managed_tables
+            and managed_tables.issubset(tables)
+        ):
+            command.stamp(config, INITIAL_REVISION)
+
+        command.upgrade(config, "head")
 
 
 def get_db() -> Iterator[Session]:

@@ -6,6 +6,15 @@ static-video pipeline before the production UI is built.
 The default workspace is `/dev/shm/dars-manager-beta`. It must remain temporary
 and must not be backed up.
 
+## Database migrations
+
+The API applies Alembic migrations automatically at startup. They can also be
+run explicitly before an administrative operation:
+
+```bash
+python backend/manage.py migrate
+```
+
 ## Run the API
 
 ```bash
