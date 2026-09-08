@@ -326,14 +326,14 @@ def import_whisper_model_class():
     return WhisperModel
 
 
-@lru_cache(maxsize=1)
-def load_whisper_model(model_name: str):
+@lru_cache(maxsize=4)
+def load_whisper_model(model_name: str, cpu_threads: int = 1):
     WhisperModel = import_whisper_model_class()
     return WhisperModel(
         model_name,
         device="cpu",
         compute_type="int8",
-        cpu_threads=1,
+        cpu_threads=max(1, cpu_threads),
         num_workers=1,
     )
 
@@ -345,6 +345,7 @@ def transcribe_audio(
     progress,
     should_pause=None,
     should_cancel=None,
+    cpu_threads: int = 1,
 ) -> list[TranscriptSegment]:
     def wait_if_requested() -> None:
         if should_cancel and should_cancel():
@@ -362,7 +363,7 @@ def transcribe_audio(
 
     wait_if_requested()
     progress(f"Chargement du modèle Whisper '{model_name}'...")
-    model = load_whisper_model(model_name)
+    model = load_whisper_model(model_name, cpu_threads)
     wait_if_requested()
     progress("Transcription en cours...")
     segments_iter, info = model.transcribe(
