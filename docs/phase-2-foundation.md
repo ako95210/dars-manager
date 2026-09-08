@@ -65,7 +65,8 @@ de couverture et la vidéo statique.
 
 1. ~~migrations Alembic~~ — migration initiale versionnée et reprise des bases
    créées par la fondation précédente ;
-2. état temporaire des jobs dans Redis ;
+2. ~~état temporaire des jobs dans Redis~~ — reprise des résultats terminés et
+   marquage explicite des traitements interrompus après redémarrage ;
 3. persistance des métadonnées `JobRecord` et `Artifact` ;
 4. limitation globale de la concurrence ;
 5. édition des segments et personnalisation de la couverture ;

@@ -12,7 +12,7 @@ class Settings:
     max_upload_bytes: int
     whisper_cpu_threads: int
     database_url: str
-    redis_url: str
+    redis_url: str | None
     session_cookie: str
     session_ttl_seconds: int
     cookie_secure: bool
@@ -33,7 +33,7 @@ def load_settings() -> Settings:
             "DARSM_DATABASE_URL",
             "sqlite+pysqlite:////dev/shm/dars-manager-beta.db",
         ),
-        redis_url=os.environ.get("DARSM_REDIS_URL", "redis://localhost:6379/0"),
+        redis_url=os.environ.get("DARSM_REDIS_URL", "").strip() or None,
         session_cookie=os.environ.get("DARSM_SESSION_COOKIE", "dars_session"),
         session_ttl_seconds=int(os.environ.get("DARSM_SESSION_TTL_SECONDS", str(7 * 86400))),
         cookie_secure=os.environ.get("DARSM_COOKIE_SECURE", "true").strip().lower()

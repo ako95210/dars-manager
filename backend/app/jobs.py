@@ -11,6 +11,7 @@ from typing import Any
 
 from drsm_core import AnalysisCancelled
 
+from .job_state import JobStateStore, MemoryJobStateStore
 from .pipeline import run_pipeline
 from .storage import TemporaryStorage
 
@@ -55,6 +56,47 @@ class Job:
             "metrics": self.metrics,
         }
 
+    def record(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "workspace": str(self.workspace),
+            "input_path": str(self.input_path),
+            "model_name": self.model_name,
+            "language": self.language,
+            "cpu_threads": self.cpu_threads,
+            "state": self.state,
+            "stage": self.stage,
+            "message": self.message,
+            "progress": self.progress,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "error": self.error,
+            "artifacts": self.artifacts,
+            "metrics": self.metrics,
+        }
+
+    @classmethod
+    def from_record(cls, record: dict[str, Any]) -> Job:
+        return cls(
+            id=record["id"],
+            user_id=record["user_id"],
+            workspace=Path(record["workspace"]),
+            input_path=Path(record["input_path"]),
+            model_name=record["model_name"],
+            language=record["language"],
+            cpu_threads=int(record["cpu_threads"]),
+            state=record["state"],
+            stage=record["stage"],
+            message=record["message"],
+            progress=float(record["progress"]),
+            created_at=float(record["created_at"]),
+            updated_at=float(record["updated_at"]),
+            error=record.get("error"),
+            artifacts=dict(record.get("artifacts", {})),
+            metrics=dict(record.get("metrics", {})),
+        )
+
 
 def _process_entry(
     input_path: str,
@@ -85,10 +127,18 @@ def _process_entry(
 
 
 class JobManager:
-    def __init__(self, storage: TemporaryStorage) -> None:
+    def __init__(
+        self,
+        storage: TemporaryStorage,
+        state_store: JobStateStore | None = None,
+    ) -> None:
         self.storage = storage
+        self.state_store = state_store or MemoryJobStateStore(storage.ttl_seconds)
         self.jobs: dict[str, Job] = {}
         self._lock = threading.RLock()
+
+    def _save(self, job: Job) -> None:
+        self.state_store.save(job.record())
 
     def create(
         self,
@@ -112,12 +162,16 @@ class JobManager:
         )
         with self._lock:
             self.jobs[job_id] = job
+            self._save(job)
         return job
 
     def get(self, user_id: str, job_id: str) -> Job | None:
         with self._lock:
             job = self.jobs.get(job_id)
-            return job if job and job.user_id == user_id else None
+        if job is None:
+            record = self.state_store.get(job_id)
+            job = Job.from_record(record) if record else None
+        return job if job and job.user_id == user_id else None
 
     def start(self, job: Job) -> None:
         if job.state != "queued":
@@ -143,6 +197,7 @@ class JobManager:
         job.state = "running"
         job.updated_at = time.time()
         job.process.start()
+        self._save(job)
         threading.Thread(target=self._monitor, args=(job,), daemon=True).start()
 
     def _monitor(self, job: Job) -> None:
@@ -150,10 +205,16 @@ class JobManager:
             try:
                 kind, payload = job.event_queue.get(timeout=0.5)
             except queue.Empty:
-                if job.process and not job.process.is_alive() and job.process.exitcode not in (None, 0):
+                if job.process and not job.process.is_alive():
                     job.state = "failed"
-                    job.error = f"Worker exited with code {job.process.exitcode}"
+                    job.message = "Pipeline failed"
+                    job.error = (
+                        f"Worker exited with code {job.process.exitcode}"
+                        if job.process.exitcode not in (None, 0)
+                        else "Worker exited without returning a result"
+                    )
                     job.updated_at = time.time()
+                    self._save(job)
                 continue
             job.updated_at = time.time()
             if kind == "progress":
@@ -185,36 +246,48 @@ class JobManager:
                 job.state = "failed"
                 job.message = "Pipeline failed"
                 job.error = payload
+            self._save(job)
 
     def pause(self, job: Job) -> None:
         if job.state != "running":
             raise ValueError("Only a running job can be paused")
+        if job.pause_event is None:
+            raise ValueError("Job worker is no longer available")
         job.pause_event.set()
         job.state = "paused"
         job.message = "Pause requested"
         job.updated_at = time.time()
+        self._save(job)
 
     def resume(self, job: Job) -> None:
         if job.state != "paused":
             raise ValueError("Only a paused job can be resumed")
+        if job.pause_event is None:
+            raise ValueError("Job worker is no longer available")
         job.pause_event.clear()
         job.state = "running"
         job.message = "Resume requested"
         job.updated_at = time.time()
+        self._save(job)
 
     def cancel(self, job: Job) -> None:
         if job.state in TERMINAL_STATES:
             return
+        if job.cancel_event is None or job.pause_event is None:
+            raise ValueError("Job worker is no longer available")
         job.cancel_event.set()
         job.pause_event.clear()
         job.state = "cancelling"
         job.message = "Cancellation requested"
         job.updated_at = time.time()
+        self._save(job)
 
     def delete(self, job: Job) -> None:
         if job.process and job.process.is_alive():
-            job.cancel_event.set()
-            job.pause_event.clear()
+            if job.cancel_event is not None:
+                job.cancel_event.set()
+            if job.pause_event is not None:
+                job.pause_event.clear()
             job.process.join(timeout=5)
             if job.process.is_alive():
                 job.process.terminate()
@@ -222,3 +295,40 @@ class JobManager:
         self.storage.remove_workspace(job.workspace)
         with self._lock:
             self.jobs.pop(job.id, None)
+        self.state_store.delete(job.id)
+
+    def recover_interrupted(self) -> int:
+        recovered = 0
+        for record in self.state_store.all():
+            job = Job.from_record(record)
+            if job.state in TERMINAL_STATES:
+                continue
+            job.state = "failed"
+            job.stage = "interrupted"
+            job.message = "Pipeline interrupted"
+            job.error = "API restarted before the job completed"
+            job.updated_at = time.time()
+            self._save(job)
+            recovered += 1
+        return recovered
+
+    def shutdown(self) -> None:
+        for job in list(self.jobs.values()):
+            if job.process and job.process.is_alive():
+                if job.cancel_event is not None:
+                    job.cancel_event.set()
+                if job.pause_event is not None:
+                    job.pause_event.clear()
+                job.process.join(timeout=5)
+                if job.process.is_alive():
+                    job.process.terminate()
+                    job.process.join(timeout=5)
+            if job.state not in TERMINAL_STATES:
+                job.state = "failed"
+                job.stage = "interrupted"
+                job.message = "Pipeline interrupted"
+                job.error = "API stopped before the job completed"
+                job.updated_at = time.time()
+                self._save(job)
+        with self._lock:
+            self.jobs.clear()

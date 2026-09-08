@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from .auth import require_user, router as auth_router
 from .config import settings
 from .database import get_db, init_database
+from .job_state import create_job_state_store
 from .jobs import Job, JobManager, TERMINAL_STATES
 from .models import Project, User
 from .projects import router as projects_router
@@ -23,16 +24,17 @@ from .storage import TemporaryStorage
 
 
 storage = TemporaryStorage(settings.workspace_root, settings.job_ttl_seconds)
-manager = JobManager(storage)
+job_state = create_job_state_store(settings.redis_url, settings.job_ttl_seconds)
+manager = JobManager(storage, job_state)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_database()
     storage.cleanup_expired()
+    manager.recover_interrupted()
     yield
-    for job in list(manager.jobs.values()):
-        manager.delete(job)
+    manager.shutdown()
 
 
 app = FastAPI(title="Dars Manager Beta API", version="0.1.0", lifespan=lifespan)
@@ -150,7 +152,10 @@ def resume_job(job_id: str, user: User = Depends(require_user)) -> dict:
 @app.post("/api/jobs/{job_id}/cancel")
 def cancel_job(job_id: str, user: User = Depends(require_user)) -> dict:
     job = owned_job(user.id, job_id)
-    manager.cancel(job)
+    try:
+        manager.cancel(job)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return job.public()
 
 
