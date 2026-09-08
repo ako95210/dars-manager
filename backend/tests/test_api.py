@@ -88,6 +88,12 @@ class ApiTests(unittest.TestCase):
             self.login(client_b, "pilot-b@example.com", "mot-de-passe-b")
             self.assertEqual(client_b.get(f"/api/projects/{project_id}").status_code, 404)
             self.assertEqual(client_b.delete(f"/api/projects/{project_id}").status_code, 404)
+            upload = client_b.post(
+                "/api/jobs",
+                data={"project_id": project_id, "model": "base", "language": "fr"},
+                files={"file": ("sample.wav", b"not-an-audio", "audio/wav")},
+            )
+            self.assertEqual(upload.status_code, 404, upload.text)
 
         with SessionLocal() as db:
             owner = db.scalar(select(User).where(User.email == "pilot-a@example.com"))

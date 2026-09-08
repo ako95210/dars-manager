@@ -56,11 +56,16 @@ npm run dev
 
 Le frontend n'utilise ni CDN, ni police distante, ni script de suivi.
 
+Le parcours web disponible permet de créer et ouvrir un projet, sélectionner un
+audio local, choisir le niveau de transcription, suivre l'avancement, suspendre
+ou annuler le traitement, puis télécharger l'analyse, l'audio normalisé, l'image
+de couverture et la vidéo statique.
+
 ### Prochain lot
 
 1. migrations Alembic ;
 2. état temporaire des jobs dans Redis ;
 3. persistance des métadonnées `JobRecord` et `Artifact` ;
 4. limitation globale de la concurrence ;
-5. écran d'import et suivi du traitement audio ;
+5. édition des segments et personnalisation de la couverture ;
 6. reverse proxy HTTPS.
