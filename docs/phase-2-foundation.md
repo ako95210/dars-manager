@@ -1,5 +1,9 @@
 # Phase 2 — Fondation multi-utilisateur
 
+> Document historique. Depuis le 9 septembre 2026, la cible produit est
+> l'architecture cloud décrite dans `architecture-cible-cloud.md` et le planning
+> actif est `plan-beta-cloud.md`.
+
 ## État du premier lot
 
 La fondation conserve le worker validé pendant la phase 1 et ajoute les limites
