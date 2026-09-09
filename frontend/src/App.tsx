@@ -1,5 +1,25 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, BillingSummary, Job, Project, User } from "./api";
+import { api, BillingSummary, Job, Project, TranscriptionQuote, User } from "./api";
+
+function inspectAudioDuration(file: File): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const audio = document.createElement("audio");
+    const cleanup = () => URL.revokeObjectURL(url);
+    audio.preload = "metadata";
+    audio.onloadedmetadata = () => {
+      const duration = audio.duration;
+      cleanup();
+      if (Number.isFinite(duration) && duration > 0) resolve(duration);
+      else reject(new Error("La durée du fichier audio est illisible."));
+    };
+    audio.onerror = () => {
+      cleanup();
+      reject(new Error("Le navigateur ne peut pas analyser ce fichier audio."));
+    };
+    audio.src = url;
+  });
+}
 
 function Brand() {
   return (
@@ -282,7 +302,7 @@ function BillingDetails({ summary }: { summary: BillingSummary }) {
                   <td><strong>{item.project_title || "Infrastructure"}</strong><small>{new Intl.DateTimeFormat("fr", { dateStyle: "medium" }).format(new Date(item.occurred_at))}</small></td>
                   <td>{item.service}<small>{item.model}</small></td>
                   <td>{usageQuantity(item.quantity, item.unit)}</td>
-                  <td><span className={`cost-status ${item.status}`}>{item.status === "confirmed" ? "Confirmé" : "Estimé"}</span></td>
+                  <td><span className={`cost-status ${item.status}`}>{({ confirmed: "Confirmé", estimated: "Estimé", reconciled: "Rapproché" })[item.status]}</span></td>
                   <td><strong>{formatCurrency(item.amount, item.currency)}</strong></td>
                 </tr>
               ))}</tbody>
@@ -411,12 +431,29 @@ function AdminBillingOverview() {
 
 function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBack: () => void; onEdit: () => void }) {
   const [file, setFile] = useState<File | null>(null);
-  const [model, setModel] = useState("base");
+  const [quote, setQuote] = useState<TranscriptionQuote | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
   const [job, setJob] = useState<Job | null | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
   const [uploadStage, setUploadStage] = useState<"reserve" | "upload" | "validate" | "start" | null>(null);
   const [actionPending, setActionPending] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setQuote(null);
+    if (!file) return () => { active = false; };
+    setQuoteLoading(true);
+    setError("");
+    inspectAudioDuration(file)
+      .then((duration) => api.quoteTranscription(duration))
+      .then((value) => { if (active) setQuote(value); })
+      .catch((reason) => {
+        if (active) setError(reason instanceof Error ? reason.message : "Estimation impossible.");
+      })
+      .finally(() => { if (active) setQuoteLoading(false); });
+    return () => { active = false; };
+  }, [file]);
 
   useEffect(() => {
     let active = true;
@@ -444,11 +481,11 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
 
   async function start(event: FormEvent) {
     event.preventDefault();
-    if (!file) return;
+    if (!file || !quote) return;
     setSubmitting(true);
     setError("");
     try {
-      setJob(await api.createJob(project.id, file, model, "fr", setUploadStage));
+      setJob(await api.createJob(project.id, file, "fr", quote.duration_seconds, setUploadStage));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Import impossible.");
     } finally {
@@ -520,15 +557,20 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
             <small>{file ? `${(file.size / 1024 / 1024).toFixed(1)} Mo` : "AAC, M4A, MP3, WAV, OGG ou FLAC · 500 Mo maximum"}</small>
           </label>
           <div className="upload-options">
-            <label>
-              Qualité de transcription
-              <select value={model} onChange={(event) => setModel(event.target.value)}>
-                <option value="tiny">Rapide</option>
-                <option value="base">Équilibrée — recommandé</option>
-                <option value="small">Précise</option>
-              </select>
-            </label>
-            <button className="button accent" disabled={!file || submitting} type="submit">
+            <div className="transcription-quote">
+              <span>Estimation transcription cloud</span>
+              {quoteLoading ? (
+                <strong>Calcul en cours…</strong>
+              ) : quote ? (
+                <>
+                  <strong>≈ {Number(quote.amount).toFixed(4)} {quote.currency}</strong>
+                  <small>{formatDuration(quote.duration_seconds)} · {quote.model} · coût réel rapproché après traitement</small>
+                </>
+              ) : (
+                <strong>Sélectionnez un audio valide</strong>
+              )}
+            </div>
+            <button className="button accent" disabled={!file || !quote || submitting || quoteLoading} type="submit">
               {submitting ? ({
                 reserve: "Préparation…",
                 upload: "Envoi temporaire…",

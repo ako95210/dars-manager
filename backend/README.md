@@ -74,6 +74,23 @@ from a lost notification. Workers download source assets into their own
 ephemeral workspace and upload every output through `MediaStorage`; they never
 depend on the API filesystem.
 
+## Cloud transcription
+
+The beta compose file uses `DARSM_TRANSCRIPTION_BACKEND=openai` and
+`whisper-1`. Only the worker receives `OPENAI_API_KEY`; the browser and API
+never expose it. The API quotes the audio duration before launch, then each
+encoded fragment is recorded as confirmed usage with its provider request ID.
+The initial estimate remains in the ledger with the `reconciled` status.
+Paid transcription responses are checkpointed in temporary object storage, so
+a worker retry can continue through rendering without paying for the same
+fragment again.
+
+Long inputs are converted to mono 16 kHz WAV and split into nine-minute
+fragments by default. Tune `DARSM_TRANSCRIPTION_CHUNK_SECONDS` and
+`DARSM_TRANSCRIPTION_CHUNK_MAX_BYTES` if the provider contract changes. Local
+development keeps `DARSM_TRANSCRIPTION_BACKEND=local` and can select
+`DARSM_LOCAL_WHISPER_MODEL=base` without an API key.
+
 ## Run the API
 
 ```bash

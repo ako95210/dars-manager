@@ -28,6 +28,13 @@ class Settings:
     job_ttl_seconds: int
     max_upload_bytes: int
     whisper_cpu_threads: int
+    transcription_backend: str
+    transcription_model: str
+    local_whisper_model: str
+    transcription_chunk_seconds: int
+    transcription_chunk_max_bytes: int
+    openai_api_key: str | None
+    openai_timeout_seconds: float
     database_url: str
     redis_url: str | None
     session_cookie: str
@@ -47,6 +54,11 @@ def load_settings() -> Settings:
     execution_backend = os.environ.get("DARSM_EXECUTION_BACKEND", "inline").strip().lower()
     if execution_backend not in {"inline", "worker"}:
         raise ValueError("DARSM_EXECUTION_BACKEND must be 'inline' or 'worker'")
+    transcription_backend = os.environ.get(
+        "DARSM_TRANSCRIPTION_BACKEND", "local"
+    ).strip().lower()
+    if transcription_backend not in {"local", "openai"}:
+        raise ValueError("DARSM_TRANSCRIPTION_BACKEND must be 'local' or 'openai'")
     raw_storage_price = os.environ.get("DARSM_STORAGE_GB_MONTH_USD", "").strip()
     if media_backend == "s3" and not raw_storage_price:
         raise ValueError(
@@ -94,6 +106,27 @@ def load_settings() -> Settings:
         job_ttl_seconds=int(os.environ.get("DARSM_JOB_TTL_SECONDS", "7200")),
         max_upload_bytes=int(os.environ.get("DARSM_MAX_UPLOAD_BYTES", str(500 * 1024 * 1024))),
         whisper_cpu_threads=max(1, int(os.environ.get("DARSM_WHISPER_CPU_THREADS", "4"))),
+        transcription_backend=transcription_backend,
+        transcription_model=os.environ.get(
+            "DARSM_TRANSCRIPTION_MODEL", "whisper-1"
+        ).strip(),
+        local_whisper_model=os.environ.get(
+            "DARSM_LOCAL_WHISPER_MODEL", "base"
+        ).strip(),
+        # Nine-minute mono/16 kHz WAV fragments stay comfortably small while
+        # keeping enough context for Whisper. Oversized fragments are split
+        # again after encoding.
+        transcription_chunk_seconds=max(
+            30, int(os.environ.get("DARSM_TRANSCRIPTION_CHUNK_SECONDS", "540"))
+        ),
+        transcription_chunk_max_bytes=max(
+            1_000_000,
+            int(os.environ.get("DARSM_TRANSCRIPTION_CHUNK_MAX_BYTES", "24000000")),
+        ),
+        openai_api_key=os.environ.get("OPENAI_API_KEY", "").strip() or None,
+        openai_timeout_seconds=max(
+            10.0, float(os.environ.get("DARSM_OPENAI_TIMEOUT_SECONDS", "900"))
+        ),
         database_url=os.environ.get(
             "DARSM_DATABASE_URL",
             "sqlite+pysqlite:////dev/shm/dars-manager-beta.db",

@@ -66,8 +66,18 @@ export type UsageEvent = {
   unit: string;
   currency: string;
   amount: string;
-  status: "estimated" | "confirmed";
+  status: "estimated" | "confirmed" | "reconciled";
   occurred_at: string;
+};
+
+export type TranscriptionQuote = {
+  provider: string;
+  model: string;
+  duration_seconds: number;
+  billed_seconds: number;
+  currency: string;
+  amount: string;
+  unit_amount: string;
 };
 
 export type Payment = {
@@ -141,8 +151,8 @@ export const api = {
   createJob: async (
     projectId: string,
     file: File,
-    model: string,
     language: string,
+    estimatedDurationSeconds: number,
     onStage?: (stage: "reserve" | "upload" | "validate" | "start") => void,
   ) => {
     onStage?.("reserve");
@@ -185,9 +195,18 @@ export const api = {
     onStage?.("start");
     return request<Job>("/api/jobs/from-asset", {
       method: "POST",
-      body: JSON.stringify({ asset_id: reservation.asset.id, model, language }),
+      body: JSON.stringify({
+        asset_id: reservation.asset.id,
+        language,
+        estimated_duration_seconds: estimatedDurationSeconds,
+      }),
     });
   },
+  quoteTranscription: (durationSeconds: number) =>
+    request<TranscriptionQuote>("/api/transcription/quote", {
+      method: "POST",
+      body: JSON.stringify({ duration_seconds: durationSeconds }),
+    }),
   job: (jobId: string) => request<Job>(`/api/jobs/${jobId}`),
   jobs: (projectId?: string) =>
     request<Job[]>(`/api/jobs${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`),

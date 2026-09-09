@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import hashlib
+import math
 import signal
 import socket
 import threading
@@ -16,13 +17,18 @@ from sqlalchemy import select
 from drsm_core import AnalysisCancelled
 
 from .app.config import settings
-from .app.costs import seed_default_rates
+from .app.costs import reconcile_job_estimates, record_usage, seed_default_rates
 from .app.database import SessionLocal, init_database
 from .app.job_state import DatabaseJobStateStore
 from .app.jobs import Job
 from .app.models import Artifact, Asset, utc_now
 from .app.pipeline import PipelineResult, run_pipeline
 from .app.runtime import job_queue, media_storage, storage
+from .app.transcription import (
+    OpenAIWhisperProvider,
+    TranscriptionCall,
+)
+from .app.transcription_checkpoint import CheckpointingTranscriptionProvider
 
 
 ARTIFACTS = {
@@ -48,6 +54,13 @@ class Worker:
         )
         self.state = DatabaseJobStateStore(settings.job_ttl_seconds)
         self.stop_requested = threading.Event()
+        self.transcription_provider = None
+        if settings.transcription_backend == "openai":
+            self.transcription_provider = OpenAIWhisperProvider(
+                api_key=settings.openai_api_key or "",
+                model=settings.transcription_model,
+                timeout_seconds=settings.openai_timeout_seconds,
+            )
 
     def stop(self, *_args) -> None:
         self.stop_requested.set()
@@ -113,12 +126,45 @@ class Worker:
                 )
             )
         with SessionLocal() as db:
-            previous = db.scalars(select(Artifact).where(Artifact.job_id == job.id)).all()
+            previous = db.scalars(
+                select(Artifact).where(
+                    Artifact.job_id == job.id,
+                    Artifact.kind.in_(ARTIFACTS),
+                )
+            ).all()
             for artifact in previous:
                 db.delete(artifact)
             db.add_all(rows)
             db.commit()
         job.artifacts = object_keys
+
+    def _record_transcription_call(self, job: Job, call: TranscriptionCall) -> None:
+        with SessionLocal() as db:
+            record_usage(
+                db,
+                user_id=job.user_id,
+                project_id=job.project_id,
+                job_id=job.id,
+                provider=call.provider,
+                service="transcription",
+                model=call.model,
+                quantity=math.ceil(call.duration_seconds),
+                unit="audio_second",
+                status="confirmed",
+                idempotency_key=(
+                    f"transcription:{job.id}:chunk:{call.chunk_index}:"
+                    f"{call.checksum_sha256}"
+                ),
+                provider_request_id=call.request_id,
+                details={
+                    "chunk_index": call.chunk_index,
+                    "chunk_count": call.chunk_count,
+                    "checksum_sha256": call.checksum_sha256,
+                    "checkpoint_reused": call.reused,
+                },
+            )
+            reconcile_job_estimates(db, job.id, "transcription")
+            db.commit()
 
     def process(self, job_id: str) -> bool:
         record = self.state.claim(job_id, self.worker_id, settings.worker_lease_seconds)
@@ -169,6 +215,28 @@ class Worker:
             if self._control_state(job) in {"cancelled", "cancelling"}:
                 raise AnalysisCancelled("Job cancelled")
 
+            transcription_calls = 0
+            transcription_checkpoint_hits = 0
+
+            def record_transcription(call: TranscriptionCall) -> None:
+                nonlocal transcription_calls, transcription_checkpoint_hits
+                self._record_transcription_call(job, call)
+                if call.reused:
+                    transcription_checkpoint_hits += 1
+                else:
+                    transcription_calls += 1
+
+            provider = (
+                CheckpointingTranscriptionProvider(
+                    self.transcription_provider,
+                    job,
+                    storage=media_storage,
+                    session_factory=SessionLocal,
+                    retention_seconds=settings.media_retention_seconds,
+                )
+                if self.transcription_provider
+                else None
+            )
             result = run_pipeline(
                 job.input_path,
                 job.workspace,
@@ -179,6 +247,12 @@ class Worker:
                 should_pause=lambda: self._control_state(job) == "paused",
                 should_cancel=lambda: self._control_state(job)
                 in {"cancelled", "cancelling"},
+                transcription_provider=provider,
+                transcription_chunk_seconds=settings.transcription_chunk_seconds,
+                transcription_chunk_max_bytes=settings.transcription_chunk_max_bytes,
+                on_transcription_usage=(
+                    record_transcription if self.transcription_provider else None
+                ),
             )
             self._wait_if_paused(job)
             self._store_artifacts(job, result)
@@ -192,6 +266,8 @@ class Worker:
                 "parts": result.part_count,
                 "duration_seconds": result.duration_seconds,
                 "elapsed_seconds": result.elapsed_seconds,
+                "transcription_calls": transcription_calls,
+                "transcription_checkpoint_hits": transcription_checkpoint_hits,
             }
             job.error = None
         except AnalysisCancelled:

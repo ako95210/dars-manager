@@ -27,6 +27,7 @@ from .runtime import job_queue, manager, media_storage, storage
 from .media_lifecycle import meter_media, purge_expired_media
 from .uploads import jobs_router as asset_jobs_router
 from .uploads import router as uploads_router
+from .transcription_api import router as transcription_router
 
 
 @asynccontextmanager
@@ -55,6 +56,7 @@ app.include_router(billing_router)
 app.include_router(admin_billing_router)
 app.include_router(uploads_router)
 app.include_router(asset_jobs_router)
+app.include_router(transcription_router)
 
 
 def owned_job(user_id: str, job_id: str) -> Job:

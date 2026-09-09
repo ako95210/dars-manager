@@ -28,6 +28,8 @@ from drsm_core import (
     transcribe_audio,
 )
 
+from .transcription import TranscriptionProvider, UsageCallback, transcribe_in_chunks
+
 
 ProgressCallback = Callable[[dict], None]
 
@@ -154,6 +156,10 @@ def run_pipeline(
     should_cancel: Callable[[], bool] | None = None,
     reuse_analysis: Path | None = None,
     cpu_threads: int = 1,
+    transcription_provider: TranscriptionProvider | None = None,
+    transcription_chunk_seconds: int = 540,
+    transcription_chunk_max_bytes: int = 24_000_000,
+    on_transcription_usage: UsageCallback | None = None,
 ) -> PipelineResult:
     started = time.monotonic()
 
@@ -192,15 +198,30 @@ def run_pipeline(
                         fraction = 0.05 + 0.55 * min(current / total, 1.0)
             report("transcription", message, fraction)
 
-        segments = transcribe_audio(
-            input_path,
-            model_name,
-            language,
-            transcription_progress,
-            should_pause=should_pause,
-            should_cancel=should_cancel,
-            cpu_threads=cpu_threads,
-        )
+        if transcription_provider is None:
+            segments = transcribe_audio(
+                input_path,
+                model_name,
+                language,
+                transcription_progress,
+                should_pause=should_pause,
+                should_cancel=should_cancel,
+                cpu_threads=cpu_threads,
+            )
+        else:
+            segments = transcribe_in_chunks(
+                input_path,
+                workspace,
+                transcription_provider,
+                language,
+                chunk_seconds=transcription_chunk_seconds,
+                max_bytes=transcription_chunk_max_bytes,
+                progress=lambda message, fraction: report(
+                    "transcription", message, 0.05 + 0.55 * fraction
+                ),
+                control_point=control_point,
+                on_usage=on_transcription_usage,
+            )
         if should_cancel and should_cancel():
             raise AnalysisCancelled("Analysis cancelled")
         control_point()

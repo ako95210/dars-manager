@@ -30,8 +30,11 @@ from backend.app.models import Artifact, Asset, UsageEvent, User, utc_now
 from backend.app.pipeline import PipelineResult
 from backend.app.runtime import media_storage
 from backend.app.security import hash_password
+from backend.app.transcription import ProviderTranscription
+from backend.app.transcription_checkpoint import CheckpointingTranscriptionProvider
 from backend.worker import Worker
 from backend.maintenance import MaintenanceService
+from drsm_core import TranscriptSegment
 
 
 class ApiTests(unittest.TestCase):
@@ -89,6 +92,17 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(client.get("/api/auth/me").json()["display_name"], "Pilote A")
             self.assertEqual(client.post("/api/auth/logout").status_code, 204)
             self.assertEqual(client.get("/api/auth/me").status_code, 401)
+
+    def test_transcription_quote_uses_the_versioned_rate(self) -> None:
+        with TestClient(app) as client:
+            self.login(client, "pilot-a@example.com", "mot-de-passe-a")
+            quote = client.post(
+                "/api/transcription/quote", json={"duration_seconds": 90.1}
+            )
+            self.assertEqual(quote.status_code, 200, quote.text)
+            self.assertEqual(quote.json()["model"], "whisper-1")
+            self.assertEqual(quote.json()["billed_seconds"], 91)
+            self.assertEqual(quote.json()["amount"], "0.009100")
 
     def test_projects_are_isolated_by_user(self) -> None:
         with TestClient(app) as client_a:
@@ -311,6 +325,59 @@ class ApiTests(unittest.TestCase):
             self.assertIsNone(source_deleted.json()["source_asset_id"])
             with SessionLocal() as db:
                 self.assertIsNone(db.get(Asset, asset_id))
+            self.assertEqual(client.delete(f"/api/jobs/{job.id}").status_code, 204)
+            self.assertEqual(client.delete(f"/api/projects/{project_id}").status_code, 204)
+
+    def test_paid_transcription_checkpoint_is_reused(self) -> None:
+        class FakePaidProvider:
+            provider = "openai"
+            model = "whisper-1"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def transcribe(self, _path: Path, _language: str) -> ProviderTranscription:
+                self.calls += 1
+                return ProviderTranscription(
+                    segments=(TranscriptSegment(0.0, 1.0, "contenu"),),
+                    duration_seconds=1.0,
+                    request_id="req_checkpoint",
+                )
+
+        with TestClient(app) as client:
+            self.login(client, "pilot-a@example.com", "mot-de-passe-a")
+            project = client.post("/api/projects", json={"title": "Reprise cloud"})
+            self.assertEqual(project.status_code, 201, project.text)
+            project_id = project.json()["id"]
+            with SessionLocal() as db:
+                owner = db.scalar(select(User).where(User.email == "pilot-a@example.com"))
+                self.assertIsNotNone(owner)
+                user_id = owner.id
+            job = manager.create(user_id, project_id, "source.wav", "whisper-1", "fr", 1)
+            chunk = job.workspace / "chunk.wav"
+            chunk.write_bytes(b"normalized-audio")
+            paid = FakePaidProvider()
+            provider = CheckpointingTranscriptionProvider(
+                paid,
+                job,
+                storage=media_storage,
+                session_factory=SessionLocal,
+                retention_seconds=604800,
+            )
+            first = provider.transcribe(chunk, "fr")
+            second = provider.transcribe(chunk, "fr")
+            self.assertEqual(paid.calls, 1)
+            self.assertFalse(first.reused)
+            self.assertTrue(second.reused)
+            self.assertEqual(second.request_id, "req_checkpoint")
+            with SessionLocal() as db:
+                checkpoints = db.scalars(
+                    select(Artifact).where(
+                        Artifact.job_id == job.id,
+                        Artifact.kind == "transcription_checkpoint",
+                    )
+                ).all()
+                self.assertEqual(len(checkpoints), 1)
             self.assertEqual(client.delete(f"/api/jobs/{job.id}").status_code, 204)
             self.assertEqual(client.delete(f"/api/projects/{project_id}").status_code, 204)
 

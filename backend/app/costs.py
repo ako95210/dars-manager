@@ -223,3 +223,17 @@ def record_usage(
     db.add(event)
     db.flush()
     return event
+
+
+def reconcile_job_estimates(db: Session, job_id: str, service: str) -> int:
+    """Keep estimates auditable but exclude them once actual usage is known."""
+    events = db.scalars(
+        select(UsageEvent).where(
+            UsageEvent.job_id == job_id,
+            UsageEvent.service == service,
+            UsageEvent.status == "estimated",
+        )
+    ).all()
+    for event in events:
+        event.status = "reconciled"
+    return len(events)
