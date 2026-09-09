@@ -43,7 +43,7 @@ Créer ensuite le premier utilisateur :
 
 ```bash
 docker compose -f compose.beta.yml exec api \
-  python backend/manage.py create-user client@example.com --name "Client pilote"
+  python -m backend.manage create-user client@example.com --name "Client pilote"
 ```
 
 L'API est disponible sur `http://localhost:8000` et sa documentation sur
@@ -80,5 +80,5 @@ La migration est appliquée automatiquement au démarrage de l'API. Elle peut
 aussi être lancée explicitement :
 
 ```bash
-python backend/manage.py migrate
+python -m backend.manage migrate
 ```

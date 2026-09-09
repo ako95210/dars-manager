@@ -12,14 +12,14 @@ The API applies Alembic migrations automatically at startup. They can also be
 run explicitly before an administrative operation:
 
 ```bash
-python backend/manage.py migrate
+python -m backend.manage migrate
 ```
 
 Create an administrator with `create-user --admin`, or promote an existing
 account explicitly:
 
 ```bash
-python backend/manage.py set-role client@example.com admin
+python -m backend.manage set-role client@example.com admin
 ```
 
 Job progress and completed artifact metadata are persisted in PostgreSQL. Redis
