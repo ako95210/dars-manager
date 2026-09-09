@@ -23,6 +23,7 @@ TERMINAL_STATES = {"completed", "cancelled", "failed", "expired"}
 class Job:
     id: str
     user_id: str
+    project_id: str
     workspace: Path
     input_path: Path
     model_name: str
@@ -45,6 +46,7 @@ class Job:
     def public(self) -> dict[str, Any]:
         return {
             "id": self.id,
+            "project_id": self.project_id,
             "state": self.state,
             "stage": self.stage,
             "message": self.message,
@@ -60,6 +62,7 @@ class Job:
         return {
             "id": self.id,
             "user_id": self.user_id,
+            "project_id": self.project_id,
             "workspace": str(self.workspace),
             "input_path": str(self.input_path),
             "model_name": self.model_name,
@@ -81,6 +84,7 @@ class Job:
         return cls(
             id=record["id"],
             user_id=record["user_id"],
+            project_id=record.get("project_id", ""),
             workspace=Path(record["workspace"]),
             input_path=Path(record["input_path"]),
             model_name=record["model_name"],
@@ -143,6 +147,7 @@ class JobManager:
     def create(
         self,
         user_id: str,
+        project_id: str,
         filename: str,
         model_name: str,
         language: str,
@@ -154,6 +159,7 @@ class JobManager:
         job = Job(
             id=job_id,
             user_id=user_id,
+            project_id=project_id,
             workspace=workspace,
             input_path=workspace / f"input{suffix}",
             model_name=model_name,
@@ -172,6 +178,15 @@ class JobManager:
             record = self.state_store.get(job_id)
             job = Job.from_record(record) if record else None
         return job if job and job.user_id == user_id else None
+
+    def list_for_user(self, user_id: str, project_id: str | None = None) -> list[Job]:
+        jobs = [
+            Job.from_record(record)
+            for record in self.state_store.all()
+            if record.get("user_id") == user_id
+            and (project_id is None or record.get("project_id") == project_id)
+        ]
+        return sorted(jobs, key=lambda job: job.updated_at, reverse=True)
 
     def start(self, job: Job) -> None:
         if job.state != "queued":

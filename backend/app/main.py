@@ -16,16 +16,10 @@ from sqlalchemy.orm import Session
 from .auth import require_user, router as auth_router
 from .config import settings
 from .database import get_db, init_database
-from .job_state import create_job_state_store
 from .jobs import Job, JobManager, TERMINAL_STATES
 from .models import Project, User
 from .projects import router as projects_router
-from .storage import TemporaryStorage
-
-
-storage = TemporaryStorage(settings.workspace_root, settings.job_ttl_seconds)
-job_state = create_job_state_store(settings.redis_url, settings.job_ttl_seconds)
-manager = JobManager(storage, job_state)
+from .runtime import manager, storage
 
 
 @asynccontextmanager
@@ -64,21 +58,22 @@ def health() -> dict:
 @app.post("/api/jobs", status_code=202)
 async def create_job(
     file: Annotated[UploadFile, File()],
+    project_id: Annotated[str, Form()],
     model: Annotated[str, Form()] = "base",
     language: Annotated[str, Form()] = "fr",
-    project_id: Annotated[str | None, Form()] = None,
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> dict:
     if model not in {"tiny", "base", "small"}:
         raise HTTPException(status_code=422, detail="Unsupported Whisper model")
-    if project_id and db.scalar(
+    if db.scalar(
         select(Project).where(Project.id == project_id, Project.user_id == user.id)
     ) is None:
         raise HTTPException(status_code=404, detail="Project not found")
     try:
         job = manager.create(
             user.id,
+            project_id,
             file.filename or "audio",
             model,
             language,
@@ -101,6 +96,19 @@ async def create_job(
     finally:
         await file.close()
     return job.public()
+
+
+@app.get("/api/jobs")
+def list_jobs(
+    project_id: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    if project_id and db.scalar(
+        select(Project).where(Project.id == project_id, Project.user_id == user.id)
+    ) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return [job.public() for job in manager.list_for_user(user.id, project_id)]
 
 
 @app.get("/api/jobs/{job_id}")

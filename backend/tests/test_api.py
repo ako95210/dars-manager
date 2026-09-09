@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
 from backend.app.database import SessionLocal, engine, init_database
-from backend.app.main import app
+from backend.app.main import app, manager
 from backend.app.models import User
 from backend.app.security import hash_password
 
@@ -109,6 +109,46 @@ class ApiTests(unittest.TestCase):
             self.login(client, "pilot-a@example.com", "mot-de-passe-a")
             response = client.post("/api/projects", json={"title": "   "})
             self.assertEqual(response.status_code, 422, response.text)
+
+    def test_project_can_be_updated_and_deleted(self) -> None:
+        with TestClient(app) as client:
+            self.login(client, "pilot-a@example.com", "mot-de-passe-a")
+            created = client.post("/api/projects", json={"title": "Titre initial"})
+            self.assertEqual(created.status_code, 201, created.text)
+            project_id = created.json()["id"]
+
+            updated = client.put(
+                f"/api/projects/{project_id}",
+                json={"title": "Titre final", "description": "Description finale"},
+            )
+            self.assertEqual(updated.status_code, 200, updated.text)
+            self.assertEqual(updated.json()["title"], "Titre final")
+            self.assertEqual(updated.json()["description"], "Description finale")
+
+            deleted = client.delete(f"/api/projects/{project_id}")
+            self.assertEqual(deleted.status_code, 204, deleted.text)
+            self.assertEqual(client.get(f"/api/projects/{project_id}").status_code, 404)
+
+    def test_jobs_can_be_listed_by_project(self) -> None:
+        with TestClient(app) as client:
+            self.login(client, "pilot-a@example.com", "mot-de-passe-a")
+            created = client.post("/api/projects", json={"title": "Suivi des jobs"})
+            self.assertEqual(created.status_code, 201, created.text)
+            project_id = created.json()["id"]
+            with SessionLocal() as db:
+                owner = db.scalar(select(User).where(User.email == "pilot-a@example.com"))
+                self.assertIsNotNone(owner)
+                user_id = owner.id
+
+            job = manager.create(user_id, project_id, "course.wav", "base", "fr", 1)
+            try:
+                response = client.get(f"/api/jobs?project_id={project_id}")
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual([item["id"] for item in response.json()], [job.id])
+                self.assertEqual(response.json()[0]["project_id"], project_id)
+            finally:
+                manager.delete(job)
+                client.delete(f"/api/projects/{project_id}")
 
 
 if __name__ == "__main__":

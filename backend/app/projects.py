@@ -9,7 +9,9 @@ from sqlalchemy.orm import Session
 
 from .auth import require_user
 from .database import get_db
+from .jobs import TERMINAL_STATES
 from .models import Project, User
+from .runtime import manager
 
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -31,6 +33,10 @@ class ProjectCreate(BaseModel):
     @classmethod
     def normalize_description(cls, value: str) -> str:
         return value.strip()
+
+
+class ProjectUpdate(ProjectCreate):
+    pass
 
 
 class ProjectResponse(BaseModel):
@@ -90,6 +96,25 @@ def get_project(
     return project_response(project)
 
 
+@router.put("/{project_id}", response_model=ProjectResponse)
+def update_project(
+    project_id: str,
+    payload: ProjectUpdate,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> ProjectResponse:
+    project = db.scalar(
+        select(Project).where(Project.id == project_id, Project.user_id == user.id)
+    )
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    project.title = payload.title
+    project.description = payload.description
+    db.commit()
+    db.refresh(project)
+    return project_response(project)
+
+
 @router.delete("/{project_id}", status_code=204)
 def delete_project(
     project_id: str,
@@ -101,5 +126,13 @@ def delete_project(
     )
     if project is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    jobs = manager.list_for_user(user.id, project.id)
+    if any(job.state not in TERMINAL_STATES for job in jobs):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Un traitement est encore actif pour ce projet",
+        )
+    for job in jobs:
+        manager.delete(job)
     db.delete(project)
     db.commit()

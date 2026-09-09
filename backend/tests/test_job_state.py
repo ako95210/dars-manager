@@ -16,22 +16,24 @@ class JobStateTests(unittest.TestCase):
             storage = TemporaryStorage(Path(directory), ttl_seconds=60)
             state = MemoryJobStateStore(ttl_seconds=60)
             first = JobManager(storage, state)
-            created = first.create("user-a", "course.wav", "base", "fr", 4)
+            created = first.create("user-a", "project-a", "course.wav", "base", "fr", 4)
 
             second = JobManager(storage, state)
             restored = second.get("user-a", created.id)
 
             self.assertIsNotNone(restored)
             self.assertEqual(restored.id, created.id)
+            self.assertEqual(restored.project_id, "project-a")
             self.assertEqual(restored.workspace, created.workspace)
             self.assertIsNone(second.get("user-b", created.id))
+            self.assertEqual(second.list_for_user("user-a", "project-a")[0].id, created.id)
 
     def test_interrupted_job_is_marked_failed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             storage = TemporaryStorage(Path(directory), ttl_seconds=60)
             state = MemoryJobStateStore(ttl_seconds=60)
             first = JobManager(storage, state)
-            created = first.create("user-a", "course.wav", "base", "fr", 4)
+            created = first.create("user-a", "project-a", "course.wav", "base", "fr", 4)
             created.state = "running"
             first._save(created)
 

@@ -14,6 +14,7 @@ export type Project = {
 
 export type Job = {
   id: string;
+  project_id: string;
   state: "queued" | "running" | "paused" | "cancelling" | "completed" | "cancelled" | "failed" | "expired";
   stage: string;
   message: string;
@@ -66,6 +67,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ title, description }),
     }),
+  updateProject: (projectId: string, title: string, description: string) =>
+    request<Project>(`/api/projects/${projectId}`, {
+      method: "PUT",
+      body: JSON.stringify({ title, description }),
+    }),
+  deleteProject: (projectId: string) =>
+    request<void>(`/api/projects/${projectId}`, { method: "DELETE" }),
   createJob: (projectId: string, file: File, model: string, language: string) => {
     const body = new FormData();
     body.append("file", file);
@@ -75,6 +83,8 @@ export const api = {
     return request<Job>("/api/jobs", { method: "POST", body });
   },
   job: (jobId: string) => request<Job>(`/api/jobs/${jobId}`),
+  jobs: (projectId?: string) =>
+    request<Job[]>(`/api/jobs${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`),
   pauseJob: (jobId: string) => request<Job>(`/api/jobs/${jobId}/pause`, { method: "POST" }),
   resumeJob: (jobId: string) => request<Job>(`/api/jobs/${jobId}/resume`, { method: "POST" }),
   cancelJob: (jobId: string) => request<Job>(`/api/jobs/${jobId}/cancel`, { method: "POST" }),

@@ -13,7 +13,7 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; }
-button, input { font: inherit; }
+button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 h1, h2, h3, p { margin-top: 0; }
 h1, h2, h3, .brand strong { font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
@@ -44,6 +44,8 @@ input:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .1
 .button:hover:not(:disabled) { transform: translateY(-1px); }
 .button:disabled { cursor: wait; opacity: .6; }
 .button.primary { width: 100%; margin-top: 12px; color: white; background: var(--navy); }
+.button.primary.compact { width: auto; margin-top: 0; }
+.button.secondary { border: 1px solid var(--line); color: #354154; background: white; }
 .button.accent { color: #072c25; background: var(--green); white-space: nowrap; }
 .form-error { color: #b42318 !important; font-size: 13px !important; }
 
@@ -88,7 +90,8 @@ input:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .1
 .project-card h3 { margin: 2px 0 6px; font-size: 15px; }
 .project-card p, .project-card time { color: var(--muted); font-size: 12px; }
 .project-card time { grid-column: 2; margin-top: auto; }
-.project-card button { position: absolute; right: 17px; bottom: 17px; width: 30px; height: 30px; border: 0; border-radius: 50%; color: #1a6953; background: #eef8f4; }
+.project-card-actions { position: absolute; right: 17px; bottom: 17px; display: flex; gap: 7px; }
+.project-card-actions button { width: 30px; height: 30px; border: 0; border-radius: 50%; color: #1a6953; background: #eef8f4; }
 .empty-state { min-height: 250px; display: grid; place-content: center; justify-items: center; padding: 44px; border: 1px dashed #cad2dc; border-radius: 16px; text-align: center; background: rgba(255,255,255,.58); }
 .empty-state h3 { margin: 15px 0 6px; font-size: 17px; }
 .empty-state p { max-width: 430px; color: var(--muted); }
@@ -102,6 +105,7 @@ input:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .1
 .project-header h1 { margin: 8px 0 7px; font-size: 35px; letter-spacing: -.04em; }
 .project-header p { max-width: 650px; color: var(--muted); }
 .privacy-badge { padding: 9px 13px; border: 1px solid #dbe8e2; border-radius: 9px; color: #477061; background: #f7fcfa; font-size: 11px; white-space: nowrap; }
+.project-header-actions { display: flex; align-items: center; gap: 10px; }
 .upload-card, .job-card { padding: 32px; border: 1px solid var(--line); border-radius: 18px; background: white; box-shadow: var(--shadow); }
 .upload-intro { display: flex; gap: 17px; align-items: center; margin-bottom: 24px; }
 .upload-intro h2, .job-heading h2 { margin: 0 0 5px; font-size: 21px; }
@@ -141,6 +145,31 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .job-actions button.danger { color: #b42318; }
 .job-actions button:disabled { opacity: .5; cursor: wait; }
 
+.jobs-list { display: grid; gap: 12px; }
+.job-list-card { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(180px, .55fr) auto; gap: 28px; align-items: center; padding: 21px 23px; border: 1px solid var(--line); border-radius: 14px; background: white; box-shadow: 0 8px 30px rgba(13, 24, 43, .035); }
+.job-list-card h3 { margin: 0 0 5px; font-size: 15px; }
+.job-list-card p { margin: 0; color: var(--muted); font-size: 12px; }
+.job-list-progress { display: grid; grid-template-columns: 42px 1fr; gap: 10px; align-items: center; }
+.job-list-progress strong { color: #158462; font-size: 12px; }
+.job-list-progress .progress-track { margin: 0; }
+
+.modal-backdrop { position: fixed; z-index: 20; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(5, 13, 25, .58); backdrop-filter: blur(3px); }
+.project-editor { width: min(610px, 100%); max-height: calc(100vh - 48px); overflow: auto; padding: 28px; border-radius: 18px; background: white; box-shadow: 0 30px 80px rgba(5, 13, 25, .28); }
+.project-editor header { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; margin-bottom: 24px; }
+.project-editor h2 { margin: 7px 0 0; }
+.icon-button { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 50%; color: #526073; background: white; font-size: 22px; line-height: 1; }
+.project-editor form label { display: grid; gap: 8px; margin: 17px 0; color: #344054; font-size: 13px; font-weight: 600; }
+.project-editor textarea { width: 100%; resize: vertical; border: 1px solid var(--line); border-radius: 11px; padding: 13px 15px; outline: none; color: #172033; background: white; }
+.project-editor textarea:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .12); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 24px; }
+.danger-zone { display: flex; justify-content: space-between; gap: 20px; align-items: center; margin-top: 28px; padding-top: 24px; border-top: 1px solid #f0d5d2; }
+.danger-zone strong { color: #972c25; font-size: 13px; }
+.danger-zone p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+.danger-outline, .delete-confirmation button { padding: 9px 12px; border: 1px solid #efb9b5; border-radius: 9px; color: #a5322a; background: white; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.delete-confirmation { display: flex; gap: 7px; align-items: center; }
+.delete-confirmation span { color: #7a302b; font-size: 11px; }
+.delete-confirmation button.danger { color: white; background: #b42318; border-color: #b42318; }
+
 @media (max-width: 900px) {
   .login-shell { grid-template-columns: 1fr; }
   .login-story { min-height: 42vh; padding: 34px; }
@@ -156,6 +185,7 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .quick-start { align-items: stretch; flex-direction: column; }
   .quick-start form { width: 100%; }
   .project-header { flex-direction: column; }
+  .job-list-card { grid-template-columns: 1fr; gap: 15px; }
 }
 
 @media (max-width: 620px) {
@@ -174,4 +204,5 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .upload-options label { width: 100%; }
   .result-summary { grid-template-columns: repeat(2, 1fr); }
   .artifact-grid { grid-template-columns: 1fr; }
+  .project-header-actions, .danger-zone, .delete-confirmation { align-items: stretch; flex-direction: column; }
 }
