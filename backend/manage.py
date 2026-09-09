@@ -32,6 +32,18 @@ def migrate() -> None:
     print("Base de données migrée.")
 
 
+def set_role(email: str, role: str) -> None:
+    init_database()
+    normalized_email = normalize_email(email)
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.email == normalized_email))
+        if user is None:
+            raise SystemExit(f"Compte introuvable: {normalized_email}")
+        user.role = role
+        db.commit()
+        print(f"Rôle mis à jour: {user.email} ({role})")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Dars Manager administration")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -39,6 +51,9 @@ def main() -> None:
     create.add_argument("email")
     create.add_argument("--name", required=True)
     create.add_argument("--admin", action="store_true")
+    roles = subparsers.add_parser("set-role")
+    roles.add_argument("email")
+    roles.add_argument("role", choices=("client", "admin"))
     subparsers.add_parser("migrate")
     args = parser.parse_args()
 
@@ -48,6 +63,8 @@ def main() -> None:
         if password != confirmation:
             raise SystemExit("Les mots de passe ne correspondent pas")
         create_user(args.email, args.name, password, "admin" if args.admin else "client")
+    elif args.command == "set-role":
+        set_role(args.email, args.role)
     elif args.command == "migrate":
         migrate()
 

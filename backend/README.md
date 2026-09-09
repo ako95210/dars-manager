@@ -15,6 +15,13 @@ run explicitly before an administrative operation:
 python backend/manage.py migrate
 ```
 
+Create an administrator with `create-user --admin`, or promote an existing
+account explicitly:
+
+```bash
+python backend/manage.py set-role client@example.com admin
+```
+
 Job progress and completed artifact metadata are persisted in PostgreSQL. Redis
 is reserved for queue coordination and transient worker signals; it is not the
 source of truth for a job. Audio, images, transcripts and videos are never
