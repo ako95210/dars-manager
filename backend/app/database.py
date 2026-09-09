@@ -21,6 +21,16 @@ engine = create_engine(settings.database_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 INITIAL_REVISION = "20260908_0001"
+CURRENT_REVISION = "20260909_0002"
+INITIAL_TABLES = {
+    "users",
+    "auth_sessions",
+    "projects",
+    "assets",
+    "jobs",
+    "artifacts",
+    "brand_kits",
+}
 
 
 if settings.database_url.startswith("sqlite"):
@@ -48,14 +58,11 @@ def init_database() -> None:
     with engine.begin() as connection:
         config.attributes["connection"] = connection
         tables = set(inspect(connection).get_table_names())
-        managed_tables = set(Base.metadata.tables)
-
         # The first web foundation used create_all(). Mark that exact schema as
         # the initial revision before applying later migrations.
         if (
             "alembic_version" not in tables
-            and managed_tables
-            and managed_tables.issubset(tables)
+            and INITIAL_TABLES.issubset(tables)
         ):
             command.stamp(config, INITIAL_REVISION)
 

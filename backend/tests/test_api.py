@@ -17,7 +17,8 @@ os.environ["DARSM_COOKIE_SECURE"] = "false"
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
-from backend.app.database import SessionLocal, engine, init_database
+from backend.app.costs import record_usage
+from backend.app.database import CURRENT_REVISION, SessionLocal, engine, init_database
 from backend.app.main import app, manager
 from backend.app.models import User
 from backend.app.security import hash_password
@@ -34,6 +35,7 @@ class ApiTests(unittest.TestCase):
                         email="pilot-a@example.com",
                         display_name="Pilote A",
                         password_hash=hash_password("mot-de-passe-a"),
+                        role="admin",
                     ),
                     User(
                         email="pilot-b@example.com",
@@ -58,7 +60,7 @@ class ApiTests(unittest.TestCase):
     def test_database_is_migrated(self) -> None:
         with SessionLocal() as db:
             revision = db.scalar(text("SELECT version_num FROM alembic_version"))
-        self.assertEqual(revision, "20260908_0001")
+        self.assertEqual(revision, CURRENT_REVISION)
 
     def test_authentication_and_logout(self) -> None:
         with TestClient(app) as client:
@@ -149,6 +151,92 @@ class ApiTests(unittest.TestCase):
             finally:
                 manager.delete(job)
                 client.delete(f"/api/projects/{project_id}")
+
+    def test_usage_and_manual_payment_are_isolated_and_auditable(self) -> None:
+        with TestClient(app) as client_b:
+            self.login(client_b, "pilot-b@example.com", "mot-de-passe-b")
+            created = client_b.post("/api/projects", json={"title": "Cours financé"})
+            self.assertEqual(created.status_code, 201, created.text)
+            project_id = created.json()["id"]
+            with SessionLocal() as db:
+                billed_user = db.scalar(
+                    select(User).where(User.email == "pilot-b@example.com")
+                )
+                self.assertIsNotNone(billed_user)
+                estimated = record_usage(
+                    db,
+                    user_id=billed_user.id,
+                    project_id=project_id,
+                    job_id="job-cost-test",
+                    provider="openai",
+                    service="transcription",
+                    model="whisper-1",
+                    quantity=600,
+                    unit="audio_second",
+                    status="estimated",
+                    idempotency_key=f"estimate-{TEST_ID}",
+                )
+                confirmed = record_usage(
+                    db,
+                    user_id=billed_user.id,
+                    project_id=project_id,
+                    job_id="job-cost-test",
+                    provider="openai",
+                    service="transcription",
+                    model="whisper-1",
+                    quantity=500,
+                    unit="audio_second",
+                    status="confirmed",
+                    idempotency_key=f"confirmed-{TEST_ID}",
+                    provider_request_id="provider-request-test",
+                )
+                repeated = record_usage(
+                    db,
+                    user_id=billed_user.id,
+                    project_id=project_id,
+                    job_id="job-cost-test",
+                    provider="openai",
+                    service="transcription",
+                    model="whisper-1",
+                    quantity=500,
+                    unit="audio_second",
+                    status="confirmed",
+                    idempotency_key=f"confirmed-{TEST_ID}",
+                )
+                self.assertEqual(confirmed.id, repeated.id)
+                self.assertEqual(estimated.amount_nanos, 60_000_000)
+                self.assertEqual(confirmed.amount_nanos, 50_000_000)
+                db.commit()
+                billed_user_id = billed_user.id
+
+            summary = client_b.get("/api/billing/summary?month=2026-09")
+            self.assertEqual(summary.status_code, 200, summary.text)
+            self.assertEqual(summary.json()["estimated_cost"], "0.060000")
+            self.assertEqual(summary.json()["confirmed_cost"], "0.050000")
+            self.assertEqual(summary.json()["balance"], "0.050000")
+            forbidden = client_b.post(
+                "/api/admin/billing/payments",
+                json={"user_id": billed_user_id, "amount": "0.03", "period": "2026-09"},
+            )
+            self.assertEqual(forbidden.status_code, 403, forbidden.text)
+
+        with TestClient(app) as admin_client:
+            self.login(admin_client, "pilot-a@example.com", "mot-de-passe-a")
+            payment = admin_client.post(
+                "/api/admin/billing/payments",
+                json={
+                    "user_id": billed_user_id,
+                    "amount": "0.03",
+                    "period": "2026-09",
+                    "reference": "VIR-001",
+                },
+            )
+            self.assertEqual(payment.status_code, 201, payment.text)
+            clients = admin_client.get("/api/admin/billing/clients?month=2026-09")
+            self.assertEqual(clients.status_code, 200, clients.text)
+            pilot_b = next(item for item in clients.json() if item["user"]["id"] == billed_user_id)
+            self.assertEqual(pilot_b["paid"], "0.030000")
+            self.assertEqual(pilot_b["balance"], "0.020000")
 
 
 if __name__ == "__main__":

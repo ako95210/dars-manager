@@ -10,7 +10,7 @@ from backend.app.models import User
 from backend.app.security import hash_password, normalize_email
 
 
-def create_user(email: str, display_name: str, password: str) -> None:
+def create_user(email: str, display_name: str, password: str, role: str = "client") -> None:
     init_database()
     normalized_email = normalize_email(email)
     with SessionLocal() as db:
@@ -20,6 +20,7 @@ def create_user(email: str, display_name: str, password: str) -> None:
             email=normalized_email,
             display_name=display_name.strip(),
             password_hash=hash_password(password),
+            role=role,
         )
         db.add(user)
         db.commit()
@@ -37,6 +38,7 @@ def main() -> None:
     create = subparsers.add_parser("create-user")
     create.add_argument("email")
     create.add_argument("--name", required=True)
+    create.add_argument("--admin", action="store_true")
     subparsers.add_parser("migrate")
     args = parser.parse_args()
 
@@ -45,7 +47,7 @@ def main() -> None:
         confirmation = getpass.getpass("Confirmation: ")
         if password != confirmation:
             raise SystemExit("Les mots de passe ne correspondent pas")
-        create_user(args.email, args.name, password)
+        create_user(args.email, args.name, password, "admin" if args.admin else "client")
     elif args.command == "migrate":
         migrate()
 

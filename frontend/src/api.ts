@@ -2,6 +2,7 @@ export type User = {
   id: string;
   email: string;
   display_name: string;
+  role: "client" | "admin";
 };
 
 export type Project = {
@@ -29,6 +30,47 @@ export type Job = {
     duration_seconds?: number;
     elapsed_seconds?: number;
   };
+};
+
+export type UsageEvent = {
+  id: string;
+  project_id: string | null;
+  project_title: string;
+  job_id: string | null;
+  provider: string;
+  service: string;
+  model: string;
+  quantity: number;
+  unit: string;
+  currency: string;
+  amount: string;
+  status: "estimated" | "confirmed";
+  occurred_at: string;
+};
+
+export type Payment = {
+  id: string;
+  amount: string;
+  currency: string;
+  method: string;
+  reference: string;
+  note: string;
+  period: string;
+  paid_at: string;
+};
+
+export type BillingSummary = {
+  user: Pick<User, "id" | "email" | "display_name">;
+  period: string;
+  period_start: string;
+  period_end: string;
+  currency: string;
+  confirmed_cost: string;
+  estimated_cost: string;
+  paid: string;
+  balance: string;
+  usage: UsageEvent[];
+  payments: Payment[];
 };
 
 type ApiOptions = RequestInit & { body?: BodyInit | null };
@@ -85,6 +127,20 @@ export const api = {
   job: (jobId: string) => request<Job>(`/api/jobs/${jobId}`),
   jobs: (projectId?: string) =>
     request<Job[]>(`/api/jobs${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`),
+  billingSummary: (month?: string) =>
+    request<BillingSummary>(`/api/billing/summary${month ? `?month=${encodeURIComponent(month)}` : ""}`),
+  clientBillingSummaries: (month?: string) =>
+    request<BillingSummary[]>(`/api/admin/billing/clients${month ? `?month=${encodeURIComponent(month)}` : ""}`),
+  recordManualPayment: (
+    userId: string,
+    amount: string,
+    period: string,
+    reference: string,
+    note: string,
+  ) => request<Payment>("/api/admin/billing/payments", {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId, amount, period, reference, note }),
+  }),
   pauseJob: (jobId: string) => request<Job>(`/api/jobs/${jobId}/pause`, { method: "POST" }),
   resumeJob: (jobId: string) => request<Job>(`/api/jobs/${jobId}/resume`, { method: "POST" }),
   cancelJob: (jobId: string) => request<Job>(`/api/jobs/${jobId}/cancel`, { method: "POST" }),

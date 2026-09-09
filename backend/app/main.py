@@ -14,8 +14,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .auth import require_user, router as auth_router
+from .billing import admin_router as admin_billing_router
+from .billing import router as billing_router
 from .config import settings
-from .database import get_db, init_database
+from .costs import seed_default_rates
+from .database import SessionLocal, get_db, init_database
 from .jobs import Job, JobManager, TERMINAL_STATES
 from .models import Project, User
 from .projects import router as projects_router
@@ -25,6 +28,8 @@ from .runtime import manager, storage
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_database()
+    with SessionLocal() as db:
+        seed_default_rates(db)
     storage.cleanup_expired()
     manager.recover_interrupted()
     yield
@@ -41,6 +46,8 @@ app.add_middleware(
 )
 app.include_router(auth_router)
 app.include_router(projects_router)
+app.include_router(billing_router)
+app.include_router(admin_billing_router)
 
 
 def owned_job(user_id: str, job_id: str) -> Job:

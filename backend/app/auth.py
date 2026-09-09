@@ -32,10 +32,16 @@ class UserResponse(BaseModel):
     id: str
     email: EmailStr
     display_name: str
+    role: str
 
 
 def user_response(user: User) -> UserResponse:
-    return UserResponse(id=user.id, email=user.email, display_name=user.display_name)
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        role=user.role,
+    )
 
 
 def require_user(
@@ -55,6 +61,12 @@ def require_user(
     user = db.get(User, auth_session.user_id)
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive account")
+    return user
+
+
+def require_admin(user: User = Depends(require_user)) -> User:
+    if user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator access required")
     return user
 
 

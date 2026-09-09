@@ -170,6 +170,42 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .delete-confirmation span { color: #7a302b; font-size: 11px; }
 .delete-confirmation button.danger { color: white; background: #b42318; border-color: #b42318; }
 
+.month-picker { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+.month-picker input { min-width: 170px; padding-block: 10px; }
+.cost-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; }
+.cost-cards article { padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: white; box-shadow: 0 8px 30px rgba(13, 24, 43, .035); }
+.cost-cards span, .cost-cards strong, .cost-cards small { display: block; }
+.cost-cards span { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+.cost-cards strong { margin: 10px 0 6px; color: #132237; font-size: 22px; }
+.cost-cards small { color: #8b94a3; font-size: 10px; }
+.billing-section { margin-top: 36px; }
+.billing-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; background: white; }
+.billing-table { width: 100%; border-collapse: collapse; }
+.billing-table th, .billing-table td { padding: 15px 18px; border-bottom: 1px solid #edf0f4; text-align: left; font-size: 12px; }
+.billing-table th { color: #798395; background: #f8fafb; font-size: 10px; text-transform: uppercase; letter-spacing: .07em; }
+.billing-table tr:last-child td { border-bottom: 0; }
+.billing-table td > strong, .billing-table td > small { display: block; }
+.billing-table td > small { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.cost-status { display: inline-block; padding: 5px 8px; border-radius: 999px; color: #426454; background: #eaf7f1; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.cost-status.estimated { color: #865c16; background: #fff7df; }
+.compact-empty { min-height: 210px; }
+.payment-list { display: grid; gap: 9px; }
+.payment-list article { display: flex; justify-content: space-between; gap: 20px; align-items: center; padding: 15px 18px; border: 1px solid var(--line); border-radius: 11px; background: white; }
+.payment-list strong, .payment-list small { display: block; }
+.payment-list small { margin-top: 4px; color: var(--muted); font-size: 10px; }
+.admin-billing-grid { display: grid; grid-template-columns: minmax(240px, .7fr) minmax(500px, 1.3fr); gap: 20px; align-items: start; }
+.client-balances, .manual-payment-card { padding: 23px; border: 1px solid var(--line); border-radius: 15px; background: white; box-shadow: 0 8px 30px rgba(13, 24, 43, .035); }
+.client-balances h2, .manual-payment-card h2 { font-size: 18px; }
+.client-balances > button { width: 100%; display: flex; justify-content: space-between; gap: 14px; align-items: center; margin-top: 8px; padding: 13px; border: 1px solid transparent; border-radius: 10px; color: #263246; background: #f7f9fb; text-align: left; }
+.client-balances > button.active { border-color: #9fd4c2; background: #f1fbf7; }
+.client-balances button span strong, .client-balances button span small { display: block; }
+.client-balances button span small { margin-top: 3px; color: var(--muted); font-size: 9px; }
+.manual-payment-card .cost-cards { grid-template-columns: repeat(2, 1fr); margin: 22px 0; }
+.manual-payment-card .cost-cards article { padding: 15px; box-shadow: none; }
+.manual-payment-card form { display: grid; gap: 13px; }
+.manual-payment-card form label { display: grid; gap: 6px; color: #344054; font-size: 11px; font-weight: 700; }
+.manual-payment-card textarea { width: 100%; resize: vertical; border: 1px solid var(--line); border-radius: 11px; padding: 13px 15px; outline: none; }
+
 @media (max-width: 900px) {
   .login-shell { grid-template-columns: 1fr; }
   .login-story { min-height: 42vh; padding: 34px; }
@@ -186,6 +222,8 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .quick-start form { width: 100%; }
   .project-header { flex-direction: column; }
   .job-list-card { grid-template-columns: 1fr; gap: 15px; }
+  .cost-cards { grid-template-columns: repeat(2, 1fr); }
+  .admin-billing-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 620px) {
@@ -205,4 +243,5 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .result-summary { grid-template-columns: repeat(2, 1fr); }
   .artifact-grid { grid-template-columns: 1fr; }
   .project-header-actions, .danger-zone, .delete-confirmation { align-items: stretch; flex-direction: column; }
+  .cost-cards, .manual-payment-card .cost-cards { grid-template-columns: 1fr; }
 }

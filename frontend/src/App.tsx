@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, Job, Project, User } from "./api";
+import { api, BillingSummary, Job, Project, User } from "./api";
 
 function Brand() {
   return (
@@ -95,6 +95,20 @@ function formatDuration(seconds?: number) {
   const rounded = Math.round(seconds);
   const minutes = Math.floor(rounded / 60);
   return `${minutes}:${String(rounded % 60).padStart(2, "0")}`;
+}
+
+function formatCurrency(value: string, currency = "USD") {
+  return new Intl.NumberFormat("fr-FR", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  }).format(Number(value));
+}
+
+function usageQuantity(quantity: number, unit: string) {
+  if (unit === "audio_second") return formatDuration(quantity);
+  return `${quantity.toLocaleString("fr-FR")} ${unit}`;
 }
 
 function ProjectEditor({
@@ -222,6 +236,172 @@ function JobsOverview({ projects, onOpen }: { projects: Project[]; onOpen: (proj
               </article>
             );
           })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CostCards({ summary }: { summary: BillingSummary }) {
+  const cards = [
+    ["Coût confirmé", summary.confirmed_cost],
+    ["Encore estimé", summary.estimated_cost],
+    ["Paiements enregistrés", summary.paid],
+    ["Solde", summary.balance],
+  ];
+  return (
+    <div className="cost-cards">
+      {cards.map(([label, value]) => (
+        <article key={label}>
+          <span>{label}</span>
+          <strong>{formatCurrency(value, summary.currency)}</strong>
+          <small>{summary.period}</small>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function BillingDetails({ summary }: { summary: BillingSummary }) {
+  return (
+    <>
+      <section className="billing-section">
+        <div className="section-heading">
+          <div><span className="eyebrow">Consommation</span><h2>Détail des opérations</h2></div>
+          <span>{summary.usage.length} écriture{summary.usage.length > 1 ? "s" : ""}</span>
+        </div>
+        {summary.usage.length === 0 ? (
+          <div className="empty-state compact-empty"><span className="empty-icon">◎</span><h3>Aucun coût ce mois-ci</h3><p>Les estimations et coûts cloud apparaîtront ici.</p></div>
+        ) : (
+          <div className="billing-table-wrap">
+            <table className="billing-table">
+              <thead><tr><th>Projet</th><th>Service</th><th>Consommation</th><th>Statut</th><th>Montant</th></tr></thead>
+              <tbody>{summary.usage.map((item) => (
+                <tr key={item.id}>
+                  <td><strong>{item.project_title || "Infrastructure"}</strong><small>{new Intl.DateTimeFormat("fr", { dateStyle: "medium" }).format(new Date(item.occurred_at))}</small></td>
+                  <td>{item.service}<small>{item.model}</small></td>
+                  <td>{usageQuantity(item.quantity, item.unit)}</td>
+                  <td><span className={`cost-status ${item.status}`}>{item.status === "confirmed" ? "Confirmé" : "Estimé"}</span></td>
+                  <td><strong>{formatCurrency(item.amount, item.currency)}</strong></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+      </section>
+      {summary.payments.length > 0 && (
+        <section className="billing-section">
+          <div className="section-heading"><div><span className="eyebrow">Règlements</span><h2>Paiements enregistrés</h2></div></div>
+          <div className="payment-list">{summary.payments.map((payment) => (
+            <article key={payment.id}>
+              <div><strong>{payment.reference || "Paiement manuel"}</strong><small>{new Intl.DateTimeFormat("fr", { dateStyle: "long" }).format(new Date(payment.paid_at))}</small></div>
+              <strong>{formatCurrency(payment.amount, payment.currency)}</strong>
+            </article>
+          ))}</div>
+        </section>
+      )}
+    </>
+  );
+}
+
+function BillingOverview() {
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [summary, setSummary] = useState<BillingSummary | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setSummary(null);
+    setError("");
+    api.billingSummary(month).then(setSummary).catch((reason) => setError(reason instanceof Error ? reason.message : "Chargement impossible."));
+  }, [month]);
+
+  return (
+    <section className="billing-overview">
+      <header className="workspace-header">
+        <div><span className="eyebrow">Transparence</span><h1>Coûts cloud</h1><p>Suivez chaque dépense associée à vos productions.</p></div>
+        <label className="month-picker">Période<input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label>
+      </header>
+      {error && <p className="form-error notice">{error}</p>}
+      {!summary ? <div className="empty-state"><span className="loader" /><p>Calcul du relevé…</p></div> : <><CostCards summary={summary} /><BillingDetails summary={summary} /></>}
+    </section>
+  );
+}
+
+function AdminBillingOverview() {
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [summaries, setSummaries] = useState<BillingSummary[]>([]);
+  const [selectedUser, setSelectedUser] = useState("");
+  const [amount, setAmount] = useState("");
+  const [reference, setReference] = useState("");
+  const [note, setNote] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function refresh() {
+    setLoading(true);
+    setError("");
+    try {
+      const items = await api.clientBillingSummaries(month);
+      setSummaries(items);
+      setSelectedUser((current) => current || items[0]?.user.id || "");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Chargement impossible.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { refresh(); }, [month]);
+
+  async function recordPayment(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedUser || !amount) return;
+    setSaving(true);
+    setError("");
+    try {
+      await api.recordManualPayment(selectedUser, amount, month, reference, note);
+      setAmount("");
+      setReference("");
+      setNote("");
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Enregistrement impossible.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const selected = summaries.find((item) => item.user.id === selectedUser);
+  return (
+    <section className="billing-overview">
+      <header className="workspace-header">
+        <div><span className="eyebrow">Administration</span><h1>Relevés clients</h1><p>Contrôlez la consommation et enregistrez les règlements reçus.</p></div>
+        <label className="month-picker">Période<input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label>
+      </header>
+      {error && <p className="form-error notice">{error}</p>}
+      {loading ? <div className="empty-state"><span className="loader" /><p>Chargement des comptes…</p></div> : (
+        <div className="admin-billing-grid">
+          <section className="client-balances">
+            <h2>Clients</h2>
+            {summaries.length === 0 ? <p>Aucun compte client.</p> : summaries.map((item) => (
+              <button className={selectedUser === item.user.id ? "active" : ""} key={item.user.id} onClick={() => setSelectedUser(item.user.id)}>
+                <span><strong>{item.user.display_name}</strong><small>{item.user.email}</small></span>
+                <strong>{formatCurrency(item.balance, item.currency)}</strong>
+              </button>
+            ))}
+          </section>
+          <section className="manual-payment-card">
+            <span className="eyebrow">Paiement manuel</span>
+            <h2>{selected?.user.display_name || "Sélectionnez un client"}</h2>
+            {selected && <CostCards summary={selected} />}
+            <form onSubmit={recordPayment}>
+              <label>Montant<input min="0.000001" step="0.000001" type="number" value={amount} onChange={(event) => setAmount(event.target.value)} required /></label>
+              <label>Référence<input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Virement, reçu…" /></label>
+              <label>Note<textarea rows={3} value={note} onChange={(event) => setNote(event.target.value)} /></label>
+              <button className="button primary compact" disabled={saving || !selectedUser} type="submit">{saving ? "Enregistrement…" : "Enregistrer le paiement"}</button>
+            </form>
+          </section>
         </div>
       )}
     </section>
@@ -400,7 +580,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [title, setTitle] = useState("");
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
-  const [view, setView] = useState<"dashboard" | "jobs">("dashboard");
+  const [view, setView] = useState<"dashboard" | "jobs" | "billing" | "admin-billing">("dashboard");
 
   useEffect(() => {
     api.projects()
@@ -422,7 +602,12 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
         return;
       }
       setSelectedProject(null);
-      setView(window.location.hash === "#jobs" ? "jobs" : "dashboard");
+      const hashView = {
+        "#jobs": "jobs",
+        "#billing": "billing",
+        "#admin-billing": "admin-billing",
+      }[window.location.hash] as typeof view | undefined;
+      setView(hashView || "dashboard");
     };
     restoreLocation();
     window.addEventListener("hashchange", restoreLocation);
@@ -479,6 +664,8 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
           <a href="#projects" onClick={() => showDashboard("projects")}><span>▱</span> Mes projets</a>
           <a href="#tools"><span>◇</span> Outils</a>
           <a className={view === "jobs" ? "active" : ""} href="#jobs" onClick={() => { setSelectedProject(null); setView("jobs"); }}><span>↻</span> Traitements</a>
+          <a className={view === "billing" ? "active" : ""} href="#billing" onClick={() => { setSelectedProject(null); setView("billing"); }}><span>◉</span> Coûts</a>
+          {user.role === "admin" && <a className={view === "admin-billing" ? "active" : ""} href="#admin-billing" onClick={() => { setSelectedProject(null); setView("admin-billing"); }}><span>▤</span> Administration</a>}
           <a href="#settings"><span>⚙</span> Paramètres</a>
         </nav>
         <div className="sidebar-user">
@@ -493,6 +680,10 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
           <ProjectWorkspace project={selectedProject} onBack={() => showDashboard("projects")} onEdit={() => setEditingProject(selectedProject)} />
         ) : view === "jobs" ? (
           <JobsOverview projects={projects} onOpen={openProject} />
+        ) : view === "billing" ? (
+          <BillingOverview />
+        ) : view === "admin-billing" && user.role === "admin" ? (
+          <AdminBillingOverview />
         ) : (
           <>
         <header className="workspace-header">

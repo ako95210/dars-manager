@@ -5,11 +5,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from alembic import command
 from sqlalchemy import create_engine, text
 
 from backend.app import database
-from backend.app.database import Base
-from backend.app import models  # noqa: F401
 
 
 class DatabaseMigrationTests(unittest.TestCase):
@@ -17,7 +16,12 @@ class DatabaseMigrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "legacy.db"
             legacy_engine = create_engine(f"sqlite+pysqlite:///{database_path}")
-            Base.metadata.create_all(legacy_engine)
+
+            config = database._alembic_config()
+            with legacy_engine.begin() as connection:
+                config.attributes["connection"] = connection
+                command.upgrade(config, database.INITIAL_REVISION)
+                connection.execute(text("DROP TABLE alembic_version"))
 
             with patch.object(database, "engine", legacy_engine):
                 database.init_database()
@@ -26,7 +30,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 revision = connection.scalar(
                     text("SELECT version_num FROM alembic_version")
                 )
-            self.assertEqual(revision, database.INITIAL_REVISION)
+            self.assertEqual(revision, database.CURRENT_REVISION)
             legacy_engine.dispose()
 
 
