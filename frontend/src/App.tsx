@@ -413,6 +413,7 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
   const [model, setModel] = useState("base");
   const [job, setJob] = useState<Job | null | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
+  const [uploadStage, setUploadStage] = useState<"reserve" | "upload" | "validate" | "start" | null>(null);
   const [actionPending, setActionPending] = useState(false);
   const [error, setError] = useState("");
 
@@ -446,11 +447,12 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
     setSubmitting(true);
     setError("");
     try {
-      setJob(await api.createJob(project.id, file, model, "fr"));
+      setJob(await api.createJob(project.id, file, model, "fr", setUploadStage));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Import impossible.");
     } finally {
       setSubmitting(false);
+      setUploadStage(null);
     }
   }
 
@@ -524,7 +526,12 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
               </select>
             </label>
             <button className="button accent" disabled={!file || submitting} type="submit">
-              {submitting ? "Envoi en cours…" : "Lancer le traitement"}
+              {submitting ? ({
+                reserve: "Préparation…",
+                upload: "Envoi temporaire…",
+                validate: "Vérification…",
+                start: "Démarrage…",
+              }[uploadStage || "reserve"]) : "Lancer le traitement"}
             </button>
           </div>
         </form>
@@ -539,6 +546,14 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
             <strong className="progress-value">{progress}%</strong>
           </div>
           <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
+          {job.source_expires_at && (
+            <p className="retention-note">
+              Média source conservé temporairement jusqu’au {new Intl.DateTimeFormat("fr", {
+                dateStyle: "long",
+                timeStyle: "short",
+              }).format(new Date(job.source_expires_at))}.
+            </p>
+          )}
 
           {job.state === "completed" && (
             <div className="result-summary">

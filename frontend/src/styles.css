@@ -128,6 +128,7 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .progress-value { color: #158462; font-size: 28px; }
 .progress-track { height: 8px; margin: 28px 0; overflow: hidden; border-radius: 999px; background: #ebeff3; }
 .progress-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #21b983, #48dfa8); transition: width .5s ease; }
+.retention-note { margin: -16px 0 24px; color: var(--muted); font-size: 12px; }
 .result-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 5px 0 26px; }
 .result-summary div { padding: 17px; border-radius: 11px; background: #f7f9fb; }
 .result-summary strong, .result-summary span { display: block; }

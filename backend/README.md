@@ -27,6 +27,21 @@ is reserved for queue coordination and transient worker signals; it is not the
 source of truth for a job. Audio, images, transcripts and videos are never
 stored in Redis or PostgreSQL.
 
+## Temporary media storage
+
+Uploads use a storage contract independent from the processing API. In local
+development, `DARSM_MEDIA_BACKEND=local` writes under `DARSM_MEDIA_ROOT`. In
+production, set `DARSM_MEDIA_BACKEND=s3` and configure `DARSM_S3_BUCKET`,
+`DARSM_S3_REGION` and standard AWS credentials. `DARSM_S3_ENDPOINT_URL` can
+target another S3-compatible provider.
+
+The browser first reserves an asset, uploads it with a short-lived target, then
+asks the API to validate its exact size. Source media expires after seven days
+by default (`DARSM_MEDIA_RETENTION_SECONDS=604800`). Configure the bucket with a
+matching lifecycle rule and CORS permissions for browser `POST` requests.
+Expired metadata is purged when the API starts; the bucket lifecycle remains the
+independent safety net if the API is unavailable at the expiration time.
+
 ## Run the API
 
 ```bash

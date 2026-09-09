@@ -5,12 +5,15 @@ import shutil
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 
 TEST_ID = uuid.uuid4().hex
 TEST_ROOT = Path("/dev/shm") / f"dars-api-tests-{TEST_ID}"
 TEST_DATABASE = Path("/dev/shm") / f"dars-api-tests-{TEST_ID}.db"
 os.environ["DARSM_TEMP_ROOT"] = str(TEST_ROOT)
+os.environ["DARSM_MEDIA_BACKEND"] = "local"
+os.environ["DARSM_MEDIA_ROOT"] = str(TEST_ROOT / "media")
 os.environ["DARSM_DATABASE_URL"] = f"sqlite+pysqlite:///{TEST_DATABASE}"
 os.environ["DARSM_COOKIE_SECURE"] = "false"
 
@@ -131,6 +134,69 @@ class ApiTests(unittest.TestCase):
             deleted = client.delete(f"/api/projects/{project_id}")
             self.assertEqual(deleted.status_code, 204, deleted.text)
             self.assertEqual(client.get(f"/api/projects/{project_id}").status_code, 404)
+
+    def test_temporary_upload_is_private_validated_and_launches_from_asset(self) -> None:
+        content = b"small-audio-placeholder"
+        with TestClient(app) as client_a:
+            self.login(client_a, "pilot-a@example.com", "mot-de-passe-a")
+            project = client_a.post("/api/projects", json={"title": "Upload objet"})
+            self.assertEqual(project.status_code, 201, project.text)
+            project_id = project.json()["id"]
+            reservation = client_a.post(
+                "/api/uploads",
+                json={
+                    "project_id": project_id,
+                    "filename": "cours.wav",
+                    "content_type": "audio/wav",
+                    "size_bytes": len(content),
+                },
+            )
+            self.assertEqual(reservation.status_code, 201, reservation.text)
+            payload = reservation.json()
+            asset_id = payload["asset"]["id"]
+            self.assertEqual(payload["asset"]["status"], "pending")
+            self.assertEqual(payload["upload"]["method"], "PUT")
+
+            wrong_size = client_a.put(payload["upload"]["url"], content=b"short")
+            self.assertEqual(wrong_size.status_code, 422, wrong_size.text)
+
+        with TestClient(app) as client_b:
+            self.login(client_b, "pilot-b@example.com", "mot-de-passe-b")
+            forbidden = client_b.put(payload["upload"]["url"], content=content)
+            self.assertEqual(forbidden.status_code, 404, forbidden.text)
+            self.assertEqual(
+                client_b.post(f"/api/uploads/{asset_id}/complete").status_code,
+                404,
+            )
+
+        with TestClient(app) as client_a:
+            self.login(client_a, "pilot-a@example.com", "mot-de-passe-a")
+            uploaded = client_a.put(
+                payload["upload"]["url"],
+                content=content,
+                headers={"Content-Type": "audio/wav"},
+            )
+            self.assertEqual(uploaded.status_code, 200, uploaded.text)
+            self.assertEqual(uploaded.json()["status"], "ready")
+            completed = client_a.post(f"/api/uploads/{asset_id}/complete")
+            self.assertEqual(completed.status_code, 200, completed.text)
+
+            with patch("backend.app.uploads.manager.start"):
+                launched = client_a.post(
+                    "/api/jobs/from-asset",
+                    json={"asset_id": asset_id, "model": "base", "language": "fr"},
+                )
+            self.assertEqual(launched.status_code, 202, launched.text)
+            with SessionLocal() as db:
+                owner = db.scalar(select(User).where(User.email == "pilot-a@example.com"))
+                self.assertIsNotNone(owner)
+                job = manager.get(owner.id, launched.json()["id"])
+            self.assertIsNotNone(job)
+            self.assertEqual(job.source_asset_id, asset_id)
+            self.assertEqual(job.input_path.read_bytes(), content)
+            manager.delete(job)
+            self.assertEqual(client_a.delete(f"/api/uploads/{asset_id}").status_code, 204)
+            self.assertEqual(client_a.delete(f"/api/projects/{project_id}").status_code, 204)
 
     def test_jobs_can_be_listed_by_project(self) -> None:
         with TestClient(app) as client:

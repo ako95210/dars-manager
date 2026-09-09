@@ -23,6 +23,9 @@ from .jobs import Job, JobManager, TERMINAL_STATES
 from .models import Project, User
 from .projects import router as projects_router
 from .runtime import manager, storage
+from .uploads import cleanup_expired_assets
+from .uploads import jobs_router as asset_jobs_router
+from .uploads import router as uploads_router
 
 
 @asynccontextmanager
@@ -30,6 +33,7 @@ async def lifespan(_: FastAPI):
     init_database()
     with SessionLocal() as db:
         seed_default_rates(db)
+        cleanup_expired_assets(db)
     storage.cleanup_expired()
     manager.recover_interrupted()
     yield
@@ -48,6 +52,8 @@ app.include_router(auth_router)
 app.include_router(projects_router)
 app.include_router(billing_router)
 app.include_router(admin_billing_router)
+app.include_router(uploads_router)
+app.include_router(asset_jobs_router)
 
 
 def owned_job(user_id: str, job_id: str) -> Job:

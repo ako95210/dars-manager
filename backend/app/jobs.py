@@ -29,6 +29,8 @@ class Job:
     model_name: str
     language: str
     cpu_threads: int
+    source_asset_id: str | None = None
+    source_expires_at: str | None = None
     state: str = "queued"
     stage: str = "upload"
     message: str = "Upload received"
@@ -47,6 +49,8 @@ class Job:
         return {
             "id": self.id,
             "project_id": self.project_id,
+            "source_asset_id": self.source_asset_id,
+            "source_expires_at": self.source_expires_at,
             "state": self.state,
             "stage": self.stage,
             "message": self.message,
@@ -68,6 +72,8 @@ class Job:
             "model_name": self.model_name,
             "language": self.language,
             "cpu_threads": self.cpu_threads,
+            "source_asset_id": self.source_asset_id,
+            "source_expires_at": self.source_expires_at,
             "state": self.state,
             "stage": self.stage,
             "message": self.message,
@@ -90,6 +96,8 @@ class Job:
             model_name=record["model_name"],
             language=record["language"],
             cpu_threads=int(record["cpu_threads"]),
+            source_asset_id=record.get("source_asset_id"),
+            source_expires_at=record.get("source_expires_at"),
             state=record["state"],
             stage=record["stage"],
             message=record["message"],
@@ -152,6 +160,8 @@ class JobManager:
         model_name: str,
         language: str,
         cpu_threads: int,
+        source_asset_id: str | None = None,
+        source_expires_at: str | None = None,
     ) -> Job:
         job_id = uuid.uuid4().hex
         workspace = self.storage.create_workspace(user_id, job_id)
@@ -165,6 +175,8 @@ class JobManager:
             model_name=model_name,
             language=language,
             cpu_threads=cpu_threads,
+            source_asset_id=source_asset_id,
+            source_expires_at=source_expires_at,
         )
         with self._lock:
             self.jobs[job_id] = job

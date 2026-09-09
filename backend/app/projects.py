@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 from .auth import require_user
 from .database import get_db
 from .jobs import TERMINAL_STATES
-from .models import Project, User
-from .runtime import manager
+from .models import Asset, Project, User
+from .runtime import manager, media_storage
 
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -132,6 +132,17 @@ def delete_project(
             status_code=status.HTTP_409_CONFLICT,
             detail="Un traitement est encore actif pour ce projet",
         )
+    assets = db.scalars(select(Asset).where(Asset.project_id == project.id)).all()
+    for asset in assets:
+        if not asset.storage_key:
+            continue
+        try:
+            media_storage.delete(asset.storage_key)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Le média temporaire n'a pas pu être supprimé; réessayez.",
+            ) from exc
     for job in jobs:
         manager.delete(job)
     db.delete(project)

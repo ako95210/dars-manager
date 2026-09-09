@@ -6,13 +6,18 @@ Objectif : mise à disposition d'une bêta privée à un client le 26 octobre 20
 ## Avancement
 
 - Lot 0 : terminé le 9 septembre 2026.
-- Lot 1 : en cours.
+- Lot 1 : socle métier terminé, séparation physique du worker encore à faire.
   - rôles client/administrateur : terminé ;
   - catalogue de tarifs et registre de consommation : terminé ;
   - relevé client et saisie administrative des paiements : première version terminée ;
   - état complet des jobs dans PostgreSQL : terminé ;
   - séparation du worker et limitation de concurrence : à terminer avec le
     stockage objet, afin de ne pas créer un partage de disque transitoire.
+- Lot 2 : en cours.
+  - contrat `MediaStorage` local/S3 : terminé ;
+  - réservation d'asset, upload direct et validation de taille : terminé ;
+  - lancement d'un job depuis un asset : terminé ;
+  - empreinte, purge planifiée et mesure du stockage : à terminer.
 
 ## État de départ
 
@@ -26,9 +31,10 @@ Déjà validé ou présent dans le dépôt :
 - upload, progression, pause, annulation et téléchargement ;
 - premiers écrans d'édition/suppression de projet et de récupération des jobs.
 
-Le pipeline actuel s'exécute encore localement et l'état métier des jobs n'est
-pas encore durable dans PostgreSQL. Le frontend web ne reprend pas encore toutes
-les fonctions d'édition de l'application historique.
+Le pipeline actuel s'exécute encore dans un processus enfant de l'API. L'état
+métier des jobs est durable dans PostgreSQL, mais un redémarrage de l'API marque
+encore le traitement comme interrompu. Le frontend web ne reprend pas encore
+toutes les fonctions d'édition de l'application historique.
 
 ## Périmètre fonctionnel de la bêta
 

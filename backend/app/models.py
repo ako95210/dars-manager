@@ -63,6 +63,11 @@ class Asset(Base):
     original_name: Mapped[str] = mapped_column(String(255))
     content_type: Mapped[str] = mapped_column(String(120))
     size_bytes: Mapped[int] = mapped_column(Integer)
+    storage_key: Mapped[str | None] = mapped_column(
+        String(700), unique=True, index=True, nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
@@ -99,6 +104,7 @@ class Artifact(Base):
     kind: Mapped[str] = mapped_column(String(40))
     mime_type: Mapped[str] = mapped_column(String(120))
     size_bytes: Mapped[int] = mapped_column(Integer)
+    storage_key: Mapped[str | None] = mapped_column(String(700), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 

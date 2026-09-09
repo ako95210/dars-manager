@@ -16,6 +16,8 @@ export type Project = {
 export type Job = {
   id: string;
   project_id: string;
+  source_asset_id?: string | null;
+  source_expires_at?: string | null;
   state: "queued" | "running" | "paused" | "cancelling" | "completed" | "cancelled" | "failed" | "expired";
   stage: string;
   message: string;
@@ -29,6 +31,25 @@ export type Job = {
     parts?: number;
     duration_seconds?: number;
     elapsed_seconds?: number;
+  };
+};
+
+export type Asset = {
+  id: string;
+  project_id: string;
+  original_name: string;
+  content_type: string;
+  size_bytes: number;
+  status: "pending" | "ready";
+  expires_at: string;
+};
+
+type UploadReservation = {
+  asset: Asset;
+  upload: {
+    method: "PUT" | "POST";
+    url: string;
+    fields: Record<string, string>;
   };
 };
 
@@ -116,13 +137,55 @@ export const api = {
     }),
   deleteProject: (projectId: string) =>
     request<void>(`/api/projects/${projectId}`, { method: "DELETE" }),
-  createJob: (projectId: string, file: File, model: string, language: string) => {
-    const body = new FormData();
-    body.append("file", file);
-    body.append("project_id", projectId);
-    body.append("model", model);
-    body.append("language", language);
-    return request<Job>("/api/jobs", { method: "POST", body });
+  createJob: async (
+    projectId: string,
+    file: File,
+    model: string,
+    language: string,
+    onStage?: (stage: "reserve" | "upload" | "validate" | "start") => void,
+  ) => {
+    onStage?.("reserve");
+    const reservation = await request<UploadReservation>("/api/uploads", {
+      method: "POST",
+      body: JSON.stringify({
+        project_id: projectId,
+        filename: file.name,
+        content_type: file.type || "application/octet-stream",
+        size_bytes: file.size,
+      }),
+    });
+
+    try {
+      onStage?.("upload");
+      let uploadResponse: Response;
+      if (reservation.upload.method === "POST") {
+        const body = new FormData();
+        Object.entries(reservation.upload.fields).forEach(([key, value]) => body.append(key, value));
+        body.append("file", file);
+        uploadResponse = await fetch(reservation.upload.url, { method: "POST", body });
+      } else {
+        uploadResponse = await fetch(reservation.upload.url, {
+          method: "PUT",
+          body: file,
+          credentials: "include",
+          headers: { "Content-Type": file.type || "application/octet-stream" },
+        });
+      }
+      if (!uploadResponse.ok) throw new Error("L’envoi du fichier temporaire a échoué.");
+
+      onStage?.("validate");
+      await request<Asset>(`/api/uploads/${reservation.asset.id}/complete`, { method: "POST" });
+    } catch (reason) {
+      await request<void>(`/api/uploads/${reservation.asset.id}`, { method: "DELETE" }).catch(() => undefined);
+      throw reason;
+    }
+    // Once validated, keep the asset if the start response is interrupted so
+    // the user can retry without uploading a large file again.
+    onStage?.("start");
+    return request<Job>("/api/jobs/from-asset", {
+      method: "POST",
+      body: JSON.stringify({ asset_id: reservation.asset.id, model, language }),
+    });
   },
   job: (jobId: string) => request<Job>(`/api/jobs/${jobId}`),
   jobs: (projectId?: string) =>
