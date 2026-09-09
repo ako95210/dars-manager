@@ -20,6 +20,7 @@ from sqlalchemy import select, text
 from backend.app.costs import record_usage
 from backend.app.database import CURRENT_REVISION, SessionLocal, engine, init_database
 from backend.app.main import app, manager
+from backend.app.jobs import JobManager
 from backend.app.models import User
 from backend.app.security import hash_password
 
@@ -144,6 +145,9 @@ class ApiTests(unittest.TestCase):
 
             job = manager.create(user_id, project_id, "course.wav", "base", "fr", 1)
             try:
+                restored = JobManager(manager.storage, manager.state_store).get(user_id, job.id)
+                self.assertIsNotNone(restored)
+                self.assertEqual(restored.project_id, project_id)
                 response = client.get(f"/api/jobs?project_id={project_id}")
                 self.assertEqual(response.status_code, 200, response.text)
                 self.assertEqual([item["id"] for item in response.json()], [job.id])

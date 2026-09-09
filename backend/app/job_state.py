@@ -4,9 +4,14 @@ import copy
 import json
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from redis import Redis
+from sqlalchemy import select
+
+from .database import SessionLocal
+from .models import JobRecord as DatabaseJobRecord
 
 
 JobRecord = dict[str, Any]
@@ -97,6 +102,62 @@ class RedisJobStateStore:
             if payload:
                 records.append(json.loads(payload))
         return records
+
+
+class DatabaseJobStateStore:
+    """Durable job state. Redis remains available for queueing, not ownership."""
+
+    def __init__(self, ttl_seconds: int, session_factory=SessionLocal) -> None:
+        self.ttl_seconds = ttl_seconds
+        self.session_factory = session_factory
+
+    def save(self, record: JobRecord) -> None:
+        updated_at = datetime.fromtimestamp(
+            float(record.get("updated_at", time.time())), timezone.utc
+        )
+        with self.session_factory() as db:
+            row = db.get(DatabaseJobRecord, record["id"])
+            if row is None:
+                row = DatabaseJobRecord(
+                    id=record["id"],
+                    user_id=record["user_id"],
+                    project_id=record["project_id"],
+                    tool="audio_pipeline",
+                    created_at=datetime.fromtimestamp(
+                        float(record.get("created_at", time.time())), timezone.utc
+                    ),
+                )
+                db.add(row)
+            row.model_name = record.get("model_name", "")
+            row.language = record.get("language", "")
+            row.state = record.get("state", "queued")
+            row.stage = record.get("stage", "upload")
+            row.message = record.get("message", "")
+            row.progress = round(float(record.get("progress", 0)) * 100)
+            row.error_code = "pipeline_failed" if row.state == "failed" else None
+            row.payload = copy.deepcopy(record)
+            row.updated_at = updated_at
+            row.expires_at = updated_at + timedelta(seconds=self.ttl_seconds)
+            db.commit()
+
+    def get(self, job_id: str) -> JobRecord | None:
+        with self.session_factory() as db:
+            row = db.get(DatabaseJobRecord, job_id)
+            return copy.deepcopy(row.payload) if row and row.payload else None
+
+    def delete(self, job_id: str) -> None:
+        with self.session_factory() as db:
+            row = db.get(DatabaseJobRecord, job_id)
+            if row is not None:
+                db.delete(row)
+                db.commit()
+
+    def all(self) -> list[JobRecord]:
+        with self.session_factory() as db:
+            rows = db.scalars(
+                select(DatabaseJobRecord).order_by(DatabaseJobRecord.updated_at.desc())
+            )
+            return [copy.deepcopy(row.payload) for row in rows if row.payload]
 
 
 def create_job_state_store(

@@ -15,10 +15,10 @@ run explicitly before an administrative operation:
 python backend/manage.py migrate
 ```
 
-When `DARSM_REDIS_URL` is configured, job progress and artifact metadata are
-kept in Redis with the same TTL as the temporary workspace. Without that
-variable, the local development fallback keeps this state in process memory.
-Audio, images, transcripts and videos are never stored in Redis.
+Job progress and completed artifact metadata are persisted in PostgreSQL. Redis
+is reserved for queue coordination and transient worker signals; it is not the
+source of truth for a job. Audio, images, transcripts and videos are never
+stored in Redis or PostgreSQL.
 
 ## Run the API
 
