@@ -3,6 +3,17 @@
 Date de départ : 9 septembre 2026.
 Objectif : mise à disposition d'une bêta privée à un client le 26 octobre 2026.
 
+## Avancement
+
+- Lot 0 : terminé le 9 septembre 2026.
+- Lot 1 : en cours.
+  - rôles client/administrateur : terminé ;
+  - catalogue de tarifs et registre de consommation : terminé ;
+  - relevé client et saisie administrative des paiements : première version terminée ;
+  - état complet des jobs dans PostgreSQL : terminé ;
+  - séparation du worker et limitation de concurrence : à terminer avec le
+    stockage objet, afin de ne pas créer un partage de disque transitoire.
+
 ## État de départ
 
 Déjà validé ou présent dans le dépôt :
