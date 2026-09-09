@@ -42,6 +42,23 @@ matching lifecycle rule and CORS permissions for browser `POST` requests.
 Expired metadata is purged when the API starts; the bucket lifecycle remains the
 independent safety net if the API is unavailable at the expiration time.
 
+Every source and generated artifact receives a SHA-256 digest. The worker
+recomputes the source digest after download and rejects an object that changed
+after a previous verification.
+
+Run periodic metering and deletion independently from the API with:
+
+```bash
+python -m backend.maintenance
+```
+
+The service records cumulative storage in millionths of a decimal GB-month,
+then purges expired objects. Set `DARSM_STORAGE_PROVIDER`,
+`DARSM_STORAGE_MODEL`, `DARSM_STORAGE_GB_MONTH_USD` and
+`DARSM_STORAGE_PRICE_SOURCE_URL` from the selected provider's invoice. An S3
+deployment refuses to start without an explicit GB-month rate; request charges
+will be added separately when the final provider is selected.
+
 ## Separate worker
 
 Set `DARSM_EXECUTION_BACKEND=worker` on the API, then run the worker as a

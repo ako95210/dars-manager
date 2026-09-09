@@ -21,10 +21,10 @@ from .costs import seed_default_rates
 from .database import SessionLocal, get_db, init_database
 from .jobs import Job, JobManager, TERMINAL_STATES
 from .media_storage import LocalMediaStorage
-from .models import Artifact, Project, User
+from .models import Artifact, Asset, Project, User
 from .projects import router as projects_router
 from .runtime import job_queue, manager, media_storage, storage
-from .uploads import cleanup_expired_assets
+from .media_lifecycle import meter_media, purge_expired_media
 from .uploads import jobs_router as asset_jobs_router
 from .uploads import router as uploads_router
 
@@ -34,7 +34,7 @@ async def lifespan(_: FastAPI):
     init_database()
     with SessionLocal() as db:
         seed_default_rates(db)
-        cleanup_expired_assets(db)
+        purge_expired_media(db)
     storage.cleanup_expired()
     manager.recover_interrupted()
     yield
@@ -84,6 +84,11 @@ async def create_job(
         select(Project).where(Project.id == project_id, Project.user_id == user.id)
     ) is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    if settings.execution_backend == "worker":
+        raise HTTPException(
+            status_code=410,
+            detail="Use the temporary asset upload flow for worker execution",
+        )
     try:
         job = manager.create(
             user.id,
@@ -236,6 +241,36 @@ def download_artifact(
     return FileResponse(path, filename=path.name, media_type=media_types.get(artifact))
 
 
+@app.delete("/api/jobs/{job_id}/source")
+def delete_job_source(
+    job_id: str,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    job = owned_job(user.id, job_id)
+    if job.state not in TERMINAL_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail="Le média source ne peut être supprimé qu'après le traitement.",
+        )
+    if not job.source_asset_id:
+        return job.public()
+    asset = db.scalar(
+        select(Asset).where(Asset.id == job.source_asset_id, Asset.user_id == user.id)
+    )
+    if asset is not None:
+        meter_media(db, asset)
+        if asset.storage_key:
+            try:
+                media_storage.delete(asset.storage_key)
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail="Source deletion failed") from exc
+        db.delete(asset)
+        db.commit()
+    manager.clear_source(job)
+    return job.public()
+
+
 @app.delete("/api/jobs/{job_id}", status_code=204)
 def delete_job(
     job_id: str,
@@ -247,11 +282,13 @@ def delete_job(
         select(Artifact).where(Artifact.job_id == job.id, Artifact.user_id == user.id)
     ).all()
     for row in artifacts:
+        meter_media(db, row)
         if row.storage_key:
             try:
                 media_storage.delete(row.storage_key)
             except Exception as exc:
                 raise HTTPException(status_code=502, detail="Artifact deletion failed") from exc
+    db.commit()
     manager.delete(job)
 
 

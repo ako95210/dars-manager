@@ -41,6 +41,7 @@ export type Asset = {
   content_type: string;
   size_bytes: number;
   status: "pending" | "ready";
+  checksum_sha256: string | null;
   expires_at: string;
 };
 
@@ -208,5 +209,7 @@ export const api = {
   resumeJob: (jobId: string) => request<Job>(`/api/jobs/${jobId}/resume`, { method: "POST" }),
   cancelJob: (jobId: string) => request<Job>(`/api/jobs/${jobId}/cancel`, { method: "POST" }),
   deleteJob: (jobId: string) => request<void>(`/api/jobs/${jobId}`, { method: "DELETE" }),
+  deleteJobSource: (jobId: string) =>
+    request<Job>(`/api/jobs/${jobId}/source`, { method: "DELETE" }),
   artifactUrl: (jobId: string, artifact: string) => `/api/jobs/${jobId}/artifacts/${artifact}`,
 };

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 
@@ -19,6 +20,11 @@ class Settings:
     s3_bucket: str | None
     s3_region: str
     s3_endpoint_url: str | None
+    storage_provider: str
+    storage_model: str
+    storage_gb_month_usd: Decimal
+    storage_price_source_url: str
+    maintenance_interval_seconds: int
     job_ttl_seconds: int
     max_upload_bytes: int
     whisper_cpu_threads: int
@@ -41,6 +47,17 @@ def load_settings() -> Settings:
     execution_backend = os.environ.get("DARSM_EXECUTION_BACKEND", "inline").strip().lower()
     if execution_backend not in {"inline", "worker"}:
         raise ValueError("DARSM_EXECUTION_BACKEND must be 'inline' or 'worker'")
+    raw_storage_price = os.environ.get("DARSM_STORAGE_GB_MONTH_USD", "").strip()
+    if media_backend == "s3" and not raw_storage_price:
+        raise ValueError(
+            "DARSM_STORAGE_GB_MONTH_USD is required when DARSM_MEDIA_BACKEND=s3"
+        )
+    try:
+        storage_price = Decimal(raw_storage_price or "0")
+    except InvalidOperation as exc:
+        raise ValueError("DARSM_STORAGE_GB_MONTH_USD must be a decimal number") from exc
+    if storage_price < 0:
+        raise ValueError("DARSM_STORAGE_GB_MONTH_USD cannot be negative")
     return Settings(
         workspace_root=root,
         media_backend=media_backend,
@@ -60,6 +77,20 @@ def load_settings() -> Settings:
         s3_bucket=os.environ.get("DARSM_S3_BUCKET", "").strip() or None,
         s3_region=os.environ.get("DARSM_S3_REGION", "eu-west-3"),
         s3_endpoint_url=os.environ.get("DARSM_S3_ENDPOINT_URL", "").strip() or None,
+        storage_provider=(
+            os.environ.get("DARSM_STORAGE_PROVIDER", "").strip()
+            or ("local" if media_backend == "local" else "s3-compatible")
+        ),
+        storage_model=(
+            os.environ.get("DARSM_STORAGE_MODEL", "").strip() or "temporary-standard"
+        ),
+        storage_gb_month_usd=storage_price,
+        storage_price_source_url=os.environ.get(
+            "DARSM_STORAGE_PRICE_SOURCE_URL", ""
+        ).strip(),
+        maintenance_interval_seconds=max(
+            60, int(os.environ.get("DARSM_MAINTENANCE_INTERVAL_SECONDS", "3600"))
+        ),
         job_ttl_seconds=int(os.environ.get("DARSM_JOB_TTL_SECONDS", "7200")),
         max_upload_bytes=int(os.environ.get("DARSM_MAX_UPLOAD_BYTES", str(500 * 1024 * 1024))),
         whisper_cpu_threads=max(1, int(os.environ.get("DARSM_WHISPER_CPU_THREADS", "4"))),

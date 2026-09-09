@@ -108,6 +108,7 @@ function formatCurrency(value: string, currency = "USD") {
 
 function usageQuantity(quantity: number, unit: string) {
   if (unit === "audio_second") return formatDuration(quantity);
+  if (unit === "micro_gb_month") return `${(quantity / 1_000_000).toFixed(6)} Go-mois`;
   return `${quantity.toLocaleString("fr-FR")} ${unit}`;
 }
 
@@ -456,7 +457,7 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
     }
   }
 
-  async function runAction(action: "pause" | "resume" | "cancel" | "delete") {
+  async function runAction(action: "pause" | "resume" | "cancel" | "delete" | "delete-source") {
     if (!job) return;
     setActionPending(true);
     setError("");
@@ -465,6 +466,8 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
         await api.deleteJob(job.id);
         setJob(null);
         setFile(null);
+      } else if (action === "delete-source") {
+        setJob(await api.deleteJobSource(job.id));
       } else {
         const handler = {
           pause: api.pauseJob,
@@ -578,6 +581,9 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
             {job.state === "running" && <button disabled={actionPending} onClick={() => runAction("pause")}>Mettre en pause</button>}
             {job.state === "paused" && <button disabled={actionPending} onClick={() => runAction("resume")}>Reprendre</button>}
             {!terminalStates.has(job.state) && <button className="danger" disabled={actionPending} onClick={() => runAction("cancel")}>Annuler</button>}
+            {terminalStates.has(job.state) && job.source_asset_id && (
+              <button className="danger" disabled={actionPending} onClick={() => runAction("delete-source")}>Supprimer le média source</button>
+            )}
             {terminalStates.has(job.state) && <button disabled={actionPending} onClick={() => runAction("delete")}>Nouveau traitement</button>}
           </div>
         </div>

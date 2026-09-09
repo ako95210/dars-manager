@@ -5,9 +5,11 @@ from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .models import PriceRate, Project, UsageEvent
+from .config import settings
 
 
 NANOS_PER_CURRENCY_UNIT = 1_000_000_000
@@ -51,8 +53,27 @@ def seed_default_rates(db: Session) -> None:
             "source_url": "https://developers.openai.com/api/docs/models/whisper-1",
             "details": {"published_rate": "0.006 USD/audio minute"},
         },
+        {
+            "provider": settings.storage_provider,
+            "service": "object_storage",
+            "model": settings.storage_model,
+            "unit": "micro_gb_month",
+            "currency": "USD",
+            # One unit is one millionth of a decimal GB-month.
+            "unit_amount_nanos": int(
+                (settings.storage_gb_month_usd * Decimal("1000")).quantize(
+                    Decimal("1"), rounding=ROUND_HALF_UP
+                )
+            ),
+            "effective_from": datetime(2026, 9, 9, tzinfo=timezone.utc),
+            "source_url": settings.storage_price_source_url,
+            "details": {
+                "published_rate": f"{settings.storage_gb_month_usd} USD/GB-month",
+                "gb_definition": "1000000000 bytes",
+                "month_definition": "30 days",
+            },
+        },
     ]
-    changed = False
     for values in defaults:
         exists = db.scalar(
             select(PriceRate.id).where(
@@ -65,9 +86,12 @@ def seed_default_rates(db: Session) -> None:
         )
         if exists is None:
             db.add(PriceRate(**values))
-            changed = True
-    if changed:
-        db.commit()
+            try:
+                db.commit()
+            except IntegrityError:
+                # API, worker and maintenance may bootstrap simultaneously.
+                # The unique rate key makes the winning insert authoritative.
+                db.rollback()
 
 
 def active_rate(

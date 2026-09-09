@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import shutil
 import unittest
 import uuid
@@ -25,11 +26,12 @@ from backend.app.costs import record_usage
 from backend.app.database import CURRENT_REVISION, SessionLocal, engine, init_database
 from backend.app.main import app, manager
 from backend.app.jobs import JobManager
-from backend.app.models import Artifact, Asset, User, utc_now
+from backend.app.models import Artifact, Asset, UsageEvent, User, utc_now
 from backend.app.pipeline import PipelineResult
 from backend.app.runtime import media_storage
 from backend.app.security import hash_password
 from backend.worker import Worker
+from backend.maintenance import MaintenanceService
 
 
 class ApiTests(unittest.TestCase):
@@ -182,6 +184,9 @@ class ApiTests(unittest.TestCase):
             )
             self.assertEqual(uploaded.status_code, 200, uploaded.text)
             self.assertEqual(uploaded.json()["status"], "ready")
+            self.assertEqual(
+                uploaded.json()["checksum_sha256"], hashlib.sha256(content).hexdigest()
+            )
             completed = client_a.post(f"/api/uploads/{asset_id}/complete")
             self.assertEqual(completed.status_code, 200, completed.text)
 
@@ -297,11 +302,70 @@ class ApiTests(unittest.TestCase):
             with SessionLocal() as db:
                 artifacts = db.scalars(select(Artifact).where(Artifact.job_id == job.id)).all()
                 self.assertEqual(len(artifacts), 4)
+                self.assertTrue(all(item.checksum_sha256 for item in artifacts))
             downloaded = client.get(f"/api/jobs/{job.id}/artifacts/cover")
             self.assertEqual(downloaded.status_code, 200, downloaded.text)
             self.assertEqual(downloaded.content, b"cover")
+            source_deleted = client.delete(f"/api/jobs/{job.id}/source")
+            self.assertEqual(source_deleted.status_code, 200, source_deleted.text)
+            self.assertIsNone(source_deleted.json()["source_asset_id"])
+            with SessionLocal() as db:
+                self.assertIsNone(db.get(Asset, asset_id))
             self.assertEqual(client.delete(f"/api/jobs/{job.id}").status_code, 204)
-            self.assertEqual(client.delete(f"/api/uploads/{asset_id}").status_code, 204)
+            self.assertEqual(client.delete(f"/api/projects/{project_id}").status_code, 204)
+
+    def test_maintenance_meters_then_purges_expired_media(self) -> None:
+        with TestClient(app) as client:
+            self.login(client, "pilot-a@example.com", "mot-de-passe-a")
+            project = client.post("/api/projects", json={"title": "Cycle de rétention"})
+            self.assertEqual(project.status_code, 201, project.text)
+            project_id = project.json()["id"]
+            now = utc_now()
+            with SessionLocal() as db:
+                owner = db.scalar(select(User).where(User.email == "pilot-a@example.com"))
+                self.assertIsNotNone(owner)
+                asset = Asset(
+                    user_id=owner.id,
+                    project_id=project_id,
+                    kind="source_audio",
+                    original_name="expired.wav",
+                    content_type="audio/wav",
+                    size_bytes=1_000_000_000,
+                    storage_key=(
+                        f"users/{owner.id}/projects/{project_id}/assets/expired/source.wav"
+                    ),
+                    status="ready",
+                    uploaded_at=now - timedelta(days=30),
+                    storage_metered_at=now - timedelta(days=30),
+                    expires_at=now,
+                )
+                db.add(asset)
+                db.commit()
+                db.refresh(asset)
+                asset_id = asset.id
+                user_id = owner.id
+            source = TEST_ROOT / "expired-source.wav"
+            source.write_bytes(b"expired")
+            media_storage.upload_file(
+                f"users/{user_id}/projects/{project_id}/assets/expired/source.wav",
+                source,
+                "audio/wav",
+            )
+
+            metered, removed = MaintenanceService().run_cycle()
+            self.assertEqual(metered, 1_000_000)
+            self.assertEqual(removed, 1)
+            with SessionLocal() as db:
+                self.assertIsNone(db.get(Asset, asset_id))
+                event = db.scalar(
+                    select(UsageEvent).where(
+                        UsageEvent.idempotency_key
+                        == f"storage:asset:{asset_id}:total:1000000"
+                    )
+                )
+                self.assertIsNotNone(event)
+                self.assertEqual(event.quantity, 1_000_000)
+                self.assertEqual(event.amount_nanos, 0)
             self.assertEqual(client.delete(f"/api/projects/{project_id}").status_code, 204)
 
     def test_usage_and_manual_payment_are_isolated_and_auditable(self) -> None:

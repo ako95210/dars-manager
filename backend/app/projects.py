@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from .auth import require_user
 from .database import get_db
 from .jobs import TERMINAL_STATES
+from .media_lifecycle import meter_media
 from .models import Artifact, Asset, Project, User
 from .runtime import manager, media_storage
 
@@ -137,6 +138,7 @@ def delete_project(
         *db.scalars(select(Artifact).where(Artifact.project_id == project.id)).all(),
     ]
     for media_row in media_rows:
+        meter_media(db, media_row)
         if not media_row.storage_key:
             continue
         try:

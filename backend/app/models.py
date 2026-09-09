@@ -68,6 +68,11 @@ class Asset(Base):
     )
     status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
     uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    checksum_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    storage_metered_units: Mapped[int] = mapped_column(BigInteger, default=0)
+    storage_metered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
@@ -111,6 +116,11 @@ class Artifact(Base):
     mime_type: Mapped[str] = mapped_column(String(120))
     size_bytes: Mapped[int] = mapped_column(Integer)
     storage_key: Mapped[str | None] = mapped_column(String(700), nullable=True)
+    checksum_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    storage_metered_units: Mapped[int] = mapped_column(BigInteger, default=0)
+    storage_metered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
@@ -137,6 +147,7 @@ class PriceRate(Base):
             "model",
             "unit",
             "effective_from",
+            unique=True,
         ),
     )
 

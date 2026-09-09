@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import signal
 import socket
 import threading
@@ -15,6 +16,7 @@ from sqlalchemy import select
 from drsm_core import AnalysisCancelled
 
 from .app.config import settings
+from .app.costs import seed_default_rates
 from .app.database import SessionLocal, init_database
 from .app.job_state import DatabaseJobStateStore
 from .app.jobs import Job
@@ -29,6 +31,14 @@ ARTIFACTS = {
     "cover": ("cover_path", "cover.png", "image/png"),
     "video": ("video_path", "video.mp4", "video/mp4"),
 }
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class Worker:
@@ -84,6 +94,7 @@ class Worker:
         result_values = asdict(result)
         for kind, (path_field, filename, mime_type) in ARTIFACTS.items():
             source = Path(result_values[path_field])
+            checksum = sha256_file(source)
             key = f"users/{job.user_id}/projects/{job.project_id}/jobs/{job.id}/{filename}"
             media_storage.upload_file(key, source, mime_type)
             object_keys[kind] = key
@@ -96,6 +107,8 @@ class Worker:
                     mime_type=mime_type,
                     size_bytes=source.stat().st_size,
                     storage_key=key,
+                    checksum_sha256=checksum,
+                    storage_metered_at=utc_now(),
                     expires_at=expiration,
                 )
             )
@@ -139,6 +152,20 @@ class Worker:
                     raise ValueError("Source asset is unavailable")
                 source_key = asset.storage_key
             media_storage.download_file(source_key, job.input_path)
+            source_checksum = sha256_file(job.input_path)
+            with SessionLocal() as db:
+                persisted_asset = db.get(Asset, job.source_asset_id)
+                if persisted_asset is None:
+                    raise ValueError("Source asset disappeared during download")
+                if (
+                    persisted_asset.checksum_sha256
+                    and persisted_asset.checksum_sha256 != source_checksum
+                ):
+                    persisted_asset.status = "corrupt"
+                    db.commit()
+                    raise ValueError("Source asset checksum mismatch")
+                persisted_asset.checksum_sha256 = source_checksum
+                db.commit()
             if self._control_state(job) in {"cancelled", "cancelling"}:
                 raise AnalysisCancelled("Job cancelled")
 
@@ -187,6 +214,8 @@ class Worker:
 
     def run(self) -> None:
         init_database()
+        with SessionLocal() as db:
+            seed_default_rates(db)
         while not self.stop_requested.is_set():
             for job_id in self.state.recover_expired_leases(settings.worker_max_attempts):
                 try:

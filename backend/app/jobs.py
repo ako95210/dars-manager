@@ -347,6 +347,12 @@ class JobManager:
         job.updated_at = time.time()
         self._save(job)
 
+    def clear_source(self, job: Job) -> None:
+        job.source_asset_id = None
+        job.source_expires_at = None
+        job.updated_at = time.time()
+        self._save(job)
+
     def delete(self, job: Job) -> None:
         if job.process and job.process.is_alive():
             if job.cancel_event is not None:

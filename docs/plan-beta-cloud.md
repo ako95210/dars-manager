@@ -13,12 +13,14 @@ Objectif : mise à disposition d'une bêta privée à un client le 26 octobre 20
   - état complet des jobs dans PostgreSQL : terminé ;
   - worker séparé, file Redis, polling PostgreSQL, baux et tentatives : terminé ;
   - limitation de concurrence : un processus worker par défaut, quotas fins à terminer.
-- Lot 2 : en cours.
+- Lot 2 : terminé le 9 septembre 2026.
   - contrat `MediaStorage` local/S3 : terminé ;
   - réservation d'asset, upload direct et validation de taille : terminé ;
   - lancement d'un job depuis un asset : terminé ;
   - artefacts de worker stockés hors du disque API : terminé ;
-  - empreinte, purge planifiée et mesure du stockage : à terminer.
+  - empreintes SHA-256 des sources et artefacts : terminé ;
+  - purge planifiée indépendante et suppression immédiate : terminé ;
+  - mesure cumulative du stockage et écriture dans le registre : terminé.
 
 ## État de départ
 

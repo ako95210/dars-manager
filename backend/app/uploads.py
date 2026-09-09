@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,8 @@ from .auth import require_user
 from .config import settings
 from .database import get_db
 from .media_storage import LocalMediaStorage
-from .models import Artifact, Asset, Project, User, utc_now
+from .media_lifecycle import meter_media
+from .models import Asset, Project, User, utc_now
 from .runtime import job_queue, manager, media_storage
 
 
@@ -57,6 +59,7 @@ class AssetResponse(BaseModel):
     content_type: str
     size_bytes: int
     status: str
+    checksum_sha256: str | None
     expires_at: datetime
 
 
@@ -73,6 +76,7 @@ def asset_response(asset: Asset) -> AssetResponse:
         content_type=asset.content_type,
         size_bytes=asset.size_bytes,
         status=asset.status,
+        checksum_sha256=asset.checksum_sha256,
         expires_at=asset.expires_at,
     )
 
@@ -82,31 +86,6 @@ def owned_asset(db: Session, user_id: str, asset_id: str) -> Asset:
     if asset is None:
         raise HTTPException(status_code=404, detail="Asset not found")
     return asset
-
-
-def cleanup_expired_assets(db: Session) -> int:
-    """Remove expired objects and metadata; failed deletes remain retryable."""
-    assets = db.scalars(select(Asset).where(Asset.expires_at <= utc_now())).all()
-    removed = 0
-    for asset in assets:
-        try:
-            if asset.storage_key:
-                media_storage.delete(asset.storage_key)
-        except Exception:
-            continue
-        db.delete(asset)
-        removed += 1
-    artifacts = db.scalars(select(Artifact).where(Artifact.expires_at <= utc_now())).all()
-    for artifact in artifacts:
-        try:
-            if artifact.storage_key:
-                media_storage.delete(artifact.storage_key)
-        except Exception:
-            continue
-        db.delete(artifact)
-        removed += 1
-    db.commit()
-    return removed
 
 
 @router.post("", response_model=UploadResponse, status_code=201)
@@ -174,12 +153,14 @@ async def upload_local_content(
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     partial = destination.with_name(f".{destination.name}.{asset.id}.part")
     received = 0
+    checksum = hashlib.sha256()
     try:
         with partial.open("wb") as output:
             async for chunk in request.stream():
                 received += len(chunk)
                 if received > asset.size_bytes or received > settings.max_upload_bytes:
                     raise HTTPException(status_code=413, detail="Upload too large")
+                checksum.update(chunk)
                 output.write(chunk)
         if received != asset.size_bytes:
             raise HTTPException(status_code=422, detail="Uploaded size does not match reservation")
@@ -190,6 +171,8 @@ async def upload_local_content(
 
     asset.status = "ready"
     asset.uploaded_at = utc_now()
+    asset.storage_metered_at = asset.uploaded_at
+    asset.checksum_sha256 = checksum.hexdigest()
     db.commit()
     db.refresh(asset)
     return asset_response(asset)
@@ -214,6 +197,7 @@ def complete_upload(
         raise HTTPException(status_code=422, detail="Uploaded size does not match reservation")
     asset.status = "ready"
     asset.uploaded_at = utc_now()
+    asset.storage_metered_at = asset.uploaded_at
     db.commit()
     db.refresh(asset)
     return asset_response(asset)
@@ -226,6 +210,7 @@ def delete_upload(
     db: Session = Depends(get_db),
 ) -> None:
     asset = owned_asset(db, user.id, asset_id)
+    meter_media(db, asset)
     if asset.storage_key:
         media_storage.delete(asset.storage_key)
     db.delete(asset)

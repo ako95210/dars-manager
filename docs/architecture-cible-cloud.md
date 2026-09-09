@@ -96,6 +96,12 @@ Chaque appel facturable retourne un enregistrement normalisé contenant le
 client, le projet, le job, le fournisseur, le service, la quantité, l'unité, le
 tarif appliqué, la devise et l'identifiant de requête du fournisseur.
 
+Le stockage est mesuré périodiquement en micro-Go-mois cumulés pour éviter les
+erreurs d'arrondi sur les petits intervalles. Le tarif du fournisseur est une
+configuration obligatoire en production, versionnée dans le même catalogue que
+les tarifs IA. Un service de maintenance distinct mesure la dernière période
+avant de supprimer les objets expirés.
+
 ## Templates visuels des éditeurs
 
 Chaque client dispose d'un `BrandKit` contenant son logo, ses couleurs, ses
