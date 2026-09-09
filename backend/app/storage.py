@@ -15,12 +15,15 @@ class TemporaryStorage:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     def create_workspace(self, user_id: str, job_id: str) -> Path:
+        workspace = self.workspace_path(user_id, job_id)
+        workspace.mkdir(parents=True, exist_ok=False, mode=0o700)
+        return workspace
+
+    def workspace_path(self, user_id: str, job_id: str) -> Path:
         identifier = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
         if not identifier.fullmatch(user_id) or not identifier.fullmatch(job_id):
             raise ValueError("Invalid workspace identifier")
-        workspace = self.root / user_id / job_id
-        workspace.mkdir(parents=True, exist_ok=False, mode=0o700)
-        return workspace
+        return self.root / user_id / job_id
 
     def remove_workspace(self, workspace: Path) -> None:
         try:

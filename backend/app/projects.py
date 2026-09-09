@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from .auth import require_user
 from .database import get_db
 from .jobs import TERMINAL_STATES
-from .models import Asset, Project, User
+from .models import Artifact, Asset, Project, User
 from .runtime import manager, media_storage
 
 
@@ -132,12 +132,15 @@ def delete_project(
             status_code=status.HTTP_409_CONFLICT,
             detail="Un traitement est encore actif pour ce projet",
         )
-    assets = db.scalars(select(Asset).where(Asset.project_id == project.id)).all()
-    for asset in assets:
-        if not asset.storage_key:
+    media_rows = [
+        *db.scalars(select(Asset).where(Asset.project_id == project.id)).all(),
+        *db.scalars(select(Artifact).where(Artifact.project_id == project.id)).all(),
+    ]
+    for media_row in media_rows:
+        if not media_row.storage_key:
             continue
         try:
-            media_storage.delete(asset.storage_key)
+            media_storage.delete(media_row.storage_key)
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,

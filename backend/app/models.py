@@ -86,6 +86,12 @@ class JobRecord(Base):
     stage: Mapped[str] = mapped_column(String(40), default="upload")
     message: Mapped[str] = mapped_column(Text, default="")
     progress: Mapped[int] = mapped_column(Integer, default=0)
+    execution_backend: Mapped[str] = mapped_column(String(30), default="inline", index=True)
+    worker_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

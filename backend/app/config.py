@@ -12,6 +12,10 @@ class Settings:
     media_root: Path
     media_retention_seconds: int
     media_upload_url_ttl_seconds: int
+    execution_backend: str
+    worker_poll_seconds: int
+    worker_lease_seconds: int
+    worker_max_attempts: int
     s3_bucket: str | None
     s3_region: str
     s3_endpoint_url: str | None
@@ -34,6 +38,9 @@ def load_settings() -> Settings:
     media_backend = os.environ.get("DARSM_MEDIA_BACKEND", "local").strip().lower()
     if media_backend not in {"local", "s3"}:
         raise ValueError("DARSM_MEDIA_BACKEND must be 'local' or 's3'")
+    execution_backend = os.environ.get("DARSM_EXECUTION_BACKEND", "inline").strip().lower()
+    if execution_backend not in {"inline", "worker"}:
+        raise ValueError("DARSM_EXECUTION_BACKEND must be 'inline' or 'worker'")
     return Settings(
         workspace_root=root,
         media_backend=media_backend,
@@ -46,6 +53,10 @@ def load_settings() -> Settings:
         media_upload_url_ttl_seconds=int(
             os.environ.get("DARSM_MEDIA_UPLOAD_URL_TTL_SECONDS", "900")
         ),
+        execution_backend=execution_backend,
+        worker_poll_seconds=max(1, int(os.environ.get("DARSM_WORKER_POLL_SECONDS", "2"))),
+        worker_lease_seconds=max(30, int(os.environ.get("DARSM_WORKER_LEASE_SECONDS", "120"))),
+        worker_max_attempts=max(1, int(os.environ.get("DARSM_WORKER_MAX_ATTEMPTS", "3"))),
         s3_bucket=os.environ.get("DARSM_S3_BUCKET", "").strip() or None,
         s3_region=os.environ.get("DARSM_S3_REGION", "eu-west-3"),
         s3_endpoint_url=os.environ.get("DARSM_S3_ENDPOINT_URL", "").strip() or None,

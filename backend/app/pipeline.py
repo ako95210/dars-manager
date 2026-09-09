@@ -161,6 +161,18 @@ def run_pipeline(
         if progress:
             progress({"stage": stage, "message": message, "progress": fraction})
 
+    def control_point() -> None:
+        if should_cancel and should_cancel():
+            raise AnalysisCancelled("Analysis cancelled")
+        announced = False
+        while should_pause and should_pause():
+            if should_cancel and should_cancel():
+                raise AnalysisCancelled("Analysis cancelled")
+            if not announced:
+                report("paused", "Analysis paused")
+                announced = True
+            time.sleep(0.2)
+
     if reuse_analysis:
         report("transcription", "Reusing existing analysis for downstream validation", 0.5)
         _, segments, parts = load_analysis(reuse_analysis)
@@ -191,6 +203,7 @@ def run_pipeline(
         )
         if should_cancel and should_cancel():
             raise AnalysisCancelled("Analysis cancelled")
+        control_point()
         report("segmentation", "Segmenting course", 0.62)
         parts = segment_course(segments)
 
@@ -203,12 +216,12 @@ def run_pipeline(
     analysis_path = workspace / "analysis.json"
     write_analysis(analysis_path, input_path, segments, parts)
 
-    if should_cancel and should_cancel():
-        raise AnalysisCancelled("Analysis cancelled")
+    control_point()
     report("audio_export", "Exporting WAV", 0.7)
     export_path = workspace / "audio-export.wav"
     export_clips(input_path, export_path, [(0.0, duration)])
 
+    control_point()
     report("cover", "Generating cover", 0.82)
     cover_path = workspace / "cover.png"
     generate_cover(
@@ -217,8 +230,7 @@ def run_pipeline(
         f"{len(parts)} parties · {format_time(duration)}",
     )
 
-    if should_cancel and should_cancel():
-        raise AnalysisCancelled("Analysis cancelled")
+    control_point()
     report("video", "Rendering static video", 0.88)
     video_path = workspace / "video.mp4"
     render_static_video(cover_path, export_path, video_path)

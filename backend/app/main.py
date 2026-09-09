@@ -8,7 +8,7 @@ from typing import Annotated, AsyncIterator
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -20,9 +20,10 @@ from .config import settings
 from .costs import seed_default_rates
 from .database import SessionLocal, get_db, init_database
 from .jobs import Job, JobManager, TERMINAL_STATES
-from .models import Project, User
+from .media_storage import LocalMediaStorage
+from .models import Artifact, Project, User
 from .projects import router as projects_router
-from .runtime import manager, storage
+from .runtime import job_queue, manager, media_storage, storage
 from .uploads import cleanup_expired_assets
 from .uploads import jobs_router as asset_jobs_router
 from .uploads import router as uploads_router
@@ -139,11 +140,12 @@ async def job_events(
     async def events() -> AsyncIterator[str]:
         previous = ""
         while True:
-            payload = json.dumps(job.public(), ensure_ascii=False)
+            current = owned_job(user.id, job_id)
+            payload = json.dumps(current.public(), ensure_ascii=False)
             if payload != previous:
                 yield f"event: job\ndata: {payload}\n\n"
                 previous = payload
-            if job.state in TERMINAL_STATES:
+            if current.state in TERMINAL_STATES:
                 break
             await asyncio.sleep(0.5)
 
@@ -165,6 +167,11 @@ def resume_job(job_id: str, user: User = Depends(require_user)) -> dict:
     job = owned_job(user.id, job_id)
     try:
         manager.resume(job)
+        if job.execution_backend == "worker" and job.state == "queued":
+            try:
+                job_queue.enqueue(job.id)
+            except Exception:
+                pass
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return job.public()
@@ -185,8 +192,35 @@ def download_artifact(
     job_id: str,
     artifact: str,
     user: User = Depends(require_user),
-) -> FileResponse:
+    db: Session = Depends(get_db),
+) -> Response:
     job = owned_job(user.id, job_id)
+    if job.execution_backend == "worker":
+        row = db.scalar(
+            select(Artifact).where(
+                Artifact.job_id == job.id,
+                Artifact.user_id == user.id,
+                Artifact.kind == artifact,
+            )
+        )
+        if row is None or not row.storage_key:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        filenames = {
+            "analysis": "analysis.json",
+            "audio": "audio-export.wav",
+            "cover": "cover.png",
+            "video": "video.mp4",
+        }
+        filename = filenames.get(artifact, artifact)
+        if isinstance(media_storage, LocalMediaStorage):
+            path = media_storage.path_for(row.storage_key)
+            if not path.is_file():
+                raise HTTPException(status_code=410, detail="Artifact expired")
+            return FileResponse(path, filename=filename, media_type=row.mime_type)
+        url = media_storage.download_url(row.storage_key, filename)
+        if not url:
+            raise HTTPException(status_code=410, detail="Artifact expired")
+        return RedirectResponse(url)
     path_value = job.artifacts.get(artifact)
     if not path_value:
         raise HTTPException(status_code=404, detail="Artifact not found")
@@ -203,8 +237,22 @@ def download_artifact(
 
 
 @app.delete("/api/jobs/{job_id}", status_code=204)
-def delete_job(job_id: str, user: User = Depends(require_user)) -> None:
-    manager.delete(owned_job(user.id, job_id))
+def delete_job(
+    job_id: str,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> None:
+    job = owned_job(user.id, job_id)
+    artifacts = db.scalars(
+        select(Artifact).where(Artifact.job_id == job.id, Artifact.user_id == user.id)
+    ).all()
+    for row in artifacts:
+        if row.storage_key:
+            try:
+                media_storage.delete(row.storage_key)
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail="Artifact deletion failed") from exc
+    manager.delete(job)
 
 
 if settings.frontend_dist.is_dir():

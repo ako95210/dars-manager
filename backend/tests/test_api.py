@@ -4,6 +4,7 @@ import os
 import shutil
 import unittest
 import uuid
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -24,8 +25,11 @@ from backend.app.costs import record_usage
 from backend.app.database import CURRENT_REVISION, SessionLocal, engine, init_database
 from backend.app.main import app, manager
 from backend.app.jobs import JobManager
-from backend.app.models import User
+from backend.app.models import Artifact, Asset, User, utc_now
+from backend.app.pipeline import PipelineResult
+from backend.app.runtime import media_storage
 from backend.app.security import hash_password
+from backend.worker import Worker
 
 
 class ApiTests(unittest.TestCase):
@@ -221,6 +225,84 @@ class ApiTests(unittest.TestCase):
             finally:
                 manager.delete(job)
                 client.delete(f"/api/projects/{project_id}")
+
+    def test_external_worker_persists_artifacts_for_api_download(self) -> None:
+        with TestClient(app) as client:
+            self.login(client, "pilot-a@example.com", "mot-de-passe-a")
+            project = client.post("/api/projects", json={"title": "Worker séparé"})
+            self.assertEqual(project.status_code, 201, project.text)
+            project_id = project.json()["id"]
+            with SessionLocal() as db:
+                owner = db.scalar(select(User).where(User.email == "pilot-a@example.com"))
+                self.assertIsNotNone(owner)
+                asset = Asset(
+                    user_id=owner.id,
+                    project_id=project_id,
+                    kind="source_audio",
+                    original_name="worker.wav",
+                    content_type="audio/wav",
+                    size_bytes=6,
+                    storage_key=(
+                        f"users/{owner.id}/projects/{project_id}/assets/worker/source.wav"
+                    ),
+                    status="ready",
+                    uploaded_at=utc_now(),
+                    expires_at=utc_now() + timedelta(days=7),
+                )
+                db.add(asset)
+                db.commit()
+                db.refresh(asset)
+                asset_id = asset.id
+                user_id = owner.id
+
+            source = TEST_ROOT / "worker-source.wav"
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_bytes(b"source")
+            media_storage.upload_file(
+                f"users/{user_id}/projects/{project_id}/assets/worker/source.wav",
+                source,
+                "audio/wav",
+            )
+            job = manager.create(
+                user_id,
+                project_id,
+                "worker.wav",
+                "base",
+                "fr",
+                1,
+                source_asset_id=asset_id,
+                execution_backend="worker",
+                allocate_workspace=False,
+            )
+
+            def fake_pipeline(input_path: Path, workspace: Path, **_kwargs) -> PipelineResult:
+                self.assertEqual(input_path.read_bytes(), b"source")
+                analysis = workspace / "analysis.json"
+                audio = workspace / "audio-export.wav"
+                cover = workspace / "cover.png"
+                video = workspace / "video.mp4"
+                analysis.write_bytes(b"analysis")
+                audio.write_bytes(b"audio")
+                cover.write_bytes(b"cover")
+                video.write_bytes(b"video")
+                return PipelineResult(analysis, audio, cover, video, 2, 1, 30.0, 1.0)
+
+            with patch("backend.worker.run_pipeline", side_effect=fake_pipeline):
+                self.assertTrue(Worker("test-worker").process(job.id))
+
+            completed = manager.get(user_id, job.id)
+            self.assertIsNotNone(completed)
+            self.assertEqual(completed.state, "completed")
+            self.assertEqual(set(completed.artifacts), {"analysis", "audio", "cover", "video"})
+            with SessionLocal() as db:
+                artifacts = db.scalars(select(Artifact).where(Artifact.job_id == job.id)).all()
+                self.assertEqual(len(artifacts), 4)
+            downloaded = client.get(f"/api/jobs/{job.id}/artifacts/cover")
+            self.assertEqual(downloaded.status_code, 200, downloaded.text)
+            self.assertEqual(downloaded.content, b"cover")
+            self.assertEqual(client.delete(f"/api/jobs/{job.id}").status_code, 204)
+            self.assertEqual(client.delete(f"/api/uploads/{asset_id}").status_code, 204)
+            self.assertEqual(client.delete(f"/api/projects/{project_id}").status_code, 204)
 
     def test_usage_and_manual_payment_are_isolated_and_auditable(self) -> None:
         with TestClient(app) as client_b:

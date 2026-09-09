@@ -6,17 +6,18 @@ Objectif : mise à disposition d'une bêta privée à un client le 26 octobre 20
 ## Avancement
 
 - Lot 0 : terminé le 9 septembre 2026.
-- Lot 1 : socle métier terminé, séparation physique du worker encore à faire.
+- Lot 1 : terminé le 9 septembre 2026.
   - rôles client/administrateur : terminé ;
   - catalogue de tarifs et registre de consommation : terminé ;
   - relevé client et saisie administrative des paiements : première version terminée ;
   - état complet des jobs dans PostgreSQL : terminé ;
-  - séparation du worker et limitation de concurrence : à terminer avec le
-    stockage objet, afin de ne pas créer un partage de disque transitoire.
+  - worker séparé, file Redis, polling PostgreSQL, baux et tentatives : terminé ;
+  - limitation de concurrence : un processus worker par défaut, quotas fins à terminer.
 - Lot 2 : en cours.
   - contrat `MediaStorage` local/S3 : terminé ;
   - réservation d'asset, upload direct et validation de taille : terminé ;
   - lancement d'un job depuis un asset : terminé ;
+  - artefacts de worker stockés hors du disque API : terminé ;
   - empreinte, purge planifiée et mesure du stockage : à terminer.
 
 ## État de départ

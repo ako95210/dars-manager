@@ -34,6 +34,12 @@ class MediaStorage:
     def download_file(self, key: str, destination: Path) -> None:
         raise NotImplementedError
 
+    def upload_file(self, key: str, source: Path, content_type: str) -> None:
+        raise NotImplementedError
+
+    def download_url(self, key: str, filename: str, ttl_seconds: int = 900) -> str | None:
+        raise NotImplementedError
+
     def delete(self, key: str) -> None:
         raise NotImplementedError
 
@@ -80,6 +86,17 @@ class LocalMediaStorage(MediaStorage):
             raise FileNotFoundError(key)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
+
+    def upload_file(self, key: str, source: Path, content_type: str) -> None:
+        destination = self.path_for(key)
+        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        partial = destination.with_name(f".{destination.name}.part")
+        shutil.copyfile(source, partial)
+        partial.replace(destination)
+
+    def download_url(self, key: str, filename: str, ttl_seconds: int = 900) -> None:
+        self.path_for(key)
+        return None
 
     def delete(self, key: str) -> None:
         path = self.path_for(key)
@@ -146,6 +163,26 @@ class S3MediaStorage(MediaStorage):
     def download_file(self, key: str, destination: Path) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
         self.client.download_file(self.bucket, key, str(destination))
+
+    def upload_file(self, key: str, source: Path, content_type: str) -> None:
+        self.client.upload_file(
+            str(source),
+            self.bucket,
+            key,
+            ExtraArgs={"ContentType": content_type},
+        )
+
+    def download_url(self, key: str, filename: str, ttl_seconds: int = 900) -> str:
+        safe_filename = filename.replace('"', "").replace("\r", "").replace("\n", "")
+        return self.client.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": self.bucket,
+                "Key": key,
+                "ResponseContentDisposition": f'attachment; filename="{safe_filename}"',
+            },
+            ExpiresIn=ttl_seconds,
+        )
 
     def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=key)

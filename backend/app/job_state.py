@@ -134,11 +134,125 @@ class DatabaseJobStateStore:
             row.stage = record.get("stage", "upload")
             row.message = record.get("message", "")
             row.progress = round(float(record.get("progress", 0)) * 100)
+            row.execution_backend = record.get("execution_backend", "inline")
+            row.worker_id = record.get("worker_id")
+            lease_value = record.get("lease_expires_at")
+            row.lease_expires_at = (
+                datetime.fromtimestamp(float(lease_value), timezone.utc)
+                if lease_value is not None
+                else None
+            )
+            row.attempt_count = int(record.get("attempt_count", 0))
             row.error_code = "pipeline_failed" if row.state == "failed" else None
             row.payload = copy.deepcopy(record)
             row.updated_at = updated_at
             row.expires_at = updated_at + timedelta(seconds=self.ttl_seconds)
             db.commit()
+
+    def claim(self, job_id: str, worker_id: str, lease_seconds: int) -> JobRecord | None:
+        with self.session_factory() as db:
+            row = db.scalar(
+                select(DatabaseJobRecord)
+                .where(DatabaseJobRecord.id == job_id)
+                .with_for_update()
+            )
+            if (
+                row is None
+                or row.state != "queued"
+                or row.execution_backend != "worker"
+                or not row.payload
+            ):
+                return None
+            record = copy.deepcopy(row.payload)
+            now = time.time()
+            record.update(
+                state="running",
+                stage="preparing",
+                message="Worker preparing media",
+                worker_id=worker_id,
+                lease_expires_at=now + lease_seconds,
+                attempt_count=int(record.get("attempt_count", 0)) + 1,
+                updated_at=now,
+            )
+            row.state = record["state"]
+            row.stage = record["stage"]
+            row.message = record["message"]
+            row.worker_id = worker_id
+            row.lease_expires_at = datetime.fromtimestamp(
+                record["lease_expires_at"], timezone.utc
+            )
+            row.attempt_count = record["attempt_count"]
+            row.updated_at = datetime.fromtimestamp(now, timezone.utc)
+            row.payload = record
+            db.commit()
+            return copy.deepcopy(record)
+
+    def renew_lease(self, job_id: str, worker_id: str, lease_seconds: int) -> bool:
+        with self.session_factory() as db:
+            row = db.get(DatabaseJobRecord, job_id)
+            if row is None or row.worker_id != worker_id or row.state not in {
+                "running",
+                "paused",
+                "cancelling",
+            }:
+                return False
+            lease_expires_at = time.time() + lease_seconds
+            record = copy.deepcopy(row.payload or {})
+            record["lease_expires_at"] = lease_expires_at
+            row.lease_expires_at = datetime.fromtimestamp(lease_expires_at, timezone.utc)
+            row.payload = record
+            db.commit()
+            return True
+
+    def next_queued_id(self) -> str | None:
+        with self.session_factory() as db:
+            return db.scalar(
+                select(DatabaseJobRecord.id)
+                .where(
+                    DatabaseJobRecord.execution_backend == "worker",
+                    DatabaseJobRecord.state == "queued",
+                )
+                .order_by(DatabaseJobRecord.created_at)
+                .limit(1)
+            )
+
+    def recover_expired_leases(self, max_attempts: int) -> list[str]:
+        now = datetime.now(timezone.utc)
+        requeued: list[str] = []
+        with self.session_factory() as db:
+            rows = db.scalars(
+                select(DatabaseJobRecord).where(
+                    DatabaseJobRecord.execution_backend == "worker",
+                    DatabaseJobRecord.worker_id.is_not(None),
+                    DatabaseJobRecord.lease_expires_at < now,
+                )
+            ).all()
+            for row in rows:
+                record = copy.deepcopy(row.payload or {})
+                row.worker_id = None
+                row.lease_expires_at = None
+                record["worker_id"] = None
+                record["lease_expires_at"] = None
+                record["updated_at"] = time.time()
+                if row.state == "cancelling":
+                    row.state = record["state"] = "cancelled"
+                    row.message = record["message"] = "Job cancelled after worker interruption"
+                elif row.state == "paused":
+                    record["message"] = row.message = "Paused; worker can resume later"
+                elif row.attempt_count >= max_attempts:
+                    row.state = record["state"] = "failed"
+                    row.stage = record["stage"] = "worker_failed"
+                    row.message = record["message"] = "Worker retry limit reached"
+                    record["error"] = "Worker lease expired repeatedly"
+                    row.error_code = "worker_retry_limit"
+                else:
+                    row.state = record["state"] = "queued"
+                    row.stage = record["stage"] = "retry"
+                    row.message = record["message"] = "Worker interrupted; retry queued"
+                    requeued.append(row.id)
+                row.payload = record
+            db.commit()
+        return requeued
 
     def get(self, job_id: str) -> JobRecord | None:
         with self.session_factory() as db:

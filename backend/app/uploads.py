@@ -13,8 +13,8 @@ from .auth import require_user
 from .config import settings
 from .database import get_db
 from .media_storage import LocalMediaStorage
-from .models import Asset, Project, User, utc_now
-from .runtime import manager, media_storage
+from .models import Artifact, Asset, Project, User, utc_now
+from .runtime import job_queue, manager, media_storage
 
 
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
@@ -95,6 +95,15 @@ def cleanup_expired_assets(db: Session) -> int:
         except Exception:
             continue
         db.delete(asset)
+        removed += 1
+    artifacts = db.scalars(select(Artifact).where(Artifact.expires_at <= utc_now())).all()
+    for artifact in artifacts:
+        try:
+            if artifact.storage_key:
+                media_storage.delete(artifact.storage_key)
+        except Exception:
+            continue
+        db.delete(artifact)
         removed += 1
     db.commit()
     return removed
@@ -244,13 +253,23 @@ def create_job_from_asset(
             settings.whisper_cpu_threads,
             source_asset_id=asset.id,
             source_expires_at=asset.expires_at.isoformat(),
+            execution_backend=settings.execution_backend,
+            allocate_workspace=settings.execution_backend == "inline",
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    try:
-        media_storage.download_file(asset.storage_key, job.input_path)
-        manager.start(job)
-    except Exception:
-        manager.delete(job)
-        raise
+    if settings.execution_backend == "worker":
+        try:
+            job_queue.enqueue(job.id)
+        except Exception:
+            # PostgreSQL remains the source of truth. A worker will discover
+            # the queued row by polling even if Redis is briefly unavailable.
+            pass
+    else:
+        try:
+            media_storage.download_file(asset.storage_key, job.input_path)
+            manager.start(job)
+        except Exception:
+            manager.delete(job)
+            raise
     return job.public()

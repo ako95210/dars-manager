@@ -31,6 +31,10 @@ class Job:
     cpu_threads: int
     source_asset_id: str | None = None
     source_expires_at: str | None = None
+    execution_backend: str = "inline"
+    worker_id: str | None = None
+    lease_expires_at: float | None = None
+    attempt_count: int = 0
     state: str = "queued"
     stage: str = "upload"
     message: str = "Upload received"
@@ -51,6 +55,7 @@ class Job:
             "project_id": self.project_id,
             "source_asset_id": self.source_asset_id,
             "source_expires_at": self.source_expires_at,
+            "execution_backend": self.execution_backend,
             "state": self.state,
             "stage": self.stage,
             "message": self.message,
@@ -74,6 +79,10 @@ class Job:
             "cpu_threads": self.cpu_threads,
             "source_asset_id": self.source_asset_id,
             "source_expires_at": self.source_expires_at,
+            "execution_backend": self.execution_backend,
+            "worker_id": self.worker_id,
+            "lease_expires_at": self.lease_expires_at,
+            "attempt_count": self.attempt_count,
             "state": self.state,
             "stage": self.stage,
             "message": self.message,
@@ -98,6 +107,10 @@ class Job:
             cpu_threads=int(record["cpu_threads"]),
             source_asset_id=record.get("source_asset_id"),
             source_expires_at=record.get("source_expires_at"),
+            execution_backend=record.get("execution_backend", "inline"),
+            worker_id=record.get("worker_id"),
+            lease_expires_at=record.get("lease_expires_at"),
+            attempt_count=int(record.get("attempt_count", 0)),
             state=record["state"],
             stage=record["stage"],
             message=record["message"],
@@ -162,9 +175,11 @@ class JobManager:
         cpu_threads: int,
         source_asset_id: str | None = None,
         source_expires_at: str | None = None,
+        execution_backend: str = "inline",
+        allocate_workspace: bool = True,
     ) -> Job:
         job_id = uuid.uuid4().hex
-        workspace = self.storage.create_workspace(user_id, job_id)
+        workspace = self.storage.create_workspace(user_id, job_id) if allocate_workspace else self.storage.workspace_path(user_id, job_id)
         suffix = Path(filename).suffix.lower()[:10]
         job = Job(
             id=job_id,
@@ -177,6 +192,7 @@ class JobManager:
             cpu_threads=cpu_threads,
             source_asset_id=source_asset_id,
             source_expires_at=source_expires_at,
+            execution_backend=execution_backend,
         )
         with self._lock:
             self.jobs[job_id] = job
@@ -186,7 +202,7 @@ class JobManager:
     def get(self, user_id: str, job_id: str) -> Job | None:
         with self._lock:
             job = self.jobs.get(job_id)
-        if job is None:
+        if job is None or job.execution_backend == "worker":
             record = self.state_store.get(job_id)
             job = Job.from_record(record) if record else None
         return job if job and job.user_id == user_id else None
@@ -276,6 +292,14 @@ class JobManager:
             self._save(job)
 
     def pause(self, job: Job) -> None:
+        if job.execution_backend == "worker":
+            if job.state not in {"queued", "running"}:
+                raise ValueError("Only a queued or running job can be paused")
+            job.state = "paused"
+            job.message = "Pause requested"
+            job.updated_at = time.time()
+            self._save(job)
+            return
         if job.state != "running":
             raise ValueError("Only a running job can be paused")
         if job.pause_event is None:
@@ -287,6 +311,14 @@ class JobManager:
         self._save(job)
 
     def resume(self, job: Job) -> None:
+        if job.execution_backend == "worker":
+            if job.state != "paused":
+                raise ValueError("Only a paused job can be resumed")
+            job.state = "running" if job.worker_id else "queued"
+            job.message = "Resume requested"
+            job.updated_at = time.time()
+            self._save(job)
+            return
         if job.state != "paused":
             raise ValueError("Only a paused job can be resumed")
         if job.pause_event is None:
@@ -299,6 +331,12 @@ class JobManager:
 
     def cancel(self, job: Job) -> None:
         if job.state in TERMINAL_STATES:
+            return
+        if job.execution_backend == "worker":
+            job.state = "cancelling" if job.worker_id else "cancelled"
+            job.message = "Cancellation requested" if job.worker_id else "Job cancelled"
+            job.updated_at = time.time()
+            self._save(job)
             return
         if job.cancel_event is None or job.pause_event is None:
             raise ValueError("Job worker is no longer available")
@@ -328,7 +366,7 @@ class JobManager:
         recovered = 0
         for record in self.state_store.all():
             job = Job.from_record(record)
-            if job.state in TERMINAL_STATES:
+            if job.state in TERMINAL_STATES or job.execution_backend == "worker":
                 continue
             job.state = "failed"
             job.stage = "interrupted"
@@ -341,6 +379,8 @@ class JobManager:
 
     def shutdown(self) -> None:
         for job in list(self.jobs.values()):
+            if job.execution_backend == "worker":
+                continue
             if job.process and job.process.is_alive():
                 if job.cancel_event is not None:
                     job.cancel_event.set()

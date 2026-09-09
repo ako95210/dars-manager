@@ -15,6 +15,10 @@ services:
       DARSM_MEDIA_ROOT: ${DARSM_MEDIA_ROOT:-/workspaces/media}
       DARSM_MEDIA_RETENTION_SECONDS: ${DARSM_MEDIA_RETENTION_SECONDS:-604800}
       DARSM_MEDIA_UPLOAD_URL_TTL_SECONDS: ${DARSM_MEDIA_UPLOAD_URL_TTL_SECONDS:-900}
+      DARSM_EXECUTION_BACKEND: ${DARSM_EXECUTION_BACKEND:-worker}
+      DARSM_WORKER_POLL_SECONDS: ${DARSM_WORKER_POLL_SECONDS:-2}
+      DARSM_WORKER_LEASE_SECONDS: ${DARSM_WORKER_LEASE_SECONDS:-120}
+      DARSM_WORKER_MAX_ATTEMPTS: ${DARSM_WORKER_MAX_ATTEMPTS:-3}
       DARSM_S3_BUCKET: ${DARSM_S3_BUCKET:-}
       DARSM_S3_REGION: ${DARSM_S3_REGION:-eu-west-3}
       DARSM_S3_ENDPOINT_URL: ${DARSM_S3_ENDPOINT_URL:-}
@@ -26,6 +30,42 @@ services:
       - /workspaces:size=4g,mode=0700
     volumes:
       - model-cache:/models
+      - media-data:/workspaces/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    command: ["python", "-m", "backend.worker"]
+    environment:
+      DARSM_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DARSM_REDIS_URL: redis://redis:6379/0
+      DARSM_WHISPER_CPU_THREADS: ${DARSM_WHISPER_CPU_THREADS:-4}
+      DARSM_JOB_TTL_SECONDS: ${DARSM_JOB_TTL_SECONDS:-7200}
+      DARSM_MEDIA_BACKEND: ${DARSM_MEDIA_BACKEND:-local}
+      DARSM_MEDIA_ROOT: ${DARSM_MEDIA_ROOT:-/workspaces/media}
+      DARSM_MEDIA_RETENTION_SECONDS: ${DARSM_MEDIA_RETENTION_SECONDS:-604800}
+      DARSM_MEDIA_UPLOAD_URL_TTL_SECONDS: ${DARSM_MEDIA_UPLOAD_URL_TTL_SECONDS:-900}
+      DARSM_EXECUTION_BACKEND: worker
+      DARSM_WORKER_POLL_SECONDS: ${DARSM_WORKER_POLL_SECONDS:-2}
+      DARSM_WORKER_LEASE_SECONDS: ${DARSM_WORKER_LEASE_SECONDS:-120}
+      DARSM_WORKER_MAX_ATTEMPTS: ${DARSM_WORKER_MAX_ATTEMPTS:-3}
+      DARSM_S3_BUCKET: ${DARSM_S3_BUCKET:-}
+      DARSM_S3_REGION: ${DARSM_S3_REGION:-eu-west-3}
+      DARSM_S3_ENDPOINT_URL: ${DARSM_S3_ENDPOINT_URL:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    tmpfs:
+      - /workspaces:size=4g,mode=0700
+    volumes:
+      - model-cache:/models
+      - media-data:/workspaces/media
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,3 +101,4 @@ services:
 volumes:
   postgres-data:
   model-cache:
+  media-data:

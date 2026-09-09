@@ -42,6 +42,21 @@ matching lifecycle rule and CORS permissions for browser `POST` requests.
 Expired metadata is purged when the API starts; the bucket lifecycle remains the
 independent safety net if the API is unavailable at the expiration time.
 
+## Separate worker
+
+Set `DARSM_EXECUTION_BACKEND=worker` on the API, then run the worker as a
+separate process:
+
+```bash
+python -m backend.worker
+```
+
+PostgreSQL owns the durable queue state, worker lease, attempt count and
+progress. Redis wakes workers quickly, while periodic database polling recovers
+from a lost notification. Workers download source assets into their own
+ephemeral workspace and upload every output through `MediaStorage`; they never
+depend on the API filesystem.
+
 ## Run the API
 
 ```bash
