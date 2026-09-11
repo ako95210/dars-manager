@@ -103,11 +103,13 @@ Sortie : aucun média de production ne dépend du disque éphémère de l'API.
 
 ### Lot 3 — Traitement cloud, du 28 septembre au 2 octobre
 
-État au 9 septembre : intégration technique en cours. L'interface fournisseur,
+État au 11 septembre : intégration technique validée sur les dix premières
+minutes d'un cours réel. L'interface fournisseur,
 l'estimation préalable, le découpage WAV mono 16 kHz, la fusion des timestamps,
 les checkpoints de reprise et les écritures de coût par appel sont implémentés.
-Restent le test réel sur le cours de référence et la comparaison qualitative
-avec la phase 1.
+La chaîne a produit 85 segments, 3 parties et tous les artefacts attendus pour
+un coût calculé de 0,0601 USD. Reste la comparaison qualitative détaillée avec
+la phase 1.
 
 - ajouter `TranscriptionProvider` et le fournisseur managé initial ;
 - calculer et afficher une estimation avant le lancement ;
