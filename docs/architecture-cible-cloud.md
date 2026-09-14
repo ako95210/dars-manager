@@ -127,6 +127,19 @@ cible et l'empreinte de l'analyse éditoriale. Il concatène d'abord les passage
 retenus, compose la couverture, puis encode la vidéo fixe ou le fond animé sans
 modifier la piste source du template. Ce parcours n'appelle aucun modèle IA.
 
+## Archives portables
+
+Une archive `.dars` est un ZIP dont le manifeste est versionné. Elle contient au
+minimum l'analyse JSON corrigée et un audio WAV, puis éventuellement la
+couverture et la vidéo produites. Le manifeste déclare le type, le chemin, la
+taille et l'empreinte SHA-256 de chaque fichier ainsi que l'instantané du rendu.
+
+La création et le réimport sont des jobs worker durables. Avant extraction, le
+réimport limite le nombre et la taille totale des entrées, refuse les chemins
+sortant de l'archive et vérifie chaque empreinte. L'analyse restaurée devient
+directement un cours éditable : aucun appel de transcription, et donc aucun coût
+IA de transcription, n'est déclenché.
+
 ## Limites de la bêta
 
 La bêta ne comprend pas encore :

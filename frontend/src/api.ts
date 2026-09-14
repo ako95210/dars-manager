@@ -37,6 +37,10 @@ export type Job = {
     template_id?: string;
     template_version?: number;
     output_format?: string;
+    archive_files?: number;
+    size_bytes?: number;
+    imported_archive?: boolean;
+    archive_schema?: number;
   };
 };
 
@@ -369,6 +373,60 @@ export const api = {
       ...values,
     }),
   }),
+  createArchiveExport: (
+    jobId: string,
+    checksumSha256: string,
+    videoJobId?: string,
+    audioExportJobId?: string,
+  ) => request<Job>(`/api/jobs/${jobId}/exports/archive`, {
+    method: "POST",
+    body: JSON.stringify({
+      checksum_sha256: checksumSha256,
+      video_job_id: videoJobId || null,
+      audio_export_job_id: audioExportJobId || null,
+    }),
+  }),
+  importArchive: async (
+    projectId: string,
+    file: File,
+    onStage?: (stage: "reserve" | "upload" | "validate" | "start") => void,
+  ) => {
+    onStage?.("reserve");
+    const reservation = await request<UploadReservation>("/api/archives", {
+      method: "POST",
+      body: JSON.stringify({
+        project_id: projectId,
+        filename: file.name,
+        content_type: file.type || "application/octet-stream",
+        size_bytes: file.size,
+      }),
+    });
+    try {
+      onStage?.("upload");
+      let response: Response;
+      if (reservation.upload.method === "POST") {
+        const body = new FormData();
+        Object.entries(reservation.upload.fields).forEach(([key, value]) => body.append(key, value));
+        body.append("file", file);
+        response = await fetch(reservation.upload.url, { method: "POST", body });
+      } else {
+        response = await fetch(reservation.upload.url, {
+          method: "PUT",
+          body: file,
+          credentials: "include",
+          headers: { "Content-Type": reservation.asset.content_type },
+        });
+      }
+      if (!response.ok) throw new Error("L'envoi de l'archive a échoué.");
+      onStage?.("validate");
+      await request<Asset>(`/api/uploads/${reservation.asset.id}/complete`, { method: "POST" });
+    } catch (reason) {
+      await request<void>(`/api/uploads/${reservation.asset.id}`, { method: "DELETE" }).catch(() => undefined);
+      throw reason;
+    }
+    onStage?.("start");
+    return request<Job>(`/api/archives/${reservation.asset.id}/import`, { method: "POST" });
+  },
   billingSummary: (month?: string) =>
     request<BillingSummary>(`/api/billing/summary${month ? `?month=${encodeURIComponent(month)}` : ""}`),
   clientBillingSummaries: (month?: string) =>

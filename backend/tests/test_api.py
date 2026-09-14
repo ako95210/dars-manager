@@ -620,6 +620,70 @@ class ApiTests(unittest.TestCase):
             rendered_video = client.get(f"/api/jobs/{video_job_id}/artifacts/video")
             self.assertEqual(rendered_video.status_code, 200, rendered_video.text)
             self.assertEqual(rendered_video.content, b"rendered-video")
+
+            archive_requested = client.post(
+                f"/api/jobs/{job.id}/exports/archive",
+                json={
+                    "checksum_sha256": updated.json()["checksum_sha256"],
+                    "video_job_id": video_job_id,
+                    "audio_export_job_id": export_id,
+                },
+            )
+            self.assertEqual(archive_requested.status_code, 202, archive_requested.text)
+            archive_job_id = archive_requested.json()["id"]
+            self.assertEqual(archive_requested.json()["tool"], "archive_export")
+            self.assertTrue(Worker("archive-worker").process(archive_job_id))
+            archived = manager.get(user_id, archive_job_id)
+            self.assertIsNotNone(archived)
+            self.assertEqual(archived.state, "completed")
+            self.assertEqual(archived.metrics["archive_files"], 4)
+            archive_download = client.get(f"/api/jobs/{archive_job_id}/artifacts/archive")
+            self.assertEqual(archive_download.status_code, 200, archive_download.text)
+            self.assertGreater(len(archive_download.content), 100)
+
+            restored_project = client.post(
+                "/api/projects", json={"title": "Cours restauré"}
+            )
+            self.assertEqual(restored_project.status_code, 201, restored_project.text)
+            restored_project_id = restored_project.json()["id"]
+            archive_reservation = client.post(
+                "/api/archives",
+                json={
+                    "project_id": restored_project_id,
+                    "filename": "cours.dars",
+                    "content_type": "application/vnd.dars-manager.archive",
+                    "size_bytes": len(archive_download.content),
+                },
+            )
+            self.assertEqual(archive_reservation.status_code, 201, archive_reservation.text)
+            restored_asset_id = archive_reservation.json()["asset"]["id"]
+            archive_upload = client.put(
+                archive_reservation.json()["upload"]["url"],
+                content=archive_download.content,
+                headers={"Content-Type": "application/vnd.dars-manager.archive"},
+            )
+            self.assertEqual(archive_upload.status_code, 200, archive_upload.text)
+            restored_request = client.post(f"/api/archives/{restored_asset_id}/import")
+            self.assertEqual(restored_request.status_code, 202, restored_request.text)
+            restored_job_id = restored_request.json()["id"]
+            self.assertEqual(restored_request.json()["tool"], "archive_import")
+            with (
+                patch("backend.worker.audio_duration", return_value=29.5),
+                patch("backend.worker.run_pipeline", side_effect=AssertionError("no transcription")),
+            ):
+                self.assertTrue(Worker("archive-import-worker").process(restored_job_id))
+            restored_job = manager.get(user_id, restored_job_id)
+            self.assertIsNotNone(restored_job)
+            self.assertEqual(restored_job.state, "completed")
+            self.assertEqual(restored_job.tool, "audio_pipeline")
+            self.assertEqual(restored_job.metrics["transcription_calls"], 0)
+            self.assertTrue(restored_job.metrics["imported_archive"])
+            self.assertEqual(
+                set(restored_job.artifacts), {"analysis", "audio", "cover", "video"}
+            )
+            restored_analysis = client.get(f"/api/jobs/{restored_job_id}/analysis")
+            self.assertEqual(restored_analysis.status_code, 200, restored_analysis.text)
+            self.assertEqual(restored_analysis.json()["parts"][0]["title"], "Titre corrigé")
             with SessionLocal() as db:
                 saved_analysis = db.scalar(
                     select(Artifact).where(
@@ -646,6 +710,9 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(client.get(f"/api/jobs/{export_id}").status_code, 404)
             self.assertEqual(client.get(f"/api/jobs/{video_job_id}").status_code, 404)
             self.assertEqual(client.delete(f"/api/projects/{project_id}").status_code, 204)
+            self.assertEqual(client.delete(f"/api/jobs/{restored_job_id}/source").status_code, 200)
+            self.assertEqual(client.delete(f"/api/jobs/{restored_job_id}").status_code, 204)
+            self.assertEqual(client.delete(f"/api/projects/{restored_project_id}").status_code, 204)
             self.assertEqual(client.delete(f"/api/brand/templates/{template_id}").status_code, 204)
 
     def test_paid_transcription_checkpoint_is_reused(self) -> None:

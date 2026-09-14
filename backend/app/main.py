@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .auth import require_user, router as auth_router
+from .archives import router as archives_router
 from .billing import admin_router as admin_billing_router
 from .billing import router as billing_router
 from .brand import router as brand_router
@@ -61,6 +62,7 @@ app.include_router(asset_jobs_router)
 app.include_router(transcription_router)
 app.include_router(editor_router)
 app.include_router(brand_router)
+app.include_router(archives_router)
 
 
 def owned_job(user_id: str, job_id: str) -> Job:
@@ -222,6 +224,7 @@ def download_artifact(
             "selection_audio": "selection-audio.wav",
             "cover": "cover.png",
             "video": "video.mp4",
+            "archive": "cours.dars",
         }
         filename = filenames.get(artifact, artifact)
         if isinstance(media_storage, LocalMediaStorage):
@@ -245,6 +248,7 @@ def download_artifact(
         "selection_audio": "audio/wav",
         "cover": "image/png",
         "video": "video/mp4",
+        "archive": "application/vnd.dars-manager.archive",
     }
     return FileResponse(path, filename=path.name, media_type=media_types.get(artifact))
 

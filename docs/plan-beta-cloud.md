@@ -22,7 +22,7 @@ Objectif : mise à disposition d'une bêta privée à un client le 26 octobre 20
   - purge planifiée indépendante et suppression immédiate : terminé ;
   - mesure cumulative du stockage et écriture dans le registre : terminé.
 - Lot 3 : terminé le 14 septembre 2026.
-- Lot 4 : en cours depuis le 14 septembre 2026.
+- Lot 4 : terminé le 14 septembre 2026.
   - lecteur audio et ouverture de l'analyse depuis le stockage objet : terminé ;
   - édition durable des titres, descriptions et timestamps : terminé ;
   - contrôle de concurrence par empreinte et recalcul des transcriptions : terminé ;
@@ -31,7 +31,7 @@ Objectif : mise à disposition d'une bêta privée à un client le 26 octobre 20
   - modes image extraite/fond animé et choix du format dans l'atelier : terminé ;
   - zones dynamiques titre/intervenant/date/épisode : terminé ;
   - rendus worker 16:9, 1:1 et 9:16, fixes ou animés : terminé ;
-  - archive `.dars` et réimport sans retranscription : à faire.
+  - archive `.dars` contrôlée et réimport sans retranscription : terminé.
 
 ## État de départ
 
@@ -136,6 +136,13 @@ Sortie : un cours long traverse le pipeline cloud complet, reste récupérable e
 son coût peut être expliqué appel par appel.
 
 ### Lot 4 — Travail éditorial et archive, du 5 au 9 octobre
+
+État : **clôturé le 14 septembre 2026**. Le parcours éditorial complet est
+disponible dans l'interface web : correction des parties, exports audio,
+templates image/vidéo versionnés, zones dynamiques et rendus multi-formats. Une
+archive `.dars` rassemble l'analyse corrigée, l'audio et les derniers rendus
+avec taille et empreinte SHA-256 par fichier. Son réimport restaure directement
+un cours éditable sans appeler le fournisseur de transcription.
 
 - afficher et éditer les parties et timestamps ;
 - sélectionner et concaténer les passages ;

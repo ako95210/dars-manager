@@ -268,6 +268,16 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .video-render-status > div:first-child > small { margin-top: 3px; color: var(--muted); font-size: 9px; }
 .video-artifacts { display: flex; gap: 7px; }
 .video-artifacts a { margin: 0; padding: 9px 11px; font-size: 9px; text-decoration: none; }
+.archive-panel { display: flex; justify-content: space-between; gap: 24px; align-items: center; margin-top: 30px; padding: 21px; border: 1px solid #b9ddcf; border-radius: 14px; background: linear-gradient(115deg, #f1fbf7, #f9fcfb); }
+.archive-panel h3 { margin: 7px 0 5px; font-size: 17px; }
+.archive-panel p { max-width: 680px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.archive-panel .button { flex: none; margin: 0; }
+.archive-status { display: flex; justify-content: space-between; gap: 18px; align-items: center; margin-top: 10px; padding: 15px 17px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+.archive-status.failed { border-color: #efc5c2; background: #fef7f6; }
+.archive-status > div:first-child > strong, .archive-status > div:first-child > small { display: block; }
+.archive-status > div:first-child > strong { font-size: 12px; }
+.archive-status > div:first-child > small { margin-top: 3px; color: var(--muted); font-size: 9px; }
+.archive-status > a { margin: 0; text-decoration: none; }
 .job-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--line); }
 .job-actions button { padding: 10px 14px; border: 1px solid var(--line); border-radius: 9px; color: #354154; background: white; font-weight: 700; font-size: 12px; }
 .job-actions button:hover:not(:disabled) { border-color: #96cdb9; }
@@ -357,7 +367,7 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .editor-heading { flex-direction: column; }
   .audio-review { grid-template-columns: 40px 1fr; }
   .audio-review audio { grid-column: 1 / -1; }
-  .selection-toolbar, .export-status { align-items: stretch; flex-direction: column; }
+  .selection-toolbar, .export-status, .archive-panel, .archive-status { align-items: stretch; flex-direction: column; }
   .export-result { align-items: stretch; flex-direction: column; }
   .export-result audio, .export-progress { width: 100%; }
   .template-upload-fields { grid-template-columns: 1fr 1fr; }

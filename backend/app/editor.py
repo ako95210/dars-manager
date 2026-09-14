@@ -16,7 +16,7 @@ from .config import settings
 from .database import get_db
 from .jobs import Job
 from .media_lifecycle import meter_media
-from .models import Artifact, BrandTemplate, BrandTemplateFile, User, utc_now
+from .models import Artifact, BrandTemplate, BrandTemplateFile, Project, User, utc_now
 from .runtime import job_queue, manager, media_storage
 
 
@@ -76,6 +76,12 @@ class VideoExportRequest(AudioExportRequest):
         return value.strip()
 
 
+class ArchiveExportRequest(BaseModel):
+    checksum_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    video_job_id: str | None = Field(default=None, min_length=32, max_length=32)
+    audio_export_job_id: str | None = Field(default=None, min_length=32, max_length=32)
+
+
 def owned_completed_job(user_id: str, job_id: str) -> Job:
     job = manager.get(user_id, job_id)
     if job is None:
@@ -126,6 +132,45 @@ def analysis_artifact(
     if row is None or not row.storage_key:
         raise HTTPException(status_code=404, detail="Analyse introuvable.")
     return row
+
+
+def child_artifact(
+    db: Session,
+    source_job: Job,
+    user_id: str,
+    child_job_id: str,
+    tool: str,
+    kind: str,
+) -> tuple[Job, Artifact]:
+    child = manager.get(user_id, child_job_id)
+    if (
+        child is None
+        or child.project_id != source_job.project_id
+        or child.tool != tool
+        or child.options.get("source_job_id") != source_job.id
+    ):
+        raise HTTPException(status_code=404, detail="Export lié introuvable.")
+    if child.state != "completed":
+        raise HTTPException(status_code=409, detail="L'export lié n'est pas terminé.")
+    artifact = db.scalar(
+        select(Artifact).where(
+            Artifact.job_id == child.id,
+            Artifact.user_id == user_id,
+            Artifact.project_id == source_job.project_id,
+            Artifact.kind == kind,
+        )
+    )
+    if artifact is None or not artifact.storage_key:
+        raise HTTPException(status_code=404, detail="Fichier exporté introuvable.")
+    return child, artifact
+
+
+def archive_reference(artifact: Artifact) -> dict[str, str | None]:
+    return {
+        "job_id": artifact.job_id,
+        "artifact_kind": artifact.kind,
+        "checksum_sha256": artifact.checksum_sha256,
+    }
 
 
 def inline_analysis_path(job: Job) -> Path:
@@ -540,6 +585,141 @@ def create_video_export(
             "template_frame_seconds": float(template.settings.get("frame_seconds", 0)),
             "template_zones": list(template.settings.get("zones", [])),
         },
+    )
+    try:
+        job_queue.enqueue(child.id)
+    except Exception:
+        pass
+    return child.public()
+
+
+@router.post("/{job_id}/exports/archive", status_code=202)
+def create_archive_export(
+    job_id: str,
+    request: ArchiveExportRequest,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    source_job = owned_completed_job(user.id, job_id)
+    if source_job.tool != "audio_pipeline" or source_job.execution_backend != "worker":
+        raise HTTPException(status_code=409, detail="Ce cours ne peut pas être archivé.")
+
+    project = db.scalar(
+        select(Project).where(Project.id == source_job.project_id, Project.user_id == user.id)
+    )
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projet introuvable.")
+    analysis = analysis_artifact(db, source_job, user.id, for_update=True)
+    if analysis.checksum_sha256 and analysis.checksum_sha256 != request.checksum_sha256:
+        raise HTTPException(status_code=409, detail="L'analyse a changé. Rechargez-la.")
+
+    settings.workspace_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with tempfile.TemporaryDirectory(dir=settings.workspace_root) as temporary:
+        path = Path(temporary) / "analysis.json"
+        try:
+            media_storage.download_file(analysis.storage_key, path)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail="Lecture de l'analyse impossible.") from exc
+        if sha256_file(path) != request.checksum_sha256:
+            raise HTTPException(status_code=409, detail="L'analyse a changé. Rechargez-la.")
+        load_payload(path)
+
+    source_audio = db.scalar(
+        select(Artifact).where(
+            Artifact.job_id == source_job.id,
+            Artifact.user_id == user.id,
+            Artifact.kind == "audio",
+        )
+    )
+    if source_audio is None or not source_audio.storage_key:
+        raise HTTPException(status_code=404, detail="Audio source introuvable.")
+
+    references: dict[str, dict[str, str | None]] = {
+        "analysis": archive_reference(analysis),
+        "audio": archive_reference(source_audio),
+    }
+    render_snapshot: dict[str, Any] | None = None
+    if request.audio_export_job_id:
+        _, selected_audio = child_artifact(
+            db,
+            source_job,
+            user.id,
+            request.audio_export_job_id,
+            "audio_selection",
+            "selection_audio",
+        )
+        references["audio"] = archive_reference(selected_audio)
+
+    if request.video_job_id:
+        video_job, video = child_artifact(
+            db, source_job, user.id, request.video_job_id, "video_render", "video"
+        )
+        _, cover = child_artifact(
+            db, source_job, user.id, request.video_job_id, "video_render", "cover"
+        )
+        _, rendered_audio = child_artifact(
+            db,
+            source_job,
+            user.id,
+            request.video_job_id,
+            "video_render",
+            "selection_audio",
+        )
+        references.update({
+            "audio": archive_reference(rendered_audio),
+            "cover": archive_reference(cover),
+            "video": archive_reference(video),
+        })
+        render_snapshot = {
+            key: video_job.options.get(key)
+            for key in (
+                "template_id",
+                "template_version",
+                "output_format",
+                "part_indices",
+                "values",
+                "template_source_kind",
+                "template_usage_mode",
+                "template_zones",
+            )
+        }
+
+    signature = {
+        "source_job_id": source_job.id,
+        "analysis_checksum": request.checksum_sha256,
+        "archive_files": references,
+        "render": render_snapshot,
+    }
+    previous = [
+        job
+        for job in manager.list_for_user(user.id, source_job.project_id)
+        if job.tool == "archive_export" and job.options.get("source_job_id") == source_job.id
+    ]
+    identical = next(
+        (
+            job
+            for job in previous
+            if all(job.options.get(key) == value for key, value in signature.items())
+            and job.state not in {"failed", "cancelled", "expired"}
+        ),
+        None,
+    )
+    if identical is not None:
+        return identical.public()
+    if any(job.state not in {"completed", "failed", "cancelled", "expired"} for job in previous):
+        raise HTTPException(status_code=409, detail="Une archive est déjà en cours de création.")
+
+    child = manager.create(
+        user.id,
+        source_job.project_id,
+        "cours.dars",
+        "",
+        source_job.language,
+        settings.whisper_cpu_threads,
+        execution_backend="worker",
+        allocate_workspace=False,
+        tool="archive_export",
+        options={**signature, "project_title": project.title},
     )
     try:
         job_queue.enqueue(child.id)

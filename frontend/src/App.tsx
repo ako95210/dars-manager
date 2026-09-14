@@ -111,6 +111,7 @@ const artifactLabels: Record<string, string> = {
   selection_audio: "Sélection audio",
   cover: "Image de couverture",
   video: "Vidéo prête à publier",
+  archive: "Archive portable .dars",
 };
 
 function formatDuration(seconds?: number) {
@@ -168,6 +169,7 @@ function CourseEditor({ job }: { job: Job }) {
   const [selectedParts, setSelectedParts] = useState<number[]>([]);
   const [exportJob, setExportJob] = useState<Job | null>(null);
   const [videoJob, setVideoJob] = useState<Job | null>(null);
+  const [archiveJob, setArchiveJob] = useState<Job | null>(null);
   const [exportLoading, setExportLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -175,6 +177,7 @@ function CourseEditor({ job }: { job: Job }) {
   const [videoFormat, setVideoFormat] = useState<"16:9" | "1:1" | "9:16">("16:9");
   const [videoValues, setVideoValues] = useState({ title: "", speaker: "", date: "", episode: "" });
   const [renderingVideo, setRenderingVideo] = useState(false);
+  const [archiving, setArchiving] = useState(false);
 
   function load() {
     setLoading(true);
@@ -215,6 +218,7 @@ function CourseEditor({ job }: { job: Job }) {
         if (!active) return;
         setExportJob(jobs.find((item) => item.tool === "audio_selection" && item.parent_job_id === job.id) ?? null);
         setVideoJob(jobs.find((item) => item.tool === "video_render" && item.parent_job_id === job.id) ?? null);
+        setArchiveJob(jobs.find((item) => item.tool === "archive_export" && item.parent_job_id === job.id) ?? null);
       })
       .catch(() => { if (active) setExportJob(null); })
       .finally(() => { if (active) setExportLoading(false); });
@@ -240,6 +244,16 @@ function CourseEditor({ job }: { job: Job }) {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [videoJob?.id, videoJob?.state]);
+
+  useEffect(() => {
+    if (!archiveJob || terminalStates.has(archiveJob.state)) return;
+    const timer = window.setInterval(() => {
+      api.job(archiveJob.id)
+        .then(setArchiveJob)
+        .catch((reason) => setError(reason instanceof Error ? reason.message : "Suivi de l'archive impossible."));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [archiveJob?.id, archiveJob?.state]);
 
   function changePart(index: number, field: keyof PartDraft, value: string) {
     setParts((current) => current.map((part, position) => (
@@ -331,6 +345,29 @@ function CourseEditor({ job }: { job: Job }) {
     }
   }
 
+  async function createArchive() {
+    if (!analysis) return;
+    if (dirty) {
+      setError("Enregistrez d'abord vos corrections avant de créer l'archive.");
+      return;
+    }
+    setArchiving(true);
+    setError("");
+    setNotice("");
+    try {
+      setArchiveJob(await api.createArchiveExport(
+        job.id,
+        analysis.checksum_sha256,
+        videoJob?.state === "completed" ? videoJob.id : undefined,
+        exportJob?.state === "completed" ? exportJob.id : undefined,
+      ));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Création de l'archive impossible.");
+    } finally {
+      setArchiving(false);
+    }
+  }
+
   const selectedDuration = parts
     .filter((part) => selectedParts.includes(part.index))
     .reduce((total, part) => {
@@ -342,6 +379,8 @@ function CourseEditor({ job }: { job: Job }) {
   const exportBusy = Boolean(exportJob && !terminalStates.has(exportJob.state));
   const videoBusy = Boolean(videoJob && !terminalStates.has(videoJob.state));
   const videoProgress = Math.round(Math.max(0, Math.min(1, videoJob?.progress ?? 0)) * 100);
+  const archiveBusy = Boolean(archiveJob && !terminalStates.has(archiveJob.state));
+  const archiveProgress = Math.round(Math.max(0, Math.min(1, archiveJob?.progress ?? 0)) * 100);
 
   return (
     <section className="course-editor">
@@ -470,6 +509,26 @@ function CourseEditor({ job }: { job: Job }) {
                 </div>
               ) : !terminalStates.has(videoJob.state) ? (
                 <div className="export-progress"><strong>{videoProgress}%</strong><div className="progress-track"><span style={{ width: `${videoProgress}%` }} /></div></div>
+              ) : null}
+            </div>
+          )}
+          <section className="archive-panel">
+            <div>
+              <span className="eyebrow">Sauvegarde locale</span>
+              <h3>Conserver ce cours sur votre machine</h3>
+              <p>L'archive .dars réunit l'analyse corrigée, l'audio et le dernier rendu vidéo disponible. Elle pourra être réimportée sans transcription ni coût IA.</p>
+            </div>
+            <button className="button primary compact" disabled={dirty || archiving || archiveBusy} onClick={createArchive} type="button">
+              {archiving ? "Préparation…" : archiveBusy ? "Archivage en cours…" : "Créer l'archive .dars"}
+            </button>
+          </section>
+          {archiveJob && (
+            <div className={`archive-status ${archiveJob.state}`}>
+              <div><span className={`job-state ${archiveJob.state}`}>{archiveJob.state}</span><strong>{archiveJob.state === "completed" ? "Archive prête à conserver" : "Création de l'archive"}</strong><small>{archiveJob.error || archiveJob.message}</small></div>
+              {archiveJob.state === "completed" && archiveJob.artifacts.includes("archive") ? (
+                <a className="button accent" download href={api.artifactUrl(archiveJob.id, "archive")}>Télécharger le .dars</a>
+              ) : !terminalStates.has(archiveJob.state) ? (
+                <div className="export-progress"><strong>{archiveProgress}%</strong><div className="progress-track"><span style={{ width: `${archiveProgress}%` }} /></div></div>
               ) : null}
             </div>
           )}
@@ -800,11 +859,17 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
   const [uploadStage, setUploadStage] = useState<"reserve" | "upload" | "validate" | "start" | null>(null);
   const [actionPending, setActionPending] = useState(false);
   const [error, setError] = useState("");
+  const fileIsArchive = Boolean(file?.name.toLowerCase().endsWith(".dars"));
 
   useEffect(() => {
     let active = true;
     setQuote(null);
     if (!file) return () => { active = false; };
+    if (file.name.toLowerCase().endsWith(".dars")) {
+      setQuoteLoading(false);
+      setError("");
+      return () => { active = false; };
+    }
     setQuoteLoading(true);
     setError("");
     inspectAudioDuration(file)
@@ -821,7 +886,9 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
     let active = true;
     setJob(undefined);
     api.jobs(project.id)
-      .then((jobs) => active && setJob(jobs.find((item) => item.tool === "audio_pipeline") ?? null))
+      .then((jobs) => active && setJob(jobs.find((item) => (
+        item.tool === "audio_pipeline" || item.tool === "archive_import"
+      )) ?? null))
       .catch((reason) => {
         if (active) {
           setJob(null);
@@ -843,11 +910,13 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
 
   async function start(event: FormEvent) {
     event.preventDefault();
-    if (!file || !quote) return;
+    if (!file || (!fileIsArchive && !quote)) return;
     setSubmitting(true);
     setError("");
     try {
-      setJob(await api.createJob(project.id, file, "fr", quote.duration_seconds, setUploadStage));
+      setJob(fileIsArchive
+        ? await api.importArchive(project.id, file, setUploadStage)
+        : await api.createJob(project.id, file, "fr", quote!.duration_seconds, setUploadStage));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Import impossible.");
     } finally {
@@ -905,23 +974,28 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
         <form className="upload-card" onSubmit={start}>
           <div className="upload-intro">
             <span className="step-number">01</span>
-            <div><h2>Importer le cours</h2><p>Choisissez le fichier audio à traiter sur votre machine.</p></div>
+            <div><h2>Importer le cours</h2><p>Choisissez un nouvel audio ou restaurez une archive Dars Manager.</p></div>
           </div>
           <label className={`drop-zone ${file ? "has-file" : ""}`}>
             <input
               type="file"
-              accept="audio/*,.aac,.m4a,.mp3,.wav,.ogg,.flac"
+              accept="audio/*,.aac,.m4a,.mp3,.wav,.ogg,.flac,.dars,application/zip"
               onChange={(event) => setFile(event.target.files?.[0] ?? null)}
               required
             />
             <span className="upload-icon">↑</span>
-            <strong>{file ? file.name : "Sélectionner un fichier audio"}</strong>
-            <small>{file ? `${(file.size / 1024 / 1024).toFixed(1)} Mo` : "AAC, M4A, MP3, WAV, OGG ou FLAC · 500 Mo maximum"}</small>
+            <strong>{file ? file.name : "Sélectionner un audio ou une archive .dars"}</strong>
+            <small>{file ? `${(file.size / 1024 / 1024).toFixed(1)} Mo` : "Audio ou .dars · 500 Mo maximum"}</small>
           </label>
           <div className="upload-options">
             <div className="transcription-quote">
-              <span>Estimation transcription cloud</span>
-              {quoteLoading ? (
+              <span>{fileIsArchive ? "Restauration du cours" : "Estimation transcription cloud"}</span>
+              {fileIsArchive ? (
+                <>
+                  <strong>0 coût de transcription</strong>
+                  <small>L'analyse, l'audio et les rendus seront vérifiés puis restaurés.</small>
+                </>
+              ) : quoteLoading ? (
                 <strong>Calcul en cours…</strong>
               ) : quote ? (
                 <>
@@ -932,13 +1006,13 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
                 <strong>Sélectionnez un audio valide</strong>
               )}
             </div>
-            <button className="button accent" disabled={!file || !quote || submitting || quoteLoading} type="submit">
+            <button className="button accent" disabled={!file || (!fileIsArchive && !quote) || submitting || quoteLoading} type="submit">
               {submitting ? ({
                 reserve: "Préparation…",
                 upload: "Envoi temporaire…",
                 validate: "Vérification…",
                 start: "Démarrage…",
-              }[uploadStage || "reserve"]) : "Lancer le traitement"}
+              }[uploadStage || "reserve"]) : fileIsArchive ? "Restaurer le cours" : "Lancer le traitement"}
             </button>
           </div>
         </form>

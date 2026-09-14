@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import os
 import hashlib
+import json
 import math
+import os
 import signal
 import socket
 import threading
@@ -14,8 +15,9 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from drsm_core import AnalysisCancelled, export_clips
+from drsm_core import AnalysisCancelled, audio_duration, export_clips
 
+from .app.archive_format import ALLOWED_FILES, InvalidArchive, build_archive, extract_archive
 from .app.config import settings
 from .app.costs import reconcile_job_estimates, record_usage, seed_default_rates
 from .app.database import SessionLocal, init_database
@@ -452,6 +454,242 @@ class Worker:
             storage.remove_workspace(job.workspace)
         return True
 
+    def _process_archive_export(
+        self,
+        job: Job,
+        heartbeat_stopped: threading.Event,
+        heartbeat: threading.Thread,
+    ) -> bool:
+        started = time.monotonic()
+        try:
+            raw_references = job.options.get("archive_files")
+            if not isinstance(raw_references, dict):
+                raise ValueError("Invalid archive export job")
+            if "analysis" not in raw_references or "audio" not in raw_references:
+                raise ValueError("Archive sources are incomplete")
+            self._save_progress(job, {
+                "stage": "archive_collect",
+                "message": "Collecte des fichiers du cours",
+                "progress": 0.12,
+            })
+
+            files: dict[str, Path] = {}
+            for logical_kind, reference in raw_references.items():
+                if logical_kind not in ALLOWED_FILES or not isinstance(reference, dict):
+                    raise ValueError("Invalid archive source reference")
+                source_job_id = str(reference.get("job_id", ""))
+                artifact_kind = str(reference.get("artifact_kind", ""))
+                with SessionLocal() as db:
+                    artifact = db.scalar(
+                        select(Artifact).where(
+                            Artifact.job_id == source_job_id,
+                            Artifact.user_id == job.user_id,
+                            Artifact.project_id == job.project_id,
+                            Artifact.kind == artifact_kind,
+                        )
+                    )
+                    if artifact is None or not artifact.storage_key:
+                        raise ValueError("Archive source artifact is unavailable")
+                    source_key = artifact.storage_key
+                    stored_checksum = artifact.checksum_sha256
+                expected_checksum = reference.get("checksum_sha256")
+                if expected_checksum and stored_checksum != expected_checksum:
+                    raise ValueError("Archive source changed after reservation")
+                target = job.workspace / ALLOWED_FILES[logical_kind][0]
+                media_storage.download_file(source_key, target)
+                checksum = sha256_file(target)
+                if stored_checksum and checksum != stored_checksum:
+                    raise ValueError("Archive source artifact checksum mismatch")
+                files[logical_kind] = target
+                self._wait_if_paused(job)
+
+            self._save_progress(job, {
+                "stage": "archive_build",
+                "message": "Création de l'archive portable",
+                "progress": 0.68,
+            })
+            output_path = job.workspace / "cours.dars"
+            manifest = build_archive(
+                output_path,
+                files,
+                project_title=str(job.options.get("project_title", "Cours")),
+                source_job_id=str(job.options.get("source_job_id", "")),
+                analysis_checksum=str(job.options.get("analysis_checksum", "")),
+                render_snapshot=job.options.get("render"),
+            )
+            self._wait_if_paused(job)
+            key = f"users/{job.user_id}/projects/{job.project_id}/jobs/{job.id}/cours.dars"
+            media_storage.upload_file(key, output_path, "application/vnd.dars-manager.archive")
+            row = Artifact(
+                user_id=job.user_id,
+                project_id=job.project_id,
+                job_id=job.id,
+                kind="archive",
+                mime_type="application/vnd.dars-manager.archive",
+                size_bytes=output_path.stat().st_size,
+                storage_key=key,
+                checksum_sha256=sha256_file(output_path),
+                storage_metered_at=utc_now(),
+                expires_at=utc_now() + timedelta(seconds=settings.media_retention_seconds),
+            )
+            with SessionLocal() as db:
+                previous = db.scalars(
+                    select(Artifact).where(Artifact.job_id == job.id, Artifact.kind == "archive")
+                ).all()
+                for item in previous:
+                    meter_media(db, item)
+                    db.delete(item)
+                db.add(row)
+                db.commit()
+            job.artifacts = {"archive": key}
+            job.metrics = {
+                "archive_files": len(manifest["files"]),
+                "size_bytes": output_path.stat().st_size,
+                "elapsed_seconds": time.monotonic() - started,
+            }
+            job.state = "completed"
+            job.stage = "done"
+            job.message = "Archive .dars prête"
+            job.progress = 1.0
+            job.error = None
+        except AnalysisCancelled:
+            job.state = "cancelled"
+            job.message = "Archivage annulé"
+        except Exception as exc:
+            job.state = "failed"
+            job.stage = "failed"
+            job.message = "Échec de la création de l'archive"
+            job.error = f"{type(exc).__name__}: {exc}"
+        finally:
+            heartbeat_stopped.set()
+            heartbeat.join(timeout=2)
+            job.worker_id = None
+            job.lease_expires_at = None
+            job.updated_at = time.time()
+            self.state.save(job.record())
+            storage.remove_workspace(job.workspace)
+        return True
+
+    def _process_archive_import(
+        self,
+        job: Job,
+        heartbeat_stopped: threading.Event,
+        heartbeat: threading.Thread,
+    ) -> bool:
+        started = time.monotonic()
+        try:
+            self._save_progress(job, {
+                "stage": "archive_verify",
+                "message": "Vérification de l'archive .dars",
+                "progress": 0.12,
+            })
+            with SessionLocal() as db:
+                asset = db.scalar(
+                    select(Asset).where(
+                        Asset.id == job.source_asset_id,
+                        Asset.user_id == job.user_id,
+                        Asset.project_id == job.project_id,
+                        Asset.kind == "dars_archive",
+                        Asset.status == "ready",
+                    )
+                )
+                if asset is None or not asset.storage_key:
+                    raise ValueError("Archive asset is unavailable")
+                source_key = asset.storage_key
+                expected_checksum = asset.checksum_sha256
+
+            archive_path = job.workspace / "source.dars"
+            media_storage.download_file(source_key, archive_path)
+            if expected_checksum and sha256_file(archive_path) != expected_checksum:
+                raise InvalidArchive("L'empreinte de l'archive envoyée est incorrecte.")
+            self._wait_if_paused(job)
+            extracted_root = job.workspace / "extracted"
+            manifest, extracted = extract_archive(archive_path, extracted_root)
+            analysis_path = extracted["analysis"]
+            try:
+                payload = json.loads(analysis_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise InvalidArchive("L'analyse de l'archive est illisible.") from exc
+            if (
+                not isinstance(payload, dict)
+                or not isinstance(payload.get("segments"), list)
+                or not isinstance(payload.get("parts"), list)
+            ):
+                raise InvalidArchive("Le format de l'analyse archivée est invalide.")
+            if manifest.get("analysis_checksum_sha256") != sha256_file(analysis_path):
+                raise InvalidArchive("L'analyse ne correspond pas au manifeste.")
+            duration = audio_duration(extracted["audio"])
+            if duration <= 0:
+                raise InvalidArchive("L'audio archivé est vide ou illisible.")
+
+            self._save_progress(job, {
+                "stage": "archive_restore",
+                "message": "Restauration du cours et de ses rendus",
+                "progress": 0.62,
+            })
+            expiration = utc_now() + timedelta(seconds=settings.media_retention_seconds)
+            rows: list[Artifact] = []
+            keys: dict[str, str] = {}
+            for kind, path in extracted.items():
+                filename, mime_type = ALLOWED_FILES[kind]
+                key = f"users/{job.user_id}/projects/{job.project_id}/jobs/{job.id}/{filename}"
+                media_storage.upload_file(key, path, mime_type)
+                keys[kind] = key
+                rows.append(Artifact(
+                    user_id=job.user_id,
+                    project_id=job.project_id,
+                    job_id=job.id,
+                    kind=kind,
+                    mime_type=mime_type,
+                    size_bytes=path.stat().st_size,
+                    storage_key=key,
+                    checksum_sha256=sha256_file(path),
+                    storage_metered_at=utc_now(),
+                    expires_at=expiration,
+                ))
+            with SessionLocal() as db:
+                previous = db.scalars(select(Artifact).where(Artifact.job_id == job.id)).all()
+                for item in previous:
+                    meter_media(db, item)
+                    db.delete(item)
+                db.add_all(rows)
+                db.commit()
+
+            job.artifacts = keys
+            job.metrics = {
+                "segments": len(payload["segments"]),
+                "parts": len(payload["parts"]),
+                "duration_seconds": duration,
+                "elapsed_seconds": time.monotonic() - started,
+                "transcription_calls": 0,
+                "imported_archive": True,
+                "archive_schema": manifest["schema"],
+            }
+            # Once restored, an imported archive is a regular editable course.
+            job.tool = "audio_pipeline"
+            job.state = "completed"
+            job.stage = "done"
+            job.message = "Cours restauré sans nouvelle transcription"
+            job.progress = 1.0
+            job.error = None
+        except AnalysisCancelled:
+            job.state = "cancelled"
+            job.message = "Import annulé"
+        except Exception as exc:
+            job.state = "failed"
+            job.stage = "failed"
+            job.message = "Échec de l'import de l'archive"
+            job.error = f"{type(exc).__name__}: {exc}"
+        finally:
+            heartbeat_stopped.set()
+            heartbeat.join(timeout=2)
+            job.worker_id = None
+            job.lease_expires_at = None
+            job.updated_at = time.time()
+            self.state.save(job.record())
+            storage.remove_workspace(job.workspace)
+        return True
+
     def process(self, job_id: str) -> bool:
         record = self.state.claim(job_id, self.worker_id, settings.worker_lease_seconds)
         if record is None:
@@ -474,6 +712,10 @@ class Worker:
             return self._process_audio_selection(job, heartbeat_stopped, heartbeat)
         if job.tool == "video_render":
             return self._process_video_render(job, heartbeat_stopped, heartbeat)
+        if job.tool == "archive_export":
+            return self._process_archive_export(job, heartbeat_stopped, heartbeat)
+        if job.tool == "archive_import":
+            return self._process_archive_import(job, heartbeat_stopped, heartbeat)
         try:
             if job.tool != "audio_pipeline":
                 raise ValueError(f"Unsupported job tool: {job.tool}")
