@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, BrandTemplate } from "./api";
+import { api, BrandTemplate, TemplateZone } from "./api";
 
 
 function isVideo(file: File | null) {
@@ -9,13 +9,35 @@ function isVideo(file: File | null) {
   ));
 }
 
+const zoneLabels: Record<TemplateZone["kind"], string> = {
+  title: "Titre",
+  speaker: "Intervenant",
+  date: "Date",
+  episode: "Épisode",
+};
+
+function defaultZone(kind: TemplateZone["kind"], position: number): TemplateZone {
+  return {
+    kind,
+    x: 0.08,
+    y: Math.min(0.82, 0.58 + position * 0.09),
+    width: 0.84,
+    height: kind === "title" ? 0.18 : 0.07,
+    font_scale: kind === "title" ? 0.06 : 0.032,
+    color: "#ffffff",
+    align: "left",
+  };
+}
+
 
 export function TemplateLibrary({
   selectedId,
   onSelect,
+  outputFormat,
 }: {
   selectedId: string;
   onSelect: (template: BrandTemplate | null) => void;
+  outputFormat: "16:9" | "1:1" | "9:16";
 }) {
   const [templates, setTemplates] = useState<BrandTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -26,6 +48,10 @@ export function TemplateLibrary({
   const [uploading, setUploading] = useState(false);
   const [stage, setStage] = useState<"reserve" | "upload" | "validate" | null>(null);
   const [error, setError] = useState("");
+  const [zones, setZones] = useState<TemplateZone[]>([]);
+  const [savingZones, setSavingZones] = useState(false);
+
+  const selected = templates.find((template) => template.id === selectedId) ?? null;
 
   useEffect(() => {
     let active = true;
@@ -41,6 +67,10 @@ export function TemplateLibrary({
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    setZones(selected?.zones ?? []);
+  }, [selected?.id, selected?.version]);
 
   function chooseFile(next: File | null) {
     setFile(next);
@@ -88,6 +118,40 @@ export function TemplateLibrary({
     }
   }
 
+  function toggleZone(kind: TemplateZone["kind"]) {
+    setZones((current) => current.some((zone) => zone.kind === kind)
+      ? current.filter((zone) => zone.kind !== kind)
+      : [...current, defaultZone(kind, current.length)]);
+  }
+
+  function changeZone(kind: TemplateZone["kind"], field: keyof TemplateZone, value: string) {
+    setZones((current) => current.map((zone) => {
+      if (zone.kind !== kind) return zone;
+      if (field === "color" || field === "align") return { ...zone, [field]: value };
+      let numeric = Number(value);
+      if (field === "x") numeric = Math.min(numeric, 1 - zone.width);
+      if (field === "y") numeric = Math.min(numeric, 1 - zone.height);
+      if (field === "width") numeric = Math.min(numeric, 1 - zone.x);
+      if (field === "height") numeric = Math.min(numeric, 1 - zone.y);
+      return { ...zone, [field]: numeric };
+    }));
+  }
+
+  async function saveZones() {
+    if (!selected) return;
+    setSavingZones(true);
+    setError("");
+    try {
+      const updated = await api.updateBrandTemplate(selected.id, selected.name, zones);
+      setTemplates((current) => current.map((item) => item.id === updated.id ? updated : item));
+      onSelect(updated);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Enregistrement impossible.");
+    } finally {
+      setSavingZones(false);
+    }
+  }
+
   return (
     <section className="template-library">
       <header>
@@ -114,6 +178,46 @@ export function TemplateLibrary({
         </div>
       ) : (
         <p className="template-empty">Aucun template enregistré. Importez votre première identité visuelle.</p>
+      )}
+
+      {selected && (
+        <section className="zone-editor">
+          <div className={`zone-preview format-${outputFormat.replace(":", "-")}`} style={{ aspectRatio: ({ "16:9": "16 / 9", "1:1": "1 / 1", "9:16": "9 / 16" })[outputFormat] }}>
+            {selected.preview_url && <img alt={`Aperçu ${selected.name}`} src={selected.preview_url} />}
+            {zones.map((zone) => (
+              <span
+                className={`zone-overlay align-${zone.align}`}
+                key={zone.kind}
+                style={{
+                  color: zone.color,
+                  fontSize: `${Math.max(9, zone.font_scale * 380)}px`,
+                  height: `${zone.height * 100}%`,
+                  left: `${zone.x * 100}%`,
+                  top: `${zone.y * 100}%`,
+                  width: `${zone.width * 100}%`,
+                }}
+              >{zoneLabels[zone.kind]}</span>
+            ))}
+          </div>
+          <div className="zone-controls">
+            <header><div><strong>Zones dynamiques</strong><small>Position en pourcentage du cadre source</small></div><button className="button primary compact" disabled={savingZones} onClick={saveZones} type="button">{savingZones ? "Enregistrement…" : "Enregistrer les zones"}</button></header>
+            {Object.entries(zoneLabels).map(([rawKind, label]) => {
+              const kind = rawKind as TemplateZone["kind"];
+              const zone = zones.find((item) => item.kind === kind);
+              return (
+                <details className="zone-row" key={kind} open={kind === "title"}>
+                  <summary><label onClick={(event) => event.stopPropagation()}><input checked={Boolean(zone)} onChange={() => toggleZone(kind)} type="checkbox" /> {label}</label><span>{zone ? `${Math.round(zone.x * 100)}%, ${Math.round(zone.y * 100)}%` : "Masquée"}</span></summary>
+                  {zone && <div className="zone-fields">
+                    {(["x", "y", "width", "height"] as const).map((field) => <label key={field}>{({ x: "X", y: "Y", width: "Largeur", height: "Hauteur" })[field]}<input max="1" min={field === "width" || field === "height" ? "0.05" : "0"} onChange={(event) => changeZone(kind, field, event.target.value)} step="0.01" type="range" value={zone[field]} /></label>)}
+                    <label>Taille<input max="0.2" min="0.015" onChange={(event) => changeZone(kind, "font_scale", event.target.value)} step="0.005" type="range" value={zone.font_scale} /></label>
+                    <label>Couleur<input onChange={(event) => changeZone(kind, "color", event.target.value)} type="color" value={zone.color} /></label>
+                    <label>Alignement<select onChange={(event) => changeZone(kind, "align", event.target.value)} value={zone.align}><option value="left">Gauche</option><option value="center">Centre</option><option value="right">Droite</option></select></label>
+                  </div>}
+                </details>
+              );
+            })}
+          </div>
+        </section>
       )}
 
       <form className="template-upload" onSubmit={upload}>

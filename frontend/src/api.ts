@@ -34,6 +34,9 @@ export type Job = {
     duration_seconds?: number;
     elapsed_seconds?: number;
     selected_parts?: number;
+    template_id?: string;
+    template_version?: number;
+    output_format?: string;
   };
 };
 
@@ -107,6 +110,17 @@ export type JobAnalysis = {
   parts: CoursePart[];
 };
 
+export type TemplateZone = {
+  kind: "title" | "speaker" | "date" | "episode";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  font_scale: number;
+  color: string;
+  align: "left" | "center" | "right";
+};
+
 export type BrandTemplate = {
   id: string;
   name: string;
@@ -119,6 +133,7 @@ export type BrandTemplate = {
   duration_seconds: number | null;
   version: number;
   frame_seconds: number;
+  zones: TemplateZone[];
   preview_url: string | null;
   created_at: string;
   updated_at: string;
@@ -331,6 +346,29 @@ export const api = {
   },
   deleteBrandTemplate: (templateId: string) =>
     request<void>(`/api/brand/templates/${templateId}`, { method: "DELETE" }),
+  updateBrandTemplate: (templateId: string, name: string, zones: TemplateZone[]) =>
+    request<BrandTemplate>(`/api/brand/templates/${templateId}`, {
+      method: "PUT",
+      body: JSON.stringify({ name, zones }),
+    }),
+  createVideoExport: (
+    jobId: string,
+    checksumSha256: string,
+    partIndices: number[],
+    template: BrandTemplate,
+    outputFormat: "16:9" | "1:1" | "9:16",
+    values: { title: string; speaker: string; date: string; episode: string },
+  ) => request<Job>(`/api/jobs/${jobId}/exports/video`, {
+    method: "POST",
+    body: JSON.stringify({
+      checksum_sha256: checksumSha256,
+      part_indices: partIndices,
+      template_id: template.id,
+      template_version: template.version,
+      output_format: outputFormat,
+      ...values,
+    }),
+  }),
   billingSummary: (month?: string) =>
     request<BillingSummary>(`/api/billing/summary${month ? `?month=${encodeURIComponent(month)}` : ""}`),
   clientBillingSummaries: (month?: string) =>

@@ -29,7 +29,9 @@ Objectif : mise à disposition d'une bêta privée à un client le 26 octobre 20
   - sélection/concaténation audio par job enfant durable : terminé ;
   - bibliothèque `BrandKit`, import PNG/JPEG/MP4/MOV et vignettes : terminé ;
   - modes image extraite/fond animé et choix du format dans l'atelier : terminé ;
-  - zones dynamiques, rendus sociaux et archive : à faire.
+  - zones dynamiques titre/intervenant/date/épisode : terminé ;
+  - rendus worker 16:9, 1:1 et 9:16, fixes ou animés : terminé ;
+  - archive `.dars` et réimport sans retranscription : à faire.
 
 ## État de départ
 

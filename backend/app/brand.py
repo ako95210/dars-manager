@@ -10,23 +10,58 @@ import av
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse, Response
 from PIL import Image, ImageOps
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .auth import require_user
 from .config import settings
 from .database import get_db
+from .jobs import TERMINAL_STATES
 from .media_lifecycle import meter_media
 from .media_storage import LocalMediaStorage
 from .models import BrandKit, BrandTemplate, BrandTemplateFile, User, utc_now
-from .runtime import media_storage
+from .runtime import manager, media_storage
 
 
 router = APIRouter(prefix="/api/brand", tags=["brand"])
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 VIDEO_EXTENSIONS = {".m4v", ".mov", ".mp4"}
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
+
+
+class TemplateZone(BaseModel):
+    kind: Literal["title", "speaker", "date", "episode"]
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    width: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+    font_scale: float = Field(default=0.055, ge=0.015, le=0.2)
+    color: str = Field(default="#ffffff", pattern=r"^#[0-9a-fA-F]{6}$")
+    align: Literal["left", "center", "right"] = "left"
+
+    @model_validator(mode="after")
+    def inside_canvas(self) -> TemplateZone:
+        if self.x + self.width > 1.001 or self.y + self.height > 1.001:
+            raise ValueError("La zone doit rester dans le cadre.")
+        return self
+
+
+class TemplateUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=180)
+    zones: list[TemplateZone] = Field(max_length=4)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("zones")
+    @classmethod
+    def unique_zones(cls, zones: list[TemplateZone]) -> list[TemplateZone]:
+        if len({zone.kind for zone in zones}) != len(zones):
+            raise ValueError("Chaque type de zone ne peut apparaître qu'une fois.")
+        return zones
 
 
 class TemplateCreate(BaseModel):
@@ -68,6 +103,7 @@ class TemplateResponse(BaseModel):
     duration_seconds: float | None
     version: int
     frame_seconds: float
+    zones: list[TemplateZone]
     preview_url: str | None
     created_at: datetime
     updated_at: datetime
@@ -122,6 +158,7 @@ def template_response(template: BrandTemplate, has_preview: bool) -> TemplateRes
         ),
         version=template.version,
         frame_seconds=float(template.settings.get("frame_seconds", 0)),
+        zones=[TemplateZone.model_validate(zone) for zone in template.settings.get("zones", [])],
         preview_url=f"/api/brand/templates/{template.id}/preview" if has_preview else None,
         created_at=template.created_at,
         updated_at=template.updated_at,
@@ -268,7 +305,21 @@ def create_template(
         source_kind=source_kind,
         usage_mode=usage_mode,
         status="pending",
-        settings={"frame_seconds": payload.frame_seconds, "zones": []},
+        settings={
+            "frame_seconds": payload.frame_seconds,
+            "zones": [
+                {
+                    "kind": "title",
+                    "x": 0.08,
+                    "y": 0.64,
+                    "width": 0.84,
+                    "height": 0.22,
+                    "font_scale": 0.06,
+                    "color": "#ffffff",
+                    "align": "left",
+                }
+            ],
+        },
     )
     db.add(template)
     db.flush()
@@ -436,6 +487,27 @@ def template_preview(
     return RedirectResponse(url)
 
 
+@router.put("/templates/{template_id}", response_model=TemplateResponse)
+def update_template(
+    template_id: str,
+    payload: TemplateUpdate,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> TemplateResponse:
+    template = owned_template(db, user.id, template_id, for_update=True)
+    if template.status != "ready":
+        raise HTTPException(status_code=409, detail="Le template n'est pas encore utilisable.")
+    settings_payload = dict(template.settings or {})
+    settings_payload["zones"] = [zone.model_dump() for zone in payload.zones]
+    template.name = payload.name
+    template.settings = settings_payload
+    template.version += 1
+    template.updated_at = utc_now()
+    db.commit()
+    db.refresh(template)
+    return response_for(db, template)
+
+
 @router.delete("/templates/{template_id}", status_code=204)
 def delete_template(
     template_id: str,
@@ -443,6 +515,13 @@ def delete_template(
     db: Session = Depends(get_db),
 ) -> None:
     template = owned_template(db, user.id, template_id, for_update=True)
+    if any(
+        job.tool == "video_render"
+        and job.options.get("template_id") == template.id
+        and job.state not in TERMINAL_STATES
+        for job in manager.list_for_user(user.id)
+    ):
+        raise HTTPException(status_code=409, detail="Un rendu utilise encore ce template.")
     files = db.scalars(
         select(BrandTemplateFile).where(
             BrandTemplateFile.template_id == template.id,

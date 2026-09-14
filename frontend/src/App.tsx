@@ -167,11 +167,14 @@ function CourseEditor({ job }: { job: Job }) {
   const [notice, setNotice] = useState("");
   const [selectedParts, setSelectedParts] = useState<number[]>([]);
   const [exportJob, setExportJob] = useState<Job | null>(null);
+  const [videoJob, setVideoJob] = useState<Job | null>(null);
   const [exportLoading, setExportLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<BrandTemplate | null>(null);
   const [videoFormat, setVideoFormat] = useState<"16:9" | "1:1" | "9:16">("16:9");
+  const [videoValues, setVideoValues] = useState({ title: "", speaker: "", date: "", episode: "" });
+  const [renderingVideo, setRenderingVideo] = useState(false);
 
   function load() {
     setLoading(true);
@@ -211,6 +214,7 @@ function CourseEditor({ job }: { job: Job }) {
       .then((jobs) => {
         if (!active) return;
         setExportJob(jobs.find((item) => item.tool === "audio_selection" && item.parent_job_id === job.id) ?? null);
+        setVideoJob(jobs.find((item) => item.tool === "video_render" && item.parent_job_id === job.id) ?? null);
       })
       .catch(() => { if (active) setExportJob(null); })
       .finally(() => { if (active) setExportLoading(false); });
@@ -226,6 +230,16 @@ function CourseEditor({ job }: { job: Job }) {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [exportJob?.id, exportJob?.state]);
+
+  useEffect(() => {
+    if (!videoJob || terminalStates.has(videoJob.state)) return;
+    const timer = window.setInterval(() => {
+      api.job(videoJob.id)
+        .then(setVideoJob)
+        .catch((reason) => setError(reason instanceof Error ? reason.message : "Suivi du rendu impossible."));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [videoJob?.id, videoJob?.state]);
 
   function changePart(index: number, field: keyof PartDraft, value: string) {
     setParts((current) => current.map((part, position) => (
@@ -292,6 +306,31 @@ function CourseEditor({ job }: { job: Job }) {
     }
   }
 
+  async function createVideo() {
+    if (!analysis || !selectedTemplate || selectedParts.length === 0) return;
+    if (dirty) {
+      setError("Enregistrez d’abord vos corrections avant de générer la vidéo.");
+      return;
+    }
+    setRenderingVideo(true);
+    setError("");
+    setNotice("");
+    try {
+      setVideoJob(await api.createVideoExport(
+        job.id,
+        analysis.checksum_sha256,
+        selectedParts,
+        selectedTemplate,
+        videoFormat,
+        videoValues,
+      ));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Création de la vidéo impossible.");
+    } finally {
+      setRenderingVideo(false);
+    }
+  }
+
   const selectedDuration = parts
     .filter((part) => selectedParts.includes(part.index))
     .reduce((total, part) => {
@@ -301,6 +340,8 @@ function CourseEditor({ job }: { job: Job }) {
     }, 0);
   const exportProgress = Math.round(Math.max(0, Math.min(1, exportJob?.progress ?? 0)) * 100);
   const exportBusy = Boolean(exportJob && !terminalStates.has(exportJob.state));
+  const videoBusy = Boolean(videoJob && !terminalStates.has(videoJob.state));
+  const videoProgress = Math.round(Math.max(0, Math.min(1, videoJob?.progress ?? 0)) * 100);
 
   return (
     <section className="course-editor">
@@ -391,6 +432,7 @@ function CourseEditor({ job }: { job: Job }) {
 
           <TemplateLibrary
             onSelect={setSelectedTemplate}
+            outputFormat={videoFormat}
             selectedId={selectedTemplate?.id || ""}
           />
           <section className="video-template-choice">
@@ -408,6 +450,29 @@ function CourseEditor({ job }: { job: Job }) {
               ))}
             </div>
           </section>
+          <section className="video-composer">
+            <div className="video-fields">
+              <label>Titre<input maxLength={300} onChange={(event) => setVideoValues((current) => ({ ...current, title: event.target.value }))} placeholder="Par défaut : titres des parties" value={videoValues.title} /></label>
+              <label>Intervenant<input maxLength={180} onChange={(event) => setVideoValues((current) => ({ ...current, speaker: event.target.value }))} value={videoValues.speaker} /></label>
+              <label>Date<input maxLength={80} onChange={(event) => setVideoValues((current) => ({ ...current, date: event.target.value }))} value={videoValues.date} /></label>
+              <label>Épisode<input maxLength={80} onChange={(event) => setVideoValues((current) => ({ ...current, episode: event.target.value }))} value={videoValues.episode} /></label>
+            </div>
+            <button className="button accent" disabled={!selectedTemplate || selectedParts.length === 0 || dirty || renderingVideo || videoBusy} onClick={createVideo} type="button">
+              {renderingVideo ? "Préparation…" : videoBusy ? "Rendu en cours…" : "Générer la couverture et la vidéo"}
+            </button>
+          </section>
+          {videoJob && (
+            <div className={`video-render-status ${videoJob.state}`}>
+              <div><span className={`job-state ${videoJob.state}`}>{videoJob.state}</span><strong>{videoJob.state === "completed" ? "Vidéo prête à diffuser" : "Rendu vidéo"}</strong><small>{videoJob.error || videoJob.message}</small></div>
+              {videoJob.state === "completed" ? (
+                <div className="video-artifacts">
+                  {(["cover", "video", "selection_audio"] as const).filter((kind) => videoJob.artifacts.includes(kind)).map((kind) => <a className="button secondary" download href={api.artifactUrl(videoJob.id, kind)} key={kind}>{kind === "cover" ? "Couverture" : kind === "video" ? "Vidéo" : "Audio"}</a>)}
+                </div>
+              ) : !terminalStates.has(videoJob.state) ? (
+                <div className="export-progress"><strong>{videoProgress}%</strong><div className="progress-track"><span style={{ width: `${videoProgress}%` }} /></div></div>
+              ) : null}
+            </div>
+          )}
         </>
       )}
     </section>

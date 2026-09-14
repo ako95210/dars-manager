@@ -122,6 +122,11 @@ IA d'image. La génération IA reste facultative et ne peut remplacer que les
 zones explicitement prévues à cet effet. Un nouveau rendu conserve toujours la
 version du template utilisée afin de rester reproductible.
 
+Un job de rendu reçoit un instantané des zones et de leurs valeurs, le format
+cible et l'empreinte de l'analyse éditoriale. Il concatène d'abord les passages
+retenus, compose la couverture, puis encode la vidéo fixe ou le fond animé sans
+modifier la piste source du template. Ce parcours n'appelle aucun modèle IA.
+
 ## Limites de la bêta
 
 La bêta ne comprend pas encore :

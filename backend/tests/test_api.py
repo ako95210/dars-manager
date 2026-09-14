@@ -536,6 +536,90 @@ class ApiTests(unittest.TestCase):
             )
             self.assertEqual(selection.status_code, 200, selection.text)
             self.assertEqual(selection.content, b"selected-audio")
+
+            template_buffer = BytesIO()
+            Image.new("RGB", (640, 360), "#17362c").save(template_buffer, format="PNG")
+            template_content = template_buffer.getvalue()
+            template_reservation = client.post(
+                "/api/brand/templates",
+                json={
+                    "name": "Template du rendu",
+                    "filename": "template.png",
+                    "content_type": "image/png",
+                    "size_bytes": len(template_content),
+                    "usage_mode": "static_frame",
+                },
+            )
+            self.assertEqual(template_reservation.status_code, 201, template_reservation.text)
+            template_id = template_reservation.json()["template"]["id"]
+            self.assertEqual(
+                client.put(
+                    template_reservation.json()["upload"]["url"],
+                    content=template_content,
+                    headers={"Content-Type": "image/png"},
+                ).status_code,
+                204,
+            )
+            completed_template = client.post(f"/api/brand/templates/{template_id}/complete")
+            self.assertEqual(completed_template.status_code, 200, completed_template.text)
+            configured_template = client.put(
+                f"/api/brand/templates/{template_id}",
+                json={
+                    "name": "Template configuré",
+                    "zones": [
+                        {
+                            "kind": "title",
+                            "x": 0.1,
+                            "y": 0.65,
+                            "width": 0.8,
+                            "height": 0.2,
+                            "font_scale": 0.06,
+                            "color": "#ffffff",
+                            "align": "center",
+                        }
+                    ],
+                },
+            )
+            self.assertEqual(configured_template.status_code, 200, configured_template.text)
+            self.assertEqual(configured_template.json()["version"], 2)
+            video_requested = client.post(
+                f"/api/jobs/{job.id}/exports/video",
+                json={
+                    "checksum_sha256": updated.json()["checksum_sha256"],
+                    "part_indices": [1],
+                    "template_id": template_id,
+                    "template_version": 2,
+                    "output_format": "9:16",
+                    "title": "Titre du rendu",
+                    "speaker": "Intervenant",
+                    "date": "",
+                    "episode": "",
+                },
+            )
+            self.assertEqual(video_requested.status_code, 202, video_requested.text)
+            video_job_id = video_requested.json()["id"]
+
+            def fake_cover(_source, output, **kwargs) -> None:
+                self.assertEqual(kwargs["output_format"], "9:16")
+                self.assertEqual(kwargs["values"]["title"], "Titre du rendu")
+                output.write_bytes(b"rendered-cover")
+
+            def fake_video(_cover, _audio, output) -> None:
+                output.write_bytes(b"rendered-video")
+
+            with (
+                patch("backend.worker.export_clips", side_effect=fake_export),
+                patch("backend.worker.compose_cover", side_effect=fake_cover),
+                patch("backend.worker.render_static_video", side_effect=fake_video),
+            ):
+                self.assertTrue(Worker("video-worker").process(video_job_id))
+            rendered = manager.get(user_id, video_job_id)
+            self.assertIsNotNone(rendered)
+            self.assertEqual(rendered.state, "completed")
+            self.assertEqual(rendered.metrics["template_version"], 2)
+            rendered_video = client.get(f"/api/jobs/{video_job_id}/artifacts/video")
+            self.assertEqual(rendered_video.status_code, 200, rendered_video.text)
+            self.assertEqual(rendered_video.content, b"rendered-video")
             with SessionLocal() as db:
                 saved_analysis = db.scalar(
                     select(Artifact).where(
@@ -560,7 +644,9 @@ class ApiTests(unittest.TestCase):
                 self.assertIsNone(db.get(Asset, asset_id))
             self.assertEqual(client.delete(f"/api/jobs/{job.id}").status_code, 204)
             self.assertEqual(client.get(f"/api/jobs/{export_id}").status_code, 404)
+            self.assertEqual(client.get(f"/api/jobs/{video_job_id}").status_code, 404)
             self.assertEqual(client.delete(f"/api/projects/{project_id}").status_code, 204)
+            self.assertEqual(client.delete(f"/api/brand/templates/{template_id}").status_code, 204)
 
     def test_paid_transcription_checkpoint_is_reused(self) -> None:
         class FakePaidProvider:

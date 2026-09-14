@@ -22,8 +22,9 @@ from .app.database import SessionLocal, init_database
 from .app.job_state import DatabaseJobStateStore
 from .app.jobs import Job
 from .app.media_lifecycle import meter_media
-from .app.models import Artifact, Asset, utc_now
-from .app.pipeline import PipelineResult, run_pipeline
+from .app.models import Artifact, Asset, BrandTemplateFile, utc_now
+from .app.pipeline import PipelineResult, render_static_video, run_pipeline
+from .app.rendering import compose_cover, render_animated_video
 from .app.runtime import job_queue, media_storage, storage
 from .app.transcription import (
     OpenAIWhisperProvider,
@@ -294,6 +295,163 @@ class Worker:
             storage.remove_workspace(job.workspace)
         return True
 
+    def _process_video_render(
+        self,
+        job: Job,
+        heartbeat_stopped: threading.Event,
+        heartbeat: threading.Thread,
+    ) -> bool:
+        started = time.monotonic()
+        try:
+            source_job_id = str(job.options.get("source_job_id", ""))
+            template_id = str(job.options.get("template_id", ""))
+            raw_ranges = job.options.get("ranges", [])
+            ranges = [(float(item[0]), float(item[1])) for item in raw_ranges]
+            output_format = str(job.options.get("output_format", ""))
+            if not source_job_id or not template_id or not ranges:
+                raise ValueError("Invalid video render job")
+            self._save_progress(job, {
+                "stage": "preparing_render",
+                "message": "Préparation du template et de l'audio",
+                "progress": 0.08,
+            })
+            with SessionLocal() as db:
+                source_audio = db.scalar(
+                    select(Artifact).where(
+                        Artifact.job_id == source_job_id,
+                        Artifact.user_id == job.user_id,
+                        Artifact.kind == "audio",
+                    )
+                )
+                template_source = db.scalar(
+                    select(BrandTemplateFile).where(
+                        BrandTemplateFile.template_id == template_id,
+                        BrandTemplateFile.user_id == job.user_id,
+                        BrandTemplateFile.kind == "source",
+                    )
+                )
+                if source_audio is None or not source_audio.storage_key or template_source is None:
+                    raise ValueError("Render source is unavailable")
+                audio_key = source_audio.storage_key
+                audio_checksum = source_audio.checksum_sha256
+                template_key = template_source.storage_key
+                template_checksum = template_source.checksum_sha256
+
+            audio_path = job.workspace / "source-audio.wav"
+            template_path = job.workspace / f"template{Path(template_key).suffix}"
+            media_storage.download_file(audio_key, audio_path)
+            media_storage.download_file(template_key, template_path)
+            if audio_checksum and sha256_file(audio_path) != audio_checksum:
+                raise ValueError("Source audio artifact checksum mismatch")
+            if template_checksum and sha256_file(template_path) != template_checksum:
+                raise ValueError("Template checksum mismatch")
+            self._wait_if_paused(job)
+
+            selection_path = job.workspace / "selection-audio.wav"
+            self._save_progress(job, {
+                "stage": "audio_export",
+                "message": "Assemblage des passages sélectionnés",
+                "progress": 0.2,
+            })
+            export_clips(audio_path, selection_path, ranges)
+            cover_path = job.workspace / "cover.png"
+            self._save_progress(job, {
+                "stage": "cover_render",
+                "message": "Composition de la couverture",
+                "progress": 0.38,
+            })
+            compose_cover(
+                template_path,
+                cover_path,
+                source_kind=str(job.options.get("template_source_kind", "image")),
+                frame_seconds=float(job.options.get("template_frame_seconds", 0)),
+                output_format=output_format,
+                zones=list(job.options.get("template_zones", [])),
+                values=dict(job.options.get("values", {})),
+            )
+            self._wait_if_paused(job)
+            video_path = job.workspace / "video.mp4"
+            self._save_progress(job, {
+                "stage": "video_render",
+                "message": "Encodage de la vidéo finale",
+                "progress": 0.55,
+            })
+            if job.options.get("template_usage_mode") == "animated":
+                render_animated_video(
+                    template_path,
+                    selection_path,
+                    video_path,
+                    output_format=output_format,
+                    zones=list(job.options.get("template_zones", [])),
+                    values=dict(job.options.get("values", {})),
+                )
+            else:
+                render_static_video(cover_path, selection_path, video_path)
+            self._wait_if_paused(job)
+
+            produced = {
+                "selection_audio": (selection_path, "selection-audio.wav", "audio/wav"),
+                "cover": (cover_path, "cover.png", "image/png"),
+                "video": (video_path, "video.mp4", "video/mp4"),
+            }
+            expiration = utc_now() + timedelta(seconds=settings.media_retention_seconds)
+            rows = []
+            keys = {}
+            for kind, (path, filename, mime_type) in produced.items():
+                key = f"users/{job.user_id}/projects/{job.project_id}/jobs/{job.id}/{filename}"
+                media_storage.upload_file(key, path, mime_type)
+                keys[kind] = key
+                rows.append(Artifact(
+                    user_id=job.user_id,
+                    project_id=job.project_id,
+                    job_id=job.id,
+                    kind=kind,
+                    mime_type=mime_type,
+                    size_bytes=path.stat().st_size,
+                    storage_key=key,
+                    checksum_sha256=sha256_file(path),
+                    storage_metered_at=utc_now(),
+                    expires_at=expiration,
+                ))
+            with SessionLocal() as db:
+                previous = db.scalars(select(Artifact).where(Artifact.job_id == job.id)).all()
+                for item in previous:
+                    meter_media(db, item)
+                    db.delete(item)
+                db.add_all(rows)
+                db.commit()
+            job.artifacts = keys
+            job.metrics = {
+                "selected_parts": len(ranges),
+                "duration_seconds": sum(end - start for start, end in ranges),
+                "elapsed_seconds": time.monotonic() - started,
+                "template_id": template_id,
+                "template_version": int(job.options.get("template_version", 1)),
+                "output_format": output_format,
+            }
+            job.state = "completed"
+            job.stage = "done"
+            job.message = "Vidéo prête"
+            job.progress = 1.0
+            job.error = None
+        except AnalysisCancelled:
+            job.state = "cancelled"
+            job.message = "Rendu vidéo annulé"
+        except Exception as exc:
+            job.state = "failed"
+            job.stage = "failed"
+            job.message = "Échec du rendu vidéo"
+            job.error = f"{type(exc).__name__}: {exc}"
+        finally:
+            heartbeat_stopped.set()
+            heartbeat.join(timeout=2)
+            job.worker_id = None
+            job.lease_expires_at = None
+            job.updated_at = time.time()
+            self.state.save(job.record())
+            storage.remove_workspace(job.workspace)
+        return True
+
     def process(self, job_id: str) -> bool:
         record = self.state.claim(job_id, self.worker_id, settings.worker_lease_seconds)
         if record is None:
@@ -314,6 +472,8 @@ class Worker:
         heartbeat.start()
         if job.tool == "audio_selection":
             return self._process_audio_selection(job, heartbeat_stopped, heartbeat)
+        if job.tool == "video_render":
+            return self._process_video_render(job, heartbeat_stopped, heartbeat)
         try:
             if job.tool != "audio_pipeline":
                 raise ValueError(f"Unsupported job tool: {job.tool}")

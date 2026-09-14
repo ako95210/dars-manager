@@ -16,7 +16,7 @@ from .config import settings
 from .database import get_db
 from .jobs import Job
 from .media_lifecycle import meter_media
-from .models import Artifact, User, utc_now
+from .models import Artifact, BrandTemplate, BrandTemplateFile, User, utc_now
 from .runtime import job_queue, manager, media_storage
 
 
@@ -59,6 +59,21 @@ class AudioExportRequest(BaseModel):
         if len(set(values)) != len(values):
             raise ValueError("Une partie ne peut être sélectionnée qu'une fois.")
         return values
+
+
+class VideoExportRequest(AudioExportRequest):
+    template_id: str = Field(min_length=32, max_length=32)
+    template_version: int = Field(ge=1)
+    output_format: str = Field(pattern=r"^(16:9|1:1|9:16)$")
+    title: str = Field(default="", max_length=300)
+    speaker: str = Field(default="", max_length=180)
+    date: str = Field(default="", max_length=80)
+    episode: str = Field(default="", max_length=80)
+
+    @field_validator("title", "speaker", "date", "episode", mode="before")
+    @classmethod
+    def strip_values(cls, value: str) -> str:
+        return value.strip()
 
 
 def owned_completed_job(user_id: str, job_id: str) -> Job:
@@ -397,6 +412,133 @@ def create_audio_export(
             "part_indices": canonical_indices,
             "ranges": ranges,
             "title": " · ".join(str(part.get("title", "")) for part in selected),
+        },
+    )
+    try:
+        job_queue.enqueue(child.id)
+    except Exception:
+        pass
+    return child.public()
+
+
+@router.post("/{job_id}/exports/video", status_code=202)
+def create_video_export(
+    job_id: str,
+    request: VideoExportRequest,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    source_job = owned_completed_job(user.id, job_id)
+    if source_job.tool != "audio_pipeline" or source_job.execution_backend != "worker":
+        raise HTTPException(status_code=409, detail="Ce cours ne permet pas un rendu cloud durable.")
+    template = db.scalar(
+        select(BrandTemplate).where(
+            BrandTemplate.id == request.template_id,
+            BrandTemplate.user_id == user.id,
+            BrandTemplate.status == "ready",
+        )
+    )
+    if template is None:
+        raise HTTPException(status_code=404, detail="Template introuvable.")
+    if template.version != request.template_version:
+        raise HTTPException(status_code=409, detail="Le template a changé. Rechargez-le.")
+    template_source = db.scalar(
+        select(BrandTemplateFile).where(
+            BrandTemplateFile.template_id == template.id,
+            BrandTemplateFile.user_id == user.id,
+            BrandTemplateFile.kind == "source",
+        )
+    )
+    audio = db.scalar(
+        select(Artifact).where(
+            Artifact.job_id == source_job.id,
+            Artifact.user_id == user.id,
+            Artifact.kind == "audio",
+        )
+    )
+    if template_source is None or audio is None or not audio.storage_key:
+        raise HTTPException(status_code=404, detail="Un média nécessaire au rendu est introuvable.")
+
+    analysis = analysis_artifact(db, source_job, user.id, for_update=True)
+    if analysis.checksum_sha256 and analysis.checksum_sha256 != request.checksum_sha256:
+        raise HTTPException(status_code=409, detail="L'analyse a changé. Rechargez-la.")
+    settings.workspace_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with tempfile.TemporaryDirectory(dir=settings.workspace_root) as temporary:
+        analysis_path = Path(temporary) / "analysis.json"
+        try:
+            media_storage.download_file(analysis.storage_key, analysis_path)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail="Lecture de l'analyse impossible.") from exc
+        if sha256_file(analysis_path) != request.checksum_sha256:
+            raise HTTPException(status_code=409, detail="L'analyse a changé. Rechargez-la.")
+        analysis_payload = load_payload(analysis_path)
+
+    by_index = {
+        int(part["index"]): part
+        for part in analysis_payload["parts"]
+        if isinstance(part, dict) and isinstance(part.get("index"), int)
+    }
+    if any(index not in by_index for index in request.part_indices):
+        raise HTTPException(status_code=422, detail="Une partie sélectionnée n'existe plus.")
+    selected = sorted(
+        (by_index[index] for index in request.part_indices),
+        key=lambda part: float(part["start"]),
+    )
+    canonical_indices = [int(part["index"]) for part in selected]
+    ranges = [[float(part["start"]), float(part["end"])] for part in selected]
+    values = {
+        "title": request.title or " · ".join(str(part.get("title", "")) for part in selected),
+        "speaker": request.speaker,
+        "date": request.date,
+        "episode": request.episode,
+    }
+    signature = {
+        "source_job_id": source_job.id,
+        "analysis_checksum": request.checksum_sha256,
+        "part_indices": canonical_indices,
+        "template_id": template.id,
+        "template_version": template.version,
+        "output_format": request.output_format,
+        "values": values,
+    }
+    previous = [
+        job
+        for job in manager.list_for_user(user.id, source_job.project_id)
+        if job.tool == "video_render" and job.options.get("source_job_id") == source_job.id
+    ]
+    identical = next(
+        (
+            job
+            for job in previous
+            if all(job.options.get(key) == value for key, value in signature.items())
+            and job.state not in {"failed", "cancelled", "expired"}
+        ),
+        None,
+    )
+    if identical:
+        return identical.public()
+    if any(job.state not in {"completed", "failed", "cancelled", "expired"} for job in previous):
+        raise HTTPException(status_code=409, detail="Un rendu vidéo est déjà en cours.")
+
+    child = manager.create(
+        user.id,
+        source_job.project_id,
+        "video.mp4",
+        "",
+        source_job.language,
+        settings.whisper_cpu_threads,
+        execution_backend="worker",
+        allocate_workspace=False,
+        tool="video_render",
+        options={
+            **signature,
+            "ranges": ranges,
+            "template_source_key": template_source.storage_key,
+            "template_source_checksum": template_source.checksum_sha256,
+            "template_source_kind": template.source_kind,
+            "template_usage_mode": template.usage_mode,
+            "template_frame_seconds": float(template.settings.get("frame_seconds", 0)),
+            "template_zones": list(template.settings.get("zones", [])),
         },
     )
     try:
