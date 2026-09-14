@@ -306,6 +306,14 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<void>("/api/auth/password", {
+      method: "PUT",
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+      }),
+    }),
   projects: () => request<Project[]>("/api/projects"),
   createProject: (title: string, description: string) =>
     request<Project>("/api/projects", {

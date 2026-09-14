@@ -1,5 +1,19 @@
 # Dars Manager (`drsm`)
 
+## Bêta cloud actuelle
+
+La cible active est désormais l'application React/FastAPI avec traitement
+cloud, worker séparé, PostgreSQL, Redis et stockage média temporaire. Le
+déploiement HTTPS reproductible se trouve dans `infra/compose.beta.yml`.
+
+- exploitation et déploiement : `docs/exploitation-beta.md` ;
+- accueil du client pilote : `docs/guide-client-pilote.md` ;
+- décision de livraison : `docs/go-no-go-beta.md` ;
+- architecture cible : `docs/architecture-cible-cloud.md`.
+
+Les sections historiques ci-dessous décrivent encore l'ancienne application
+locale/Streamlit et restent disponibles comme référence pendant la transition.
+
 Application locale pour analyser un cours audio, le découper en parties avec timestamps, puis exporter une ou plusieurs parties choisies en fichier audio indépendant.
 
 Les analyses sont sauvegardées dans le répertoire de travail local.

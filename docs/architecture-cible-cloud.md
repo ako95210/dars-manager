@@ -133,6 +133,30 @@ configuration obligatoire en production, versionnée dans le même catalogue que
 les tarifs IA. Un service de maintenance distinct mesure la dernière période
 avant de supprimer les objets expirés.
 
+## Sécurité et exploitation de la bêta
+
+Caddy est le seul service exposé et termine HTTPS. L'API, le worker,
+PostgreSQL et Redis communiquent sur des réseaux Docker privés ; le worker et
+la maintenance disposent d'un réseau de sortie séparé pour joindre OpenAI ou
+le stockage objet. Les processus applicatifs s'exécutent sans privilège, avec
+un système de fichiers en lecture seule et des capacités Linux supprimées.
+
+Les mots de passe et clés fournisseur sont montés comme fichiers secrets. La
+clé OpenAI n'est disponible que dans le worker. Le mode `beta` refuse au
+démarrage une base SQLite, un cookie non sécurisé, une origine non HTTPS, un
+hôte générique ou l'exécution des traitements dans l'API.
+
+Les requêtes de modification sont limitées aux origines autorisées, les hôtes
+sont filtrés et les réponses reçoivent les en-têtes de sécurité du navigateur.
+Chaque requête possède un identifiant de corrélation sans journalisation de son
+corps. La connexion est limitée par compte et par adresse, avec une mémoire
+bornée, et le changement de mot de passe révoque toutes les sessions.
+
+PostgreSQL est la seule sauvegarde durable. Les dumps sont vérifiés par une
+restauration dans une base éphémère ; les médias temporaires n'y sont jamais
+inclus. La disponibilité, le mode dégradé Redis et les compteurs techniques
+sont séparés des données fonctionnelles.
+
 ## Templates visuels des éditeurs
 
 Chaque client dispose d'un `BrandKit` contenant son logo, ses couleurs, ses

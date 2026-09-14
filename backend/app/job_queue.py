@@ -11,6 +11,8 @@ class JobQueue(Protocol):
 
     def wait(self, timeout_seconds: int) -> str | None: ...
 
+    def ping(self) -> bool: ...
+
 
 class PollingJobQueue:
     """Database polling fallback for development without Redis."""
@@ -21,6 +23,9 @@ class PollingJobQueue:
     def wait(self, timeout_seconds: int) -> str | None:
         time.sleep(timeout_seconds)
         return None
+
+    def ping(self) -> bool:
+        return True
 
 
 class RedisJobQueue:
@@ -34,6 +39,9 @@ class RedisJobQueue:
     def wait(self, timeout_seconds: int) -> str | None:
         item = self.client.blpop(self.queue_name, timeout=timeout_seconds)
         return item[1] if item else None
+
+    def ping(self) -> bool:
+        return bool(self.client.ping())
 
 
 def create_job_queue(redis_url: str | None) -> JobQueue:

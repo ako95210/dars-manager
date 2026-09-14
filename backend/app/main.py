@@ -6,14 +6,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, AsyncIterator
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .auth import require_user, router as auth_router
+from .auth import require_admin, require_user, router as auth_router
 from .archives import router as archives_router
 from .billing import admin_router as admin_billing_router
 from .billing import router as billing_router
@@ -25,6 +26,7 @@ from .editor import router as editor_router
 from .jobs import Job, JobManager, TERMINAL_STATES
 from .media_storage import LocalMediaStorage
 from .models import Artifact, Asset, Project, User
+from .observability import OperationalMiddleware, configure_logging, runtime_metrics
 from .projects import router as projects_router
 from .runtime import job_queue, manager, media_storage, storage
 from .media_lifecycle import meter_media, purge_expired_media
@@ -45,7 +47,26 @@ async def lifespan(_: FastAPI):
     manager.shutdown()
 
 
-app = FastAPI(title="Dars Manager Beta API", version="0.1.0", lifespan=lifespan)
+configure_logging(settings.log_level)
+hide_api_schema = settings.environment in {"beta", "production"}
+app = FastAPI(
+    title="Dars Manager Beta API",
+    version="0.1.0",
+    lifespan=lifespan,
+    docs_url=None if hide_api_schema else "/docs",
+    redoc_url=None if hide_api_schema else "/redoc",
+    openapi_url=None if hide_api_schema else "/openapi.json",
+)
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=list(settings.allowed_hosts),
+)
+app.add_middleware(
+    OperationalMiddleware,
+    trusted_origins=settings.trusted_origins,
+    hsts=settings.environment in {"beta", "production"},
+    log_requests=settings.environment in {"beta", "production"},
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
@@ -72,9 +93,41 @@ def owned_job(user_id: str, job_id: str) -> Job:
     return job
 
 
+@app.get("/api/health/live")
+def liveness() -> dict:
+    return {"status": "alive", "release": settings.release}
+
+
 @app.get("/api/health")
-def health() -> dict:
-    return {"status": "ok"}
+@app.get("/api/health/ready")
+def readiness(response: Response, db: Session = Depends(get_db)) -> dict:
+    checks = {"database": False, "queue": False}
+    try:
+        db.execute(select(1))
+        checks["database"] = True
+    except Exception:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": "unavailable", "release": settings.release, "checks": checks}
+    try:
+        checks["queue"] = job_queue.ping()
+    except Exception:
+        checks["queue"] = False
+    return {
+        "status": "ready" if checks["queue"] else "degraded",
+        "release": settings.release,
+        "checks": checks,
+    }
+
+
+@app.get("/api/admin/system")
+def system_status(_admin: User = Depends(require_admin)) -> dict:
+    return {
+        "release": settings.release,
+        "environment": settings.environment,
+        "media_backend": media_storage.backend,
+        "execution_backend": settings.execution_backend,
+        "metrics": runtime_metrics.snapshot(),
+    }
 
 
 @app.post("/api/jobs", status_code=202)

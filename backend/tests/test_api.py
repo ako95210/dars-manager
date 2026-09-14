@@ -90,7 +90,16 @@ class ApiTests(unittest.TestCase):
             home = client.get("/")
             self.assertEqual(home.status_code, 200)
             self.assertIn("Dars Manager", home.text)
+            self.assertEqual(home.headers["x-content-type-options"], "nosniff")
+            self.assertEqual(home.headers["x-frame-options"], "DENY")
+            self.assertTrue(home.headers["x-request-id"])
             self.assertEqual(client.get("/api/auth/me").status_code, 401)
+            rejected_origin = client.post(
+                "/api/auth/login",
+                headers={"Origin": "https://malicious.example"},
+                json={"email": "pilot-a@example.com", "password": "mot-de-passe-a"},
+            )
+            self.assertEqual(rejected_origin.status_code, 403, rejected_origin.text)
             self.assertEqual(
                 client.post(
                     "/api/auth/login",
@@ -102,6 +111,65 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(client.get("/api/auth/me").json()["display_name"], "Pilote A")
             self.assertEqual(client.post("/api/auth/logout").status_code, 204)
             self.assertEqual(client.get("/api/auth/me").status_code, 401)
+
+    def test_password_change_revokes_every_session(self) -> None:
+        email = f"password-{TEST_ID}@example.com"
+        with SessionLocal() as db:
+            db.add(
+                User(
+                    email=email,
+                    display_name="Password Pilot",
+                    password_hash=hash_password("mot-de-passe-initial"),
+                )
+            )
+            db.commit()
+        with TestClient(app) as first, TestClient(app) as second:
+            self.login(first, email, "mot-de-passe-initial")
+            self.login(second, email, "mot-de-passe-initial")
+            wrong = first.put(
+                "/api/auth/password",
+                json={
+                    "current_password": "mot-de-passe-incorrect",
+                    "new_password": "mot-de-passe-nouveau",
+                },
+            )
+            self.assertEqual(wrong.status_code, 401, wrong.text)
+            changed = first.put(
+                "/api/auth/password",
+                json={
+                    "current_password": "mot-de-passe-initial",
+                    "new_password": "mot-de-passe-nouveau",
+                },
+            )
+            self.assertEqual(changed.status_code, 204, changed.text)
+            self.assertEqual(first.get("/api/auth/me").status_code, 401)
+            self.assertEqual(second.get("/api/auth/me").status_code, 401)
+            self.assertEqual(
+                second.post(
+                    "/api/auth/login",
+                    json={"email": email, "password": "mot-de-passe-initial"},
+                ).status_code,
+                401,
+            )
+            self.login(second, email, "mot-de-passe-nouveau")
+
+    def test_operational_endpoints_are_scoped(self) -> None:
+        with TestClient(app) as client:
+            live = client.get("/api/health/live")
+            self.assertEqual(live.status_code, 200, live.text)
+            self.assertEqual(live.json()["status"], "alive")
+            ready = client.get("/api/health/ready")
+            self.assertEqual(ready.status_code, 200, ready.text)
+            self.assertTrue(ready.json()["checks"]["database"])
+            self.assertEqual(client.get("/api/admin/system").status_code, 401)
+            self.login(client, "pilot-b@example.com", "mot-de-passe-b")
+            self.assertEqual(client.get("/api/admin/system").status_code, 403)
+        with TestClient(app) as admin:
+            self.login(admin, "pilot-a@example.com", "mot-de-passe-a")
+            system = admin.get("/api/admin/system")
+            self.assertEqual(system.status_code, 200, system.text)
+            self.assertIn("metrics", system.json())
+            self.assertNotIn("database_url", system.json())
 
     def test_transcription_quote_uses_the_versioned_rate(self) -> None:
         with TestClient(app) as client:

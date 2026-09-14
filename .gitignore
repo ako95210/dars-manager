@@ -8,6 +8,8 @@ work/exports/
 work/recordings/
 work/analyses/
 .env
+infra/secrets/
+infra/backups/
 *.db
 node_modules/
 frontend/dist/

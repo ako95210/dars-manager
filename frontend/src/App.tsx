@@ -1375,6 +1375,51 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
   );
 }
 
+function AccountOverview({ user, onPasswordChanged }: { user: User; onPasswordChanged: () => void }) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    if (newPassword !== confirmation) {
+      setError("Les deux nouveaux mots de passe ne correspondent pas.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.changePassword(currentPassword, newPassword);
+      onPasswordChanged();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Modification impossible.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="account-overview">
+      <header className="workspace-header">
+        <div><span className="eyebrow">Compte</span><h1>Paramètres de sécurité</h1><p>Gérez les accès à votre espace Dars Manager.</p></div>
+      </header>
+      <article className="account-card">
+        <div className="account-identity"><span className="avatar">{user.display_name.charAt(0).toUpperCase()}</span><div><strong>{user.display_name}</strong><small>{user.email} · {user.role === "admin" ? "Administrateur" : "Client"}</small></div></div>
+        <div className="account-security-copy"><span className="eyebrow">Mot de passe</span><h2>Changer mon mot de passe</h2><p>La modification ferme toutes vos sessions. Vous devrez vous reconnecter avec le nouveau mot de passe.</p></div>
+        <form onSubmit={submit}>
+          <label>Mot de passe actuel<input autoComplete="current-password" maxLength={256} required type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label>
+          <label>Nouveau mot de passe<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
+          <label>Confirmer le nouveau mot de passe<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
+          {error && <p className="form-error notice">{error}</p>}
+          <button className="button primary" disabled={saving} type="submit">{saving ? "Modification…" : "Changer le mot de passe"}</button>
+        </form>
+      </article>
+    </section>
+  );
+}
+
 function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1383,7 +1428,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [title, setTitle] = useState("");
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
-  const [view, setView] = useState<"dashboard" | "jobs" | "billing" | "admin-billing">("dashboard");
+  const [view, setView] = useState<"dashboard" | "jobs" | "billing" | "admin-billing" | "account">("dashboard");
   const [impact, setImpact] = useState<ImpactSummary | null>(null);
 
   useEffect(() => {
@@ -1415,6 +1460,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
         "#jobs": "jobs",
         "#billing": "billing",
         "#admin-billing": "admin-billing",
+        "#account": "account",
       }[window.location.hash] as typeof view | undefined;
       setView(hashView || "dashboard");
     };
@@ -1475,7 +1521,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
           <a className={view === "jobs" ? "active" : ""} href="#jobs" onClick={() => { setSelectedProject(null); setView("jobs"); }}><span>↻</span> Traitements</a>
           <a className={view === "billing" ? "active" : ""} href="#billing" onClick={() => { setSelectedProject(null); setView("billing"); }}><span>◉</span> Coûts</a>
           {user.role === "admin" && <a className={view === "admin-billing" ? "active" : ""} href="#admin-billing" onClick={() => { setSelectedProject(null); setView("admin-billing"); }}><span>▤</span> Administration</a>}
-          <a href="#settings"><span>⚙</span> Paramètres</a>
+          <a className={view === "account" ? "active" : ""} href="#account" onClick={() => { setSelectedProject(null); setView("account"); }}><span>⚙</span> Paramètres</a>
         </nav>
         <div className="sidebar-user">
           <span className="avatar">{user.display_name.charAt(0).toUpperCase()}</span>
@@ -1493,6 +1539,8 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
           <BillingOverview />
         ) : view === "admin-billing" && user.role === "admin" ? (
           <AdminBillingOverview />
+        ) : view === "account" ? (
+          <AccountOverview user={user} onPasswordChanged={onLogout} />
         ) : (
           <>
         <header className="workspace-header">

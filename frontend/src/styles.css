@@ -410,6 +410,17 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .community-ledgers > div { min-width: 0; }
 .community-ledgers h3 { margin-bottom: 10px; }
 .muted-line { padding: 20px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); background: #fafbfc; font-size: 11px; }
+.account-card { max-width: 760px; padding: 28px; border: 1px solid var(--line); border-radius: 16px; background: white; box-shadow: 0 8px 30px rgba(13, 24, 43, .035); }
+.account-identity { display: flex; gap: 12px; align-items: center; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+.account-identity .avatar { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 12px; color: white; background: #17263c; font-weight: 800; }
+.account-identity strong, .account-identity small { display: block; }
+.account-identity small { margin-top: 4px; color: var(--muted); font-size: 10px; }
+.account-security-copy { margin: 24px 0 18px; }
+.account-security-copy h2 { margin: 6px 0; font-size: 20px; }
+.account-security-copy p { max-width: 590px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.account-card form { display: grid; gap: 13px; }
+.account-card form label { display: grid; gap: 6px; color: #344054; font-size: 11px; font-weight: 700; }
+.account-card form .button { justify-self: start; }
 
 @media (max-width: 900px) {
   .login-shell { grid-template-columns: 1fr; }

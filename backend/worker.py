@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import os
 import signal
@@ -26,6 +27,7 @@ from .app.jobs import Job
 from .app.impact import record_impact
 from .app.media_lifecycle import meter_media
 from .app.models import Artifact, Asset, BrandTemplateFile, utc_now
+from .app.observability import configure_logging
 from .app.pipeline import PipelineResult, render_static_video, run_pipeline
 from .app.rendering import compose_cover, render_animated_video
 from .app.runtime import job_queue, media_storage, storage
@@ -42,6 +44,7 @@ ARTIFACTS = {
     "cover": ("cover_path", "cover.png", "image/png"),
     "video": ("video_path", "video.mp4", "video/mp4"),
 }
+logger = logging.getLogger("dars.worker")
 
 
 def sha256_file(path: Path) -> str:
@@ -61,8 +64,12 @@ class Worker:
         self.stop_requested = threading.Event()
         self.transcription_provider = None
         if settings.transcription_backend == "openai":
+            if not settings.openai_api_key:
+                raise RuntimeError(
+                    "OPENAI_API_KEY or OPENAI_API_KEY_FILE is required by the worker"
+                )
             self.transcription_provider = OpenAIWhisperProvider(
-                api_key=settings.openai_api_key or "",
+                api_key=settings.openai_api_key,
                 model=settings.transcription_model,
                 timeout_seconds=settings.openai_timeout_seconds,
             )
@@ -902,7 +909,12 @@ class Worker:
 
 
 def main() -> None:
+    configure_logging(settings.log_level)
     worker = Worker()
+    logger.info(
+        "worker_started",
+        extra={"event_fields": {"worker_id": worker.worker_id, "release": settings.release}},
+    )
     signal.signal(signal.SIGTERM, worker.stop)
     signal.signal(signal.SIGINT, worker.stop)
     worker.run()

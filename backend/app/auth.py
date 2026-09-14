@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -11,6 +11,9 @@ from .config import settings
 from .database import get_db
 from .models import AuthSession, User
 from .security import (
+    DUMMY_PASSWORD_HASH,
+    LoginThrottle,
+    hash_password,
     hash_session_token,
     is_expired,
     new_session_token,
@@ -21,6 +24,8 @@ from .security import (
 
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+account_login_throttle = LoginThrottle(max_failures=5)
+address_login_throttle = LoginThrottle(max_failures=20)
 
 
 class LoginRequest(BaseModel):
@@ -33,6 +38,11 @@ class UserResponse(BaseModel):
     email: EmailStr
     display_name: str
     role: str
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=10, max_length=256)
 
 
 def user_response(user: User) -> UserResponse:
@@ -71,10 +81,36 @@ def require_admin(user: User = Depends(require_user)) -> User:
 
 
 @router.post("/login", response_model=UserResponse)
-def login(payload: LoginRequest, response: Response, db: Session = Depends(get_db)) -> UserResponse:
-    user = db.scalar(select(User).where(User.email == normalize_email(str(payload.email))))
-    if user is None or not verify_password(payload.password, user.password_hash) or not user.is_active:
+def login(
+    payload: LoginRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> UserResponse:
+    normalized_email = normalize_email(str(payload.email))
+    client_host = request.client.host if request.client else "unknown"
+    account_key = f"account:{normalized_email}"
+    address_key = f"address:{client_host}"
+    retry_after = max(
+        account_login_throttle.retry_after(account_key),
+        address_login_throttle.retry_after(address_key),
+    )
+    if retry_after:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts",
+            headers={"Retry-After": str(retry_after)},
+        )
+    user = db.scalar(select(User).where(User.email == normalized_email))
+    password_hash = user.password_hash if user is not None else DUMMY_PASSWORD_HASH
+    password_valid = verify_password(payload.password, password_hash)
+    if user is None or not password_valid or not user.is_active:
+        account_login_throttle.failure(account_key)
+        address_login_throttle.failure(address_key)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
+    account_login_throttle.clear(account_key)
+    address_login_throttle.clear(address_key)
 
     token = new_session_token()
     db.add(
@@ -100,6 +136,29 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
 @router.get("/me", response_model=UserResponse)
 def me(user: User = Depends(require_user)) -> UserResponse:
     return user_response(user)
+
+
+@router.put("/password", status_code=204)
+def change_password(
+    payload: PasswordChangeRequest,
+    response: Response,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> None:
+    if not verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Current password is invalid",
+        )
+    if payload.current_password == payload.new_password:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="The new password must be different",
+        )
+    user.password_hash = hash_password(payload.new_password)
+    db.execute(delete(AuthSession).where(AuthSession.user_id == user.id))
+    db.commit()
+    response.delete_cookie(settings.session_cookie, path="/")
 
 
 @router.post("/logout", status_code=204)

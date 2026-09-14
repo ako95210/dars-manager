@@ -41,6 +41,11 @@ Objectif : mise à disposition d'une bêta privée à un client le 26 octobre 20
   - contributions manuelles et allocations communautaires auditables : terminé ;
   - protection transactionnelle contre la surallocation d'une contribution ou d'un coût : terminé ;
   - prise en compte séparée du financement communautaire dans les relevés : terminé.
+- Lot 6 : en cours depuis le 14 septembre 2026.
+  - durcissement applicatif et changement de mot de passe : terminé ;
+  - déploiement Caddy HTTPS et secrets montés par fichier : terminé ;
+  - sauvegarde, supervision et guides opérateur/client : terminé ;
+  - validation sur le serveur réel et décision GO client : en attente du domaine et de l'hôte.
 
 ## État de départ
 
