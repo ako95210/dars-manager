@@ -26,7 +26,8 @@ Objectif : mise à disposition d'une bêta privée à un client le 26 octobre 20
   - lecteur audio et ouverture de l'analyse depuis le stockage objet : terminé ;
   - édition durable des titres, descriptions et timestamps : terminé ;
   - contrôle de concurrence par empreinte et recalcul des transcriptions : terminé ;
-  - sélection/concaténation, templates, formats sociaux et archive : à faire.
+  - sélection/concaténation audio par job enfant durable : terminé ;
+  - templates, formats sociaux et archive : à faire.
 
 ## État de départ
 

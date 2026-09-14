@@ -106,6 +106,7 @@ const terminalStates = new Set(["completed", "cancelled", "failed", "expired"]);
 const artifactLabels: Record<string, string> = {
   analysis: "Analyse JSON",
   audio: "Audio normalisé",
+  selection_audio: "Sélection audio",
   cover: "Image de couverture",
   video: "Vidéo prête à publier",
 };
@@ -162,6 +163,11 @@ function CourseEditor({ job }: { job: Job }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [selectedParts, setSelectedParts] = useState<number[]>([]);
+  const [exportJob, setExportJob] = useState<Job | null>(null);
+  const [exportLoading, setExportLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [dirty, setDirty] = useState(false);
 
   function load() {
     setLoading(true);
@@ -171,6 +177,7 @@ function CourseEditor({ job }: { job: Job }) {
       .then((value) => {
         setAnalysis(value);
         setParts(analysisDrafts(value));
+        setDirty(false);
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Analyse indisponible."))
       .finally(() => setLoading(false));
@@ -184,6 +191,7 @@ function CourseEditor({ job }: { job: Job }) {
         if (!active) return;
         setAnalysis(value);
         setParts(analysisDrafts(value));
+        setDirty(false);
       })
       .catch((reason) => {
         if (active) setError(reason instanceof Error ? reason.message : "Analyse indisponible.");
@@ -192,10 +200,34 @@ function CourseEditor({ job }: { job: Job }) {
     return () => { active = false; };
   }, [job.id]);
 
+  useEffect(() => {
+    let active = true;
+    setExportLoading(true);
+    api.jobs(job.project_id)
+      .then((jobs) => {
+        if (!active) return;
+        setExportJob(jobs.find((item) => item.tool === "audio_selection" && item.parent_job_id === job.id) ?? null);
+      })
+      .catch(() => { if (active) setExportJob(null); })
+      .finally(() => { if (active) setExportLoading(false); });
+    return () => { active = false; };
+  }, [job.id, job.project_id]);
+
+  useEffect(() => {
+    if (!exportJob || terminalStates.has(exportJob.state)) return;
+    const timer = window.setInterval(() => {
+      api.job(exportJob.id)
+        .then(setExportJob)
+        .catch((reason) => setError(reason instanceof Error ? reason.message : "Suivi de l’export impossible."));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [exportJob?.id, exportJob?.state]);
+
   function changePart(index: number, field: keyof PartDraft, value: string) {
     setParts((current) => current.map((part, position) => (
       position === index ? { ...part, [field]: value } : part
     )));
+    setDirty(true);
     setNotice("");
   }
 
@@ -223,6 +255,7 @@ function CourseEditor({ job }: { job: Job }) {
       const updated = await api.updateJobAnalysis(job.id, analysis.checksum_sha256, parsed);
       setAnalysis(updated);
       setParts(analysisDrafts(updated));
+      setDirty(false);
       setNotice("Corrections enregistrées sans nouvelle transcription ni coût IA.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Sauvegarde impossible.");
@@ -230,6 +263,40 @@ function CourseEditor({ job }: { job: Job }) {
       setSaving(false);
     }
   }
+
+  function togglePart(index: number) {
+    setSelectedParts((current) => current.includes(index)
+      ? current.filter((item) => item !== index)
+      : [...current, index]);
+  }
+
+  async function createExport() {
+    if (!analysis || selectedParts.length === 0) return;
+    if (dirty) {
+      setError("Enregistrez d’abord vos corrections avant de générer l’audio.");
+      return;
+    }
+    setExporting(true);
+    setError("");
+    setNotice("");
+    try {
+      setExportJob(await api.createAudioExport(job.id, analysis.checksum_sha256, selectedParts));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Création de l’export impossible.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  const selectedDuration = parts
+    .filter((part) => selectedParts.includes(part.index))
+    .reduce((total, part) => {
+      const start = parseEditorTime(part.start);
+      const end = parseEditorTime(part.end);
+      return total + (Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : 0);
+    }, 0);
+  const exportProgress = Math.round(Math.max(0, Math.min(1, exportJob?.progress ?? 0)) * 100);
+  const exportBusy = Boolean(exportJob && !terminalStates.has(exportJob.state));
 
   return (
     <section className="course-editor">
@@ -263,10 +330,47 @@ function CourseEditor({ job }: { job: Job }) {
       {loading ? (
         <div className="editor-loading"><span className="loader" /><p>Ouverture de l’analyse…</p></div>
       ) : analysis && (
-        <div className="course-parts">
+        <>
+          <div className="selection-toolbar">
+            <div>
+              <span className="eyebrow">Sélection audio</span>
+              <strong>{selectedParts.length} partie{selectedParts.length > 1 ? "s" : ""} · {formatDuration(selectedDuration)}</strong>
+            </div>
+            <div>
+              <button className="button secondary" onClick={() => setSelectedParts(
+                selectedParts.length === parts.length ? [] : parts.map((part) => part.index)
+              )}>{selectedParts.length === parts.length ? "Tout désélectionner" : "Tout sélectionner"}</button>
+              <button className="button accent" disabled={selectedParts.length === 0 || exporting || dirty || exportBusy} onClick={createExport}>
+                {exporting ? "Préparation…" : exportBusy ? "Export en cours…" : "Générer l’audio sélectionné"}
+              </button>
+            </div>
+          </div>
+
+          {!exportLoading && exportJob && (
+            <div className={`export-status ${exportJob.state}`}>
+              <div>
+                <span className={`job-state ${exportJob.state}`}>{exportJob.state}</span>
+                <strong>{exportJob.state === "completed" ? "Sélection audio prête" : "Export de la sélection"}</strong>
+                <small>{exportJob.error || exportJob.message}</small>
+              </div>
+              {exportJob.state === "completed" && exportJob.artifacts.includes("selection_audio") ? (
+                <div className="export-result">
+                  <audio controls preload="metadata" src={api.artifactUrl(exportJob.id, "selection_audio")} />
+                  <a className="button secondary" download href={api.artifactUrl(exportJob.id, "selection_audio")}>Télécharger</a>
+                </div>
+              ) : !terminalStates.has(exportJob.state) ? (
+                <div className="export-progress"><strong>{exportProgress}%</strong><div className="progress-track"><span style={{ width: `${exportProgress}%` }} /></div></div>
+              ) : null}
+            </div>
+          )}
+
+          <div className="course-parts">
           {parts.map((part, position) => (
-            <article className="course-part" key={part.index}>
-              <div className="part-number"><span>Partie</span><strong>{String(position + 1).padStart(2, "0")}</strong></div>
+            <article className={`course-part ${selectedParts.includes(part.index) ? "selected" : ""}`} key={part.index}>
+              <div className="part-number">
+                <label className="part-selector"><input checked={selectedParts.includes(part.index)} onChange={() => togglePart(part.index)} type="checkbox" /><span>Sélectionner</span></label>
+                <span>Partie</span><strong>{String(position + 1).padStart(2, "0")}</strong>
+              </div>
               <div className="part-fields">
                 <label className="part-title">Titre<input maxLength={180} onChange={(event) => changePart(position, "title", event.target.value)} value={part.title} /></label>
                 <div className="time-fields">
@@ -279,7 +383,8 @@ function CourseEditor({ job }: { job: Job }) {
               </div>
             </article>
           ))}
-        </div>
+          </div>
+        </>
       )}
     </section>
   );
@@ -627,7 +732,7 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
     let active = true;
     setJob(undefined);
     api.jobs(project.id)
-      .then((jobs) => active && setJob(jobs[0] ?? null))
+      .then((jobs) => active && setJob(jobs.find((item) => item.tool === "audio_pipeline") ?? null))
       .catch((reason) => {
         if (active) {
           setJob(null);

@@ -16,6 +16,8 @@ export type Project = {
 export type Job = {
   id: string;
   project_id: string;
+  tool: "audio_pipeline" | "audio_selection" | string;
+  parent_job_id?: string | null;
   source_asset_id?: string | null;
   source_expires_at?: string | null;
   state: "queued" | "running" | "paused" | "cancelling" | "completed" | "cancelled" | "failed" | "expired";
@@ -31,6 +33,7 @@ export type Job = {
     parts?: number;
     duration_seconds?: number;
     elapsed_seconds?: number;
+    selected_parts?: number;
   };
 };
 
@@ -243,6 +246,14 @@ export const api = {
     method: "PUT",
     body: JSON.stringify({ checksum_sha256: checksumSha256, parts }),
   }),
+  createAudioExport: (jobId: string, checksumSha256: string, partIndices: number[]) =>
+    request<Job>(`/api/jobs/${jobId}/exports/audio`, {
+      method: "POST",
+      body: JSON.stringify({
+        checksum_sha256: checksumSha256,
+        part_indices: partIndices,
+      }),
+    }),
   billingSummary: (month?: string) =>
     request<BillingSummary>(`/api/billing/summary${month ? `?month=${encodeURIComponent(month)}` : ""}`),
   clientBillingSummaries: (month?: string) =>

@@ -161,9 +161,13 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .editor-loading { min-height: 150px; display: grid; place-content: center; justify-items: center; color: var(--muted); font-size: 12px; }
 .course-parts { display: grid; gap: 12px; }
 .course-part { display: grid; grid-template-columns: 70px 1fr; border: 1px solid var(--line); border-radius: 14px; background: #fbfcfd; overflow: hidden; }
+.course-part.selected { border-color: #65bc9e; box-shadow: 0 0 0 3px rgba(48, 212, 154, .09); }
 .part-number { display: flex; flex-direction: column; align-items: center; padding: 23px 12px; color: #4e5d70; background: #f2f6f5; }
 .part-number span { font-size: 9px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
 .part-number strong { margin-top: 8px; color: #168060; font-size: 23px; }
+.part-selector { display: grid; place-items: center; margin-bottom: 18px; cursor: pointer; }
+.part-selector input { width: 18px; height: 18px; accent-color: #17936d; }
+.part-selector span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .part-fields { display: grid; grid-template-columns: 1fr auto; gap: 15px 24px; padding: 20px; }
 .part-fields label { display: grid; gap: 7px; color: #596579; font-size: 10px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
 .part-fields input, .part-fields textarea { border: 1px solid var(--line); border-radius: 9px; padding: 10px 11px; color: #172033; background: white; font-size: 12px; font-weight: 500; letter-spacing: normal; text-transform: none; outline: none; }
@@ -176,6 +180,22 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .transcript-preview { color: var(--muted); font-size: 11px; }
 .transcript-preview summary { color: #2c705c; cursor: pointer; font-weight: 700; }
 .transcript-preview p { max-height: 180px; margin: 12px 0 0; overflow: auto; padding: 13px; border-radius: 9px; background: white; line-height: 1.6; white-space: pre-wrap; }
+.selection-toolbar { display: flex; justify-content: space-between; gap: 18px; align-items: center; margin: 18px 0 14px; padding: 16px 18px; border: 1px solid #cfe3dc; border-radius: 12px; background: #f6fbf9; }
+.selection-toolbar > div:first-child { display: grid; gap: 5px; }
+.selection-toolbar > div:first-child strong { color: #243b34; font-size: 13px; }
+.selection-toolbar > div:last-child { display: flex; gap: 8px; }
+.selection-toolbar .button { margin: 0; padding: 10px 13px; font-size: 11px; }
+.export-status { display: flex; justify-content: space-between; gap: 22px; align-items: center; margin-bottom: 14px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+.export-status > div:first-child > strong, .export-status > div:first-child > small { display: block; }
+.export-status > div:first-child > strong { font-size: 13px; }
+.export-status > div:first-child > small { margin-top: 4px; color: var(--muted); font-size: 10px; }
+.export-status.failed { border-color: #efc5c2; }
+.export-result { display: flex; gap: 10px; align-items: center; }
+.export-result audio { width: min(330px, 34vw); height: 38px; }
+.export-result a { margin: 0; padding: 10px 13px; font-size: 11px; text-decoration: none; white-space: nowrap; }
+.export-progress { width: min(280px, 35%); display: grid; grid-template-columns: 36px 1fr; gap: 9px; align-items: center; }
+.export-progress strong { color: #158462; font-size: 11px; }
+.export-progress .progress-track { margin: 0; }
 .job-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--line); }
 .job-actions button { padding: 10px 14px; border: 1px solid var(--line); border-radius: 9px; color: #354154; background: white; font-weight: 700; font-size: 12px; }
 .job-actions button:hover:not(:disabled) { border-color: #96cdb9; }
@@ -265,6 +285,9 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .editor-heading { flex-direction: column; }
   .audio-review { grid-template-columns: 40px 1fr; }
   .audio-review audio { grid-column: 1 / -1; }
+  .selection-toolbar, .export-status { align-items: stretch; flex-direction: column; }
+  .export-result { align-items: stretch; flex-direction: column; }
+  .export-result audio, .export-progress { width: 100%; }
 }
 
 @media (max-width: 620px) {
@@ -286,9 +309,11 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .course-part { grid-template-columns: 1fr; }
   .part-number { align-items: baseline; flex-direction: row; gap: 7px; padding: 12px 18px; }
   .part-number strong { margin: 0; font-size: 16px; }
+  .part-selector { margin: 0 8px 0 0; }
   .part-fields { grid-template-columns: 1fr; padding: 16px; }
   .time-fields { grid-column: 1; }
   .editor-heading .button { width: 100%; }
+  .selection-toolbar > div:last-child { align-items: stretch; flex-direction: column; }
   .project-header-actions, .danger-zone, .delete-confirmation { align-items: stretch; flex-direction: column; }
   .cost-cards, .manual-payment-card .cost-cards { grid-template-columns: 1fr; }
 }

@@ -14,13 +14,14 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from drsm_core import AnalysisCancelled
+from drsm_core import AnalysisCancelled, export_clips
 
 from .app.config import settings
 from .app.costs import reconcile_job_estimates, record_usage, seed_default_rates
 from .app.database import SessionLocal, init_database
 from .app.job_state import DatabaseJobStateStore
 from .app.jobs import Job
+from .app.media_lifecycle import meter_media
 from .app.models import Artifact, Asset, utc_now
 from .app.pipeline import PipelineResult, run_pipeline
 from .app.runtime import job_queue, media_storage, storage
@@ -166,6 +167,133 @@ class Worker:
             reconcile_job_estimates(db, job.id, "transcription")
             db.commit()
 
+    def _process_audio_selection(
+        self,
+        job: Job,
+        heartbeat_stopped: threading.Event,
+        heartbeat: threading.Thread,
+    ) -> bool:
+        started = time.monotonic()
+        try:
+            source_job_id = str(job.options.get("source_job_id", ""))
+            raw_ranges = job.options.get("ranges", [])
+            ranges = [
+                (float(item[0]), float(item[1]))
+                for item in raw_ranges
+                if isinstance(item, (list, tuple)) and len(item) == 2
+            ]
+            if not source_job_id or not ranges or len(ranges) != len(raw_ranges):
+                raise ValueError("Invalid audio selection job")
+            if any(end <= start or start < 0 for start, end in ranges):
+                raise ValueError("Invalid audio selection ranges")
+
+            self._save_progress(
+                job,
+                {
+                    "stage": "preparing_export",
+                    "message": "Préparation des passages sélectionnés",
+                    "progress": 0.1,
+                },
+            )
+            with SessionLocal() as db:
+                source = db.scalar(
+                    select(Artifact).where(
+                        Artifact.job_id == source_job_id,
+                        Artifact.user_id == job.user_id,
+                        Artifact.project_id == job.project_id,
+                        Artifact.kind == "audio",
+                    )
+                )
+                if source is None or not source.storage_key:
+                    raise ValueError("Source audio artifact is unavailable")
+                source_key = source.storage_key
+                expected_checksum = source.checksum_sha256
+
+            input_path = job.workspace / "source-audio.wav"
+            media_storage.download_file(source_key, input_path)
+            if expected_checksum and sha256_file(input_path) != expected_checksum:
+                raise ValueError("Source audio artifact checksum mismatch")
+            self._wait_if_paused(job)
+            self._save_progress(
+                job,
+                {
+                    "stage": "audio_export",
+                    "message": "Assemblage de la sélection audio",
+                    "progress": 0.35,
+                },
+            )
+            output_path = job.workspace / "selection-audio.wav"
+            export_clips(input_path, output_path, ranges)
+            self._wait_if_paused(job)
+
+            key = (
+                f"users/{job.user_id}/projects/{job.project_id}/jobs/"
+                f"{job.id}/selection-audio.wav"
+            )
+            with SessionLocal() as db:
+                previous = db.scalars(
+                    select(Artifact).where(
+                        Artifact.job_id == job.id,
+                        Artifact.kind == "selection_audio",
+                    )
+                ).all()
+                for artifact in previous:
+                    meter_media(db, artifact)
+                db.commit()
+            media_storage.upload_file(key, output_path, "audio/wav")
+            artifact = Artifact(
+                user_id=job.user_id,
+                project_id=job.project_id,
+                job_id=job.id,
+                kind="selection_audio",
+                mime_type="audio/wav",
+                size_bytes=output_path.stat().st_size,
+                storage_key=key,
+                checksum_sha256=sha256_file(output_path),
+                storage_metered_at=utc_now(),
+                expires_at=utc_now() + timedelta(seconds=settings.media_retention_seconds),
+            )
+            with SessionLocal() as db:
+                previous = db.scalars(
+                    select(Artifact).where(
+                        Artifact.job_id == job.id,
+                        Artifact.kind == "selection_audio",
+                    )
+                ).all()
+                for item in previous:
+                    db.delete(item)
+                db.add(artifact)
+                db.commit()
+
+            job.artifacts = {"selection_audio": key}
+            job.metrics = {
+                "selected_parts": len(ranges),
+                "duration_seconds": sum(end - start for start, end in ranges),
+                "elapsed_seconds": time.monotonic() - started,
+            }
+            job.state = "completed"
+            job.stage = "done"
+            job.message = "Sélection audio prête"
+            job.progress = 1.0
+            job.error = None
+        except AnalysisCancelled:
+            job.state = "cancelled"
+            job.message = "Export annulé"
+        except Exception as exc:
+            job.state = "failed"
+            job.stage = "failed"
+            job.message = "Échec de l'export audio"
+            job.error = f"{type(exc).__name__}: {exc}"
+        finally:
+            heartbeat_stopped.set()
+            heartbeat.join(timeout=2)
+            job.worker_id = None
+            job.lease_expires_at = None
+            job.updated_at = time.time()
+            self.state.save(job.record())
+            storage.remove_workspace(job.workspace)
+        return True
+
     def process(self, job_id: str) -> bool:
         record = self.state.claim(job_id, self.worker_id, settings.worker_lease_seconds)
         if record is None:
@@ -184,7 +312,11 @@ class Worker:
             target=self._heartbeat, args=(job, heartbeat_stopped), daemon=True
         )
         heartbeat.start()
+        if job.tool == "audio_selection":
+            return self._process_audio_selection(job, heartbeat_stopped, heartbeat)
         try:
+            if job.tool != "audio_pipeline":
+                raise ValueError(f"Unsupported job tool: {job.tool}")
             with SessionLocal() as db:
                 asset = db.scalar(
                     select(Asset).where(

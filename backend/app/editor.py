@@ -17,7 +17,7 @@ from .database import get_db
 from .jobs import Job
 from .media_lifecycle import meter_media
 from .models import Artifact, User, utc_now
-from .runtime import manager, media_storage
+from .runtime import job_queue, manager, media_storage
 
 
 router = APIRouter(prefix="/api/jobs", tags=["editor"])
@@ -45,6 +45,20 @@ class EditablePart(BaseModel):
 class AnalysisUpdate(BaseModel):
     checksum_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     parts: list[EditablePart] = Field(min_length=1, max_length=500)
+
+
+class AudioExportRequest(BaseModel):
+    checksum_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    part_indices: list[int] = Field(min_length=1, max_length=500)
+
+    @field_validator("part_indices")
+    @classmethod
+    def valid_part_indices(cls, values: list[int]) -> list[int]:
+        if any(value < 1 for value in values):
+            raise ValueError("Les numéros de partie doivent être positifs.")
+        if len(set(values)) != len(values):
+            raise ValueError("Une partie ne peut être sélectionnée qu'une fois.")
+        return values
 
 
 def owned_completed_job(user_id: str, job_id: str) -> Job:
@@ -277,3 +291,116 @@ def update_analysis(
         row.storage_metered_at = utc_now()
         db.commit()
         return response_payload(job, payload, checksum)
+
+
+@router.post("/{job_id}/exports/audio", status_code=202)
+def create_audio_export(
+    job_id: str,
+    request: AudioExportRequest,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    source_job = owned_completed_job(user.id, job_id)
+    if source_job.tool != "audio_pipeline":
+        raise HTTPException(status_code=422, detail="Ce traitement ne contient pas de cours source.")
+    if source_job.execution_backend != "worker":
+        raise HTTPException(
+            status_code=409,
+            detail="L'export durable nécessite le mode worker cloud.",
+        )
+
+    audio = db.scalar(
+        select(Artifact).where(
+            Artifact.job_id == source_job.id,
+            Artifact.user_id == user.id,
+            Artifact.kind == "audio",
+        )
+    )
+    if audio is None or not audio.storage_key:
+        raise HTTPException(status_code=404, detail="Audio source introuvable.")
+
+    analysis = analysis_artifact(db, source_job, user.id, for_update=True)
+    if analysis.checksum_sha256 and analysis.checksum_sha256 != request.checksum_sha256:
+        raise HTTPException(
+            status_code=409,
+            detail="L'analyse a changé. Enregistrez ou rechargez avant l'export.",
+        )
+    settings.workspace_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with tempfile.TemporaryDirectory(dir=settings.workspace_root) as temporary:
+        path = Path(temporary) / "analysis.json"
+        try:
+            media_storage.download_file(analysis.storage_key, path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=410, detail="L'analyse a expiré.") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail="Lecture de l'analyse impossible.") from exc
+        if sha256_file(path) != request.checksum_sha256:
+            raise HTTPException(
+                status_code=409,
+                detail="L'analyse a changé. Enregistrez ou rechargez avant l'export.",
+            )
+        payload = load_payload(path)
+
+    by_index = {
+        int(part["index"]): part
+        for part in payload["parts"]
+        if isinstance(part, dict) and isinstance(part.get("index"), int)
+    }
+    if any(index not in by_index for index in request.part_indices):
+        raise HTTPException(status_code=422, detail="Une partie sélectionnée n'existe plus.")
+    selected = sorted(
+        (by_index[index] for index in request.part_indices),
+        key=lambda part: float(part["start"]),
+    )
+    canonical_indices = [int(part["index"]) for part in selected]
+    ranges = [[float(part["start"]), float(part["end"])] for part in selected]
+    if any(end <= start or start < 0 for start, end in ranges):
+        raise HTTPException(status_code=422, detail="Les timestamps sélectionnés sont invalides.")
+
+    previous_exports = [
+        job
+        for job in manager.list_for_user(user.id, source_job.project_id)
+        if job.tool == "audio_selection"
+        and job.options.get("source_job_id") == source_job.id
+    ]
+    identical = next(
+        (
+            job
+            for job in previous_exports
+            if job.options.get("analysis_checksum") == request.checksum_sha256
+            and job.options.get("part_indices") == canonical_indices
+            and job.state not in {"failed", "cancelled", "expired"}
+        ),
+        None,
+    )
+    if identical is not None:
+        return identical.public()
+    if any(job.state not in {"completed", "failed", "cancelled", "expired"} for job in previous_exports):
+        raise HTTPException(
+            status_code=409,
+            detail="Un export audio est déjà en cours pour ce cours.",
+        )
+
+    child = manager.create(
+        user.id,
+        source_job.project_id,
+        "selection-audio.wav",
+        "",
+        source_job.language,
+        settings.whisper_cpu_threads,
+        execution_backend="worker",
+        allocate_workspace=False,
+        tool="audio_selection",
+        options={
+            "source_job_id": source_job.id,
+            "analysis_checksum": request.checksum_sha256,
+            "part_indices": canonical_indices,
+            "ranges": ranges,
+            "title": " · ".join(str(part.get("title", "")) for part in selected),
+        },
+    )
+    try:
+        job_queue.enqueue(child.id)
+    except Exception:
+        pass
+    return child.public()

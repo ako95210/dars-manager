@@ -122,13 +122,14 @@ class DatabaseJobStateStore:
                     id=record["id"],
                     user_id=record["user_id"],
                     project_id=record["project_id"],
-                    tool="audio_pipeline",
+                    tool=record.get("tool", "audio_pipeline"),
                     created_at=datetime.fromtimestamp(
                         float(record.get("created_at", time.time())), timezone.utc
                     ),
                 )
                 db.add(row)
             row.model_name = record.get("model_name", "")
+            row.tool = record.get("tool", "audio_pipeline")
             row.language = record.get("language", "")
             row.state = record.get("state", "queued")
             row.stage = record.get("stage", "upload")

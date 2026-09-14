@@ -29,6 +29,8 @@ class Job:
     model_name: str
     language: str
     cpu_threads: int
+    tool: str = "audio_pipeline"
+    options: dict[str, Any] = field(default_factory=dict)
     source_asset_id: str | None = None
     source_expires_at: str | None = None
     execution_backend: str = "inline"
@@ -53,6 +55,8 @@ class Job:
         return {
             "id": self.id,
             "project_id": self.project_id,
+            "tool": self.tool,
+            "parent_job_id": self.options.get("source_job_id"),
             "source_asset_id": self.source_asset_id,
             "source_expires_at": self.source_expires_at,
             "execution_backend": self.execution_backend,
@@ -77,6 +81,8 @@ class Job:
             "model_name": self.model_name,
             "language": self.language,
             "cpu_threads": self.cpu_threads,
+            "tool": self.tool,
+            "options": self.options,
             "source_asset_id": self.source_asset_id,
             "source_expires_at": self.source_expires_at,
             "execution_backend": self.execution_backend,
@@ -105,6 +111,8 @@ class Job:
             model_name=record["model_name"],
             language=record["language"],
             cpu_threads=int(record["cpu_threads"]),
+            tool=record.get("tool", "audio_pipeline"),
+            options=dict(record.get("options", {})),
             source_asset_id=record.get("source_asset_id"),
             source_expires_at=record.get("source_expires_at"),
             execution_backend=record.get("execution_backend", "inline"),
@@ -177,6 +185,8 @@ class JobManager:
         source_expires_at: str | None = None,
         execution_backend: str = "inline",
         allocate_workspace: bool = True,
+        tool: str = "audio_pipeline",
+        options: dict[str, Any] | None = None,
     ) -> Job:
         job_id = uuid.uuid4().hex
         workspace = self.storage.create_workspace(user_id, job_id) if allocate_workspace else self.storage.workspace_path(user_id, job_id)
@@ -190,9 +200,13 @@ class JobManager:
             model_name=model_name,
             language=language,
             cpu_threads=cpu_threads,
+            tool=tool,
+            options=dict(options or {}),
             source_asset_id=source_asset_id,
             source_expires_at=source_expires_at,
             execution_backend=execution_backend,
+            stage="queued_export" if tool != "audio_pipeline" else "upload",
+            message="Export requested" if tool != "audio_pipeline" else "Upload received",
         )
         with self._lock:
             self.jobs[job_id] = job

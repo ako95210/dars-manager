@@ -217,6 +217,7 @@ def download_artifact(
         filenames = {
             "analysis": "analysis.json",
             "audio": "audio-export.wav",
+            "selection_audio": "selection-audio.wav",
             "cover": "cover.png",
             "video": "video.mp4",
         }
@@ -239,6 +240,7 @@ def download_artifact(
     media_types = {
         "analysis": "application/json",
         "audio": "audio/wav",
+        "selection_audio": "audio/wav",
         "cover": "image/png",
         "video": "video/mp4",
     }
@@ -282,8 +284,30 @@ def delete_job(
     db: Session = Depends(get_db),
 ) -> None:
     job = owned_job(user.id, job_id)
+    if job.state not in TERMINAL_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail="Un traitement actif doit être annulé avant sa suppression.",
+        )
+    jobs_to_delete = [job]
+    if job.tool == "audio_pipeline":
+        children = [
+            candidate
+            for candidate in manager.list_for_user(user.id, job.project_id)
+            if candidate.options.get("source_job_id") == job.id
+        ]
+        if any(child.state not in TERMINAL_STATES for child in children):
+            raise HTTPException(
+                status_code=409,
+                detail="Un export lié à ce cours est encore actif.",
+            )
+        jobs_to_delete = [*children, job]
+    job_ids = [candidate.id for candidate in jobs_to_delete]
     artifacts = db.scalars(
-        select(Artifact).where(Artifact.job_id == job.id, Artifact.user_id == user.id)
+        select(Artifact).where(
+            Artifact.job_id.in_(job_ids),
+            Artifact.user_id == user.id,
+        )
     ).all()
     for row in artifacts:
         meter_media(db, row)
@@ -293,7 +317,8 @@ def delete_job(
             except Exception as exc:
                 raise HTTPException(status_code=502, detail="Artifact deletion failed") from exc
     db.commit()
-    manager.delete(job)
+    for candidate in jobs_to_delete:
+        manager.delete(candidate)
 
 
 if settings.frontend_dist.is_dir():

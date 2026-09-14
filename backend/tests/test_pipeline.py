@@ -9,10 +9,28 @@ from pathlib import Path
 from PIL import Image
 
 from backend.app.pipeline import generate_cover, render_static_video, write_analysis
-from drsm_core import CoursePart, TranscriptSegment, audio_duration
+from drsm_core import CoursePart, TranscriptSegment, audio_duration, export_clips
 
 
 class PipelineTests(unittest.TestCase):
+    def test_non_contiguous_audio_ranges_are_concatenated(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.wav"
+            selection = root / "selection.wav"
+            with wave.open(str(source), "wb") as output:
+                output.setnchannels(1)
+                output.setsampwidth(2)
+                output.setframerate(8000)
+                output.writeframes(b"\x00\x00" * 8000 * 3)
+
+            export_clips(source, selection, [(0.0, 0.5), (2.0, 2.5)])
+
+            self.assertTrue(selection.is_file())
+            self.assertGreater(selection.stat().st_size, 1000)
+            self.assertGreater(audio_duration(selection), 0.8)
+            self.assertLess(audio_duration(selection), 1.3)
+
     def test_cover_and_static_video_are_valid(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -391,6 +391,44 @@ class ApiTests(unittest.TestCase):
                 },
             )
             self.assertEqual(stale.status_code, 409, stale.text)
+            export_requested = client.post(
+                f"/api/jobs/{job.id}/exports/audio",
+                json={
+                    "checksum_sha256": updated.json()["checksum_sha256"],
+                    "part_indices": [1],
+                },
+            )
+            self.assertEqual(export_requested.status_code, 202, export_requested.text)
+            export_id = export_requested.json()["id"]
+            self.assertEqual(export_requested.json()["tool"], "audio_selection")
+            self.assertEqual(export_requested.json()["parent_job_id"], job.id)
+            duplicate = client.post(
+                f"/api/jobs/{job.id}/exports/audio",
+                json={
+                    "checksum_sha256": updated.json()["checksum_sha256"],
+                    "part_indices": [1],
+                },
+            )
+            self.assertEqual(duplicate.status_code, 202, duplicate.text)
+            self.assertEqual(duplicate.json()["id"], export_id)
+
+            def fake_export(source_path: Path, output_path: Path, ranges) -> None:
+                self.assertEqual(source_path.read_bytes(), b"audio")
+                self.assertEqual(ranges, [(0.0, 29.5)])
+                output_path.write_bytes(b"selected-audio")
+
+            with patch("backend.worker.export_clips", side_effect=fake_export):
+                self.assertTrue(Worker("export-worker").process(export_id))
+            exported = manager.get(user_id, export_id)
+            self.assertIsNotNone(exported)
+            self.assertEqual(exported.state, "completed")
+            self.assertEqual(exported.tool, "audio_selection")
+            self.assertEqual(exported.metrics["selected_parts"], 1)
+            selection = client.get(
+                f"/api/jobs/{export_id}/artifacts/selection_audio"
+            )
+            self.assertEqual(selection.status_code, 200, selection.text)
+            self.assertEqual(selection.content, b"selected-audio")
             with SessionLocal() as db:
                 saved_analysis = db.scalar(
                     select(Artifact).where(
@@ -405,6 +443,7 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(client.post("/api/auth/logout").status_code, 204)
             self.login(client, "pilot-b@example.com", "mot-de-passe-b")
             self.assertEqual(client.get(f"/api/jobs/{job.id}/analysis").status_code, 404)
+            self.assertEqual(client.get(f"/api/jobs/{export_id}").status_code, 404)
             self.assertEqual(client.post("/api/auth/logout").status_code, 204)
             self.login(client, "pilot-a@example.com", "mot-de-passe-a")
             source_deleted = client.delete(f"/api/jobs/{job.id}/source")
@@ -413,6 +452,7 @@ class ApiTests(unittest.TestCase):
             with SessionLocal() as db:
                 self.assertIsNone(db.get(Asset, asset_id))
             self.assertEqual(client.delete(f"/api/jobs/{job.id}").status_code, 204)
+            self.assertEqual(client.get(f"/api/jobs/{export_id}").status_code, 404)
             self.assertEqual(client.delete(f"/api/projects/{project_id}").status_code, 204)
 
     def test_paid_transcription_checkpoint_is_reused(self) -> None:
@@ -465,6 +505,8 @@ class ApiTests(unittest.TestCase):
                     )
                 ).all()
                 self.assertEqual(len(checkpoints), 1)
+            job.state = "cancelled"
+            manager.state_store.save(job.record())
             self.assertEqual(client.delete(f"/api/jobs/{job.id}").status_code, 204)
             self.assertEqual(client.delete(f"/api/projects/{project_id}").status_code, 204)
 
