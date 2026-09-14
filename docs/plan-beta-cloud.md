@@ -103,13 +103,14 @@ Sortie : aucun média de production ne dépend du disque éphémère de l'API.
 
 ### Lot 3 — Traitement cloud, du 28 septembre au 2 octobre
 
-État au 11 septembre : intégration technique validée sur les dix premières
-minutes d'un cours réel. L'interface fournisseur,
+État : **clôturé le 14 septembre 2026**. L'intégration a été validée sur les dix
+premières minutes d'un cours réel. L'interface fournisseur,
 l'estimation préalable, le découpage WAV mono 16 kHz, la fusion des timestamps,
 les checkpoints de reprise et les écritures de coût par appel sont implémentés.
 La chaîne a produit 85 segments, 3 parties et tous les artefacts attendus pour
-un coût calculé de 0,0601 USD. Reste la comparaison qualitative détaillée avec
-la phase 1.
+un coût calculé de 0,0601 USD. La comparaison avec le modèle local `base`
+confirme le choix de `whisper-1` pour la Beta : transcription plus cohérente et
+4,56 fois plus rapide sur le cours de référence.
 
 - ajouter `TranscriptionProvider` et le fournisseur managé initial ;
 - calculer et afficher une estimation avant le lancement ;
