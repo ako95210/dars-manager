@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, BillingSummary, Job, Project, TranscriptionQuote, User } from "./api";
+import { api, BillingSummary, Job, JobAnalysis, Project, TranscriptionQuote, User } from "./api";
 
 function inspectAudioDuration(file: File): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -115,6 +115,174 @@ function formatDuration(seconds?: number) {
   const rounded = Math.round(seconds);
   const minutes = Math.floor(rounded / 60);
   return `${minutes}:${String(rounded % 60).padStart(2, "0")}`;
+}
+
+function formatEditorTime(seconds: number) {
+  const rounded = Math.round(seconds * 10) / 10;
+  const hours = Math.floor(rounded / 3600);
+  const minutes = Math.floor((rounded % 3600) / 60);
+  const remaining = (rounded % 60).toFixed(Number.isInteger(rounded) ? 0 : 1).padStart(2, "0");
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${remaining.padStart(2, "0")}`
+    : `${minutes}:${remaining.padStart(2, "0")}`;
+}
+
+function parseEditorTime(value: string) {
+  const pieces = value.trim().split(":");
+  if (pieces.length < 1 || pieces.length > 3 || pieces.some((piece) => piece === "" || !/^\d+(\.\d+)?$/.test(piece))) {
+    return Number.NaN;
+  }
+  const values = pieces.map(Number);
+  if (pieces.length === 3) return values[0] * 3600 + values[1] * 60 + values[2];
+  if (pieces.length === 2) return values[0] * 60 + values[1];
+  return values[0];
+}
+
+type PartDraft = {
+  index: number;
+  start: string;
+  end: string;
+  title: string;
+  description: string;
+  transcript: string;
+};
+
+function analysisDrafts(analysis: JobAnalysis): PartDraft[] {
+  return analysis.parts.map((part) => ({
+    ...part,
+    start: formatEditorTime(part.start),
+    end: formatEditorTime(part.end),
+  }));
+}
+
+function CourseEditor({ job }: { job: Job }) {
+  const [analysis, setAnalysis] = useState<JobAnalysis | null>(null);
+  const [parts, setParts] = useState<PartDraft[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  function load() {
+    setLoading(true);
+    setError("");
+    setNotice("");
+    return api.jobAnalysis(job.id)
+      .then((value) => {
+        setAnalysis(value);
+        setParts(analysisDrafts(value));
+      })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Analyse indisponible."))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    api.jobAnalysis(job.id)
+      .then((value) => {
+        if (!active) return;
+        setAnalysis(value);
+        setParts(analysisDrafts(value));
+      })
+      .catch((reason) => {
+        if (active) setError(reason instanceof Error ? reason.message : "Analyse indisponible.");
+      })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [job.id]);
+
+  function changePart(index: number, field: keyof PartDraft, value: string) {
+    setParts((current) => current.map((part, position) => (
+      position === index ? { ...part, [field]: value } : part
+    )));
+    setNotice("");
+  }
+
+  async function save() {
+    if (!analysis) return;
+    const parsed = parts.map((part) => ({
+      index: part.index,
+      start: parseEditorTime(part.start),
+      end: parseEditorTime(part.end),
+      title: part.title.trim(),
+      description: part.description.trim(),
+    }));
+    if (parsed.some((part) => !Number.isFinite(part.start) || !Number.isFinite(part.end))) {
+      setError("Utilisez le format minutes:secondes, par exemple 12:35.");
+      return;
+    }
+    if (parsed.some((part) => !part.title)) {
+      setError("Chaque partie doit avoir un titre.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const updated = await api.updateJobAnalysis(job.id, analysis.checksum_sha256, parsed);
+      setAnalysis(updated);
+      setParts(analysisDrafts(updated));
+      setNotice("Corrections enregistrées sans nouvelle transcription ni coût IA.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Sauvegarde impossible.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="course-editor">
+      <header className="editor-heading">
+        <div>
+          <span className="eyebrow">Atelier éditorial</span>
+          <h2>Relire et structurer le cours</h2>
+          <p>Écoutez le rendu puis ajustez les titres, descriptions et limites de chaque partie.</p>
+        </div>
+        <button className="button primary compact" disabled={loading || saving || !analysis} onClick={save}>
+          {saving ? "Enregistrement…" : "Enregistrer les corrections"}
+        </button>
+      </header>
+
+      {job.artifacts.includes("audio") && (
+        <div className="audio-review">
+          <span aria-hidden="true">▶</span>
+          <div><strong>{analysis?.audio_name || "Audio du cours"}</strong><small>{formatDuration(analysis?.duration_seconds)} · audio normalisé</small></div>
+          <audio controls preload="metadata" src={api.artifactUrl(job.id, "audio")} />
+        </div>
+      )}
+
+      {error && (
+        <div className="editor-feedback error">
+          <span>{error}</span>
+          <button onClick={load}>Recharger l’analyse</button>
+        </div>
+      )}
+      {notice && <p className="editor-feedback success">{notice}</p>}
+
+      {loading ? (
+        <div className="editor-loading"><span className="loader" /><p>Ouverture de l’analyse…</p></div>
+      ) : analysis && (
+        <div className="course-parts">
+          {parts.map((part, position) => (
+            <article className="course-part" key={part.index}>
+              <div className="part-number"><span>Partie</span><strong>{String(position + 1).padStart(2, "0")}</strong></div>
+              <div className="part-fields">
+                <label className="part-title">Titre<input maxLength={180} onChange={(event) => changePart(position, "title", event.target.value)} value={part.title} /></label>
+                <div className="time-fields">
+                  <label>Début<input aria-label={`Début de la partie ${position + 1}`} inputMode="decimal" onChange={(event) => changePart(position, "start", event.target.value)} value={part.start} /></label>
+                  <span>→</span>
+                  <label>Fin<input aria-label={`Fin de la partie ${position + 1}`} inputMode="decimal" onChange={(event) => changePart(position, "end", event.target.value)} value={part.end} /></label>
+                </div>
+                <label className="part-description">Description<textarea maxLength={4000} onChange={(event) => changePart(position, "description", event.target.value)} rows={3} value={part.description} /></label>
+                <details className="transcript-preview"><summary>Voir la transcription de cette partie</summary><p>{part.transcript || "Aucun texte dans cet intervalle."}</p></details>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }
 
 function formatCurrency(value: string, currency = "USD") {
@@ -617,6 +785,10 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
                 </a>
               ))}
             </div>
+          )}
+
+          {job.state === "completed" && job.artifacts.includes("analysis") && (
+            <CourseEditor job={job} />
           )}
 
           <div className="job-actions">

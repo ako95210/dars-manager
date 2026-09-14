@@ -19,6 +19,7 @@ from .billing import router as billing_router
 from .config import settings
 from .costs import seed_default_rates
 from .database import SessionLocal, get_db, init_database
+from .editor import router as editor_router
 from .jobs import Job, JobManager, TERMINAL_STATES
 from .media_storage import LocalMediaStorage
 from .models import Artifact, Asset, Project, User
@@ -57,6 +58,7 @@ app.include_router(admin_billing_router)
 app.include_router(uploads_router)
 app.include_router(asset_jobs_router)
 app.include_router(transcription_router)
+app.include_router(editor_router)
 
 
 def owned_job(user_id: str, job_id: str) -> Job:

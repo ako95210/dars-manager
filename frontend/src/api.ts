@@ -80,6 +80,30 @@ export type TranscriptionQuote = {
   unit_amount: string;
 };
 
+export type AnalysisSegment = {
+  start: number;
+  end: number;
+  text: string;
+};
+
+export type CoursePart = {
+  index: number;
+  start: number;
+  end: number;
+  title: string;
+  description: string;
+  transcript: string;
+};
+
+export type JobAnalysis = {
+  schema: number;
+  audio_name: string;
+  duration_seconds: number;
+  checksum_sha256: string;
+  segments: AnalysisSegment[];
+  parts: CoursePart[];
+};
+
 export type Payment = {
   id: string;
   amount: string;
@@ -210,6 +234,15 @@ export const api = {
   job: (jobId: string) => request<Job>(`/api/jobs/${jobId}`),
   jobs: (projectId?: string) =>
     request<Job[]>(`/api/jobs${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`),
+  jobAnalysis: (jobId: string) => request<JobAnalysis>(`/api/jobs/${jobId}/analysis`),
+  updateJobAnalysis: (
+    jobId: string,
+    checksumSha256: string,
+    parts: Pick<CoursePart, "index" | "start" | "end" | "title" | "description">[],
+  ) => request<JobAnalysis>(`/api/jobs/${jobId}/analysis`, {
+    method: "PUT",
+    body: JSON.stringify({ checksum_sha256: checksumSha256, parts }),
+  }),
   billingSummary: (month?: string) =>
     request<BillingSummary>(`/api/billing/summary${month ? `?month=${encodeURIComponent(month)}` : ""}`),
   clientBillingSummaries: (month?: string) =>

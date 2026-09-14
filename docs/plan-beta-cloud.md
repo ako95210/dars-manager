@@ -21,6 +21,12 @@ Objectif : mise à disposition d'une bêta privée à un client le 26 octobre 20
   - empreintes SHA-256 des sources et artefacts : terminé ;
   - purge planifiée indépendante et suppression immédiate : terminé ;
   - mesure cumulative du stockage et écriture dans le registre : terminé.
+- Lot 3 : terminé le 14 septembre 2026.
+- Lot 4 : en cours depuis le 14 septembre 2026.
+  - lecteur audio et ouverture de l'analyse depuis le stockage objet : terminé ;
+  - édition durable des titres, descriptions et timestamps : terminé ;
+  - contrôle de concurrence par empreinte et recalcul des transcriptions : terminé ;
+  - sélection/concaténation, templates, formats sociaux et archive : à faire.
 
 ## État de départ
 

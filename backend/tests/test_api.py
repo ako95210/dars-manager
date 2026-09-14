@@ -27,14 +27,14 @@ from backend.app.database import CURRENT_REVISION, SessionLocal, engine, init_da
 from backend.app.main import app, manager
 from backend.app.jobs import JobManager
 from backend.app.models import Artifact, Asset, UsageEvent, User, utc_now
-from backend.app.pipeline import PipelineResult
+from backend.app.pipeline import PipelineResult, write_analysis
 from backend.app.runtime import media_storage
 from backend.app.security import hash_password
 from backend.app.transcription import ProviderTranscription
 from backend.app.transcription_checkpoint import CheckpointingTranscriptionProvider
 from backend.worker import Worker
 from backend.maintenance import MaintenanceService
-from drsm_core import TranscriptSegment
+from drsm_core import CoursePart, TranscriptSegment
 
 
 class ApiTests(unittest.TestCase):
@@ -300,7 +300,24 @@ class ApiTests(unittest.TestCase):
                 audio = workspace / "audio-export.wav"
                 cover = workspace / "cover.png"
                 video = workspace / "video.mp4"
-                analysis.write_bytes(b"analysis")
+                write_analysis(
+                    analysis,
+                    input_path,
+                    [
+                        TranscriptSegment(0.0, 12.0, "Introduction du cours."),
+                        TranscriptSegment(12.0, 30.0, "Développement du sujet."),
+                    ],
+                    [
+                        CoursePart(
+                            1,
+                            0.0,
+                            30.0,
+                            "Partie initiale",
+                            "Description initiale",
+                            "Introduction du cours. Développement du sujet.",
+                        )
+                    ],
+                )
                 audio.write_bytes(b"audio")
                 cover.write_bytes(b"cover")
                 video.write_bytes(b"video")
@@ -320,6 +337,76 @@ class ApiTests(unittest.TestCase):
             downloaded = client.get(f"/api/jobs/{job.id}/artifacts/cover")
             self.assertEqual(downloaded.status_code, 200, downloaded.text)
             self.assertEqual(downloaded.content, b"cover")
+            analysis_response = client.get(f"/api/jobs/{job.id}/analysis")
+            self.assertEqual(analysis_response.status_code, 200, analysis_response.text)
+            original = analysis_response.json()
+            self.assertEqual(original["parts"][0]["title"], "Partie initiale")
+            updated = client.put(
+                f"/api/jobs/{job.id}/analysis",
+                json={
+                    "checksum_sha256": original["checksum_sha256"],
+                    "parts": [
+                        {
+                            "index": 1,
+                            "start": 0,
+                            "end": 29.5,
+                            "title": "Titre corrigé",
+                            "description": "Résumé corrigé",
+                        }
+                    ],
+                },
+            )
+            self.assertEqual(updated.status_code, 200, updated.text)
+            self.assertEqual(updated.json()["parts"][0]["title"], "Titre corrigé")
+            self.assertIn("Développement du sujet", updated.json()["parts"][0]["transcript"])
+            self.assertNotEqual(updated.json()["checksum_sha256"], original["checksum_sha256"])
+            overlapping = client.put(
+                f"/api/jobs/{job.id}/analysis",
+                json={
+                    "checksum_sha256": updated.json()["checksum_sha256"],
+                    "parts": [
+                        {
+                            "index": 1,
+                            "start": 0,
+                            "end": 20,
+                            "title": "Première partie",
+                            "description": "",
+                        },
+                        {
+                            "index": 2,
+                            "start": 19,
+                            "end": 29,
+                            "title": "Deuxième partie",
+                            "description": "",
+                        },
+                    ],
+                },
+            )
+            self.assertEqual(overlapping.status_code, 422, overlapping.text)
+            stale = client.put(
+                f"/api/jobs/{job.id}/analysis",
+                json={
+                    "checksum_sha256": original["checksum_sha256"],
+                    "parts": original["parts"],
+                },
+            )
+            self.assertEqual(stale.status_code, 409, stale.text)
+            with SessionLocal() as db:
+                saved_analysis = db.scalar(
+                    select(Artifact).where(
+                        Artifact.job_id == job.id,
+                        Artifact.kind == "analysis",
+                    )
+                )
+                self.assertEqual(
+                    saved_analysis.checksum_sha256,
+                    updated.json()["checksum_sha256"],
+                )
+            self.assertEqual(client.post("/api/auth/logout").status_code, 204)
+            self.login(client, "pilot-b@example.com", "mot-de-passe-b")
+            self.assertEqual(client.get(f"/api/jobs/{job.id}/analysis").status_code, 404)
+            self.assertEqual(client.post("/api/auth/logout").status_code, 204)
+            self.login(client, "pilot-a@example.com", "mot-de-passe-a")
             source_deleted = client.delete(f"/api/jobs/{job.id}/source")
             self.assertEqual(source_deleted.status_code, 200, source_deleted.text)
             self.assertIsNone(source_deleted.json()["source_asset_id"])

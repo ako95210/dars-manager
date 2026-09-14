@@ -144,6 +144,38 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .artifact-grid a > span { grid-row: 1 / 3; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; color: #147657; background: #e9f9f3; }
 .artifact-grid a strong { font-size: 12px; }
 .artifact-grid a small { color: var(--muted); font-size: 10px; }
+.course-editor { margin-top: 30px; padding-top: 30px; border-top: 1px solid var(--line); }
+.editor-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.editor-heading h2 { margin: 7px 0 5px; font-size: 21px; }
+.editor-heading p { margin: 0; color: var(--muted); font-size: 12px; }
+.audio-review { display: grid; grid-template-columns: 40px minmax(150px, .55fr) minmax(280px, 1fr); gap: 14px; align-items: center; margin: 24px 0; padding: 16px; border-radius: 13px; color: white; background: linear-gradient(120deg, #101b2e, #172941); }
+.audio-review > span { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%; color: #09372d; background: var(--green); font-size: 12px; }
+.audio-review strong, .audio-review small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.audio-review strong { font-size: 12px; }
+.audio-review small { margin-top: 4px; color: #91a1b8; font-size: 10px; }
+.audio-review audio { width: 100%; height: 38px; }
+.editor-feedback { display: flex; justify-content: space-between; gap: 14px; align-items: center; margin: 15px 0; padding: 12px 14px; border-radius: 10px; font-size: 12px; }
+.editor-feedback.error { color: #952d26; background: #fef0ef; }
+.editor-feedback.success { color: #176849; background: #e9f9f3; }
+.editor-feedback button { padding: 0; border: 0; color: inherit; background: transparent; font-weight: 800; text-decoration: underline; }
+.editor-loading { min-height: 150px; display: grid; place-content: center; justify-items: center; color: var(--muted); font-size: 12px; }
+.course-parts { display: grid; gap: 12px; }
+.course-part { display: grid; grid-template-columns: 70px 1fr; border: 1px solid var(--line); border-radius: 14px; background: #fbfcfd; overflow: hidden; }
+.part-number { display: flex; flex-direction: column; align-items: center; padding: 23px 12px; color: #4e5d70; background: #f2f6f5; }
+.part-number span { font-size: 9px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.part-number strong { margin-top: 8px; color: #168060; font-size: 23px; }
+.part-fields { display: grid; grid-template-columns: 1fr auto; gap: 15px 24px; padding: 20px; }
+.part-fields label { display: grid; gap: 7px; color: #596579; font-size: 10px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.part-fields input, .part-fields textarea { border: 1px solid var(--line); border-radius: 9px; padding: 10px 11px; color: #172033; background: white; font-size: 12px; font-weight: 500; letter-spacing: normal; text-transform: none; outline: none; }
+.part-fields textarea { width: 100%; resize: vertical; font-family: inherit; line-height: 1.5; }
+.part-fields input:focus, .part-fields textarea:focus { border-color: #50b99a; box-shadow: 0 0 0 3px rgba(48, 212, 154, .1); }
+.time-fields { display: flex; gap: 8px; align-items: flex-end; }
+.time-fields label { width: 92px; }
+.time-fields > span { padding-bottom: 10px; color: #95a0af; }
+.part-description, .transcript-preview { grid-column: 1 / -1; }
+.transcript-preview { color: var(--muted); font-size: 11px; }
+.transcript-preview summary { color: #2c705c; cursor: pointer; font-weight: 700; }
+.transcript-preview p { max-height: 180px; margin: 12px 0 0; overflow: auto; padding: 13px; border-radius: 9px; background: white; line-height: 1.6; white-space: pre-wrap; }
 .job-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--line); }
 .job-actions button { padding: 10px 14px; border: 1px solid var(--line); border-radius: 9px; color: #354154; background: white; font-weight: 700; font-size: 12px; }
 .job-actions button:hover:not(:disabled) { border-color: #96cdb9; }
@@ -230,6 +262,9 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .job-list-card { grid-template-columns: 1fr; gap: 15px; }
   .cost-cards { grid-template-columns: repeat(2, 1fr); }
   .admin-billing-grid { grid-template-columns: 1fr; }
+  .editor-heading { flex-direction: column; }
+  .audio-review { grid-template-columns: 40px 1fr; }
+  .audio-review audio { grid-column: 1 / -1; }
 }
 
 @media (max-width: 620px) {
@@ -248,6 +283,12 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .upload-options label { width: 100%; }
   .result-summary { grid-template-columns: repeat(2, 1fr); }
   .artifact-grid { grid-template-columns: 1fr; }
+  .course-part { grid-template-columns: 1fr; }
+  .part-number { align-items: baseline; flex-direction: row; gap: 7px; padding: 12px 18px; }
+  .part-number strong { margin: 0; font-size: 16px; }
+  .part-fields { grid-template-columns: 1fr; padding: 16px; }
+  .time-fields { grid-column: 1; }
+  .editor-heading .button { width: 100%; }
   .project-header-actions, .danger-zone, .delete-confirmation { align-items: stretch; flex-direction: column; }
   .cost-cards, .manual-payment-card .cost-cards { grid-template-columns: 1fr; }
 }
