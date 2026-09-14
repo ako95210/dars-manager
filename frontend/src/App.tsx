@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, BillingSummary, ImpactSummary, Job, JobAnalysis, Project, TranscriptionQuote, User } from "./api";
+import { api, BillingSummary, ImpactSummary, Job, JobAnalysis, Project, ProviderInvoice, TranscriptionQuote, User } from "./api";
 import { TemplateLibrary } from "./TemplateLibrary";
 import type { BrandTemplate } from "./api";
 
@@ -818,7 +818,10 @@ function BillingOverview() {
     <section className="billing-overview">
       <header className="workspace-header">
         <div><span className="eyebrow">Transparence</span><h1>Coûts cloud</h1><p>Suivez chaque dépense associée à vos productions.</p></div>
-        <label className="month-picker">Période<input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label>
+        <div className="billing-header-actions">
+          <label className="month-picker">Période<input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label>
+          <div><a className="button secondary" download href={api.statementUrl("csv", month)}>Relevé CSV</a><a className="button secondary" download href={api.statementUrl("pdf", month)}>Relevé PDF</a></div>
+        </div>
       </header>
       {error && <p className="form-error notice">{error}</p>}
       {notice && <p className="editor-feedback success">{notice}</p>}
@@ -853,13 +856,26 @@ function AdminBillingOverview() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [invoices, setInvoices] = useState<ProviderInvoice[]>([]);
+  const [invoiceProvider, setInvoiceProvider] = useState("openai");
+  const [invoiceService, setInvoiceService] = useState("transcription");
+  const [invoiceReference, setInvoiceReference] = useState("");
+  const [invoiceAmount, setInvoiceAmount] = useState("");
+  const [invoiceTolerance, setInvoiceTolerance] = useState("0.000001");
+  const [includeEstimated, setIncludeEstimated] = useState(false);
+  const [invoiceNote, setInvoiceNote] = useState("");
+  const [savingInvoice, setSavingInvoice] = useState(false);
 
   async function refresh() {
     setLoading(true);
     setError("");
     try {
-      const items = await api.clientBillingSummaries(month);
+      const [items, invoiceItems] = await Promise.all([
+        api.clientBillingSummaries(month),
+        api.providerInvoices(month),
+      ]);
       setSummaries(items);
+      setInvoices(invoiceItems);
       setSelectedUser((current) => current || items[0]?.user.id || "");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Chargement impossible.");
@@ -885,6 +901,33 @@ function AdminBillingOverview() {
       setError(reason instanceof Error ? reason.message : "Enregistrement impossible.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function recordInvoice(event: FormEvent) {
+    event.preventDefault();
+    if (!invoiceProvider.trim() || !invoiceReference.trim() || !invoiceAmount) return;
+    setSavingInvoice(true);
+    setError("");
+    try {
+      await api.reconcileProviderInvoice({
+        provider: invoiceProvider,
+        service: invoiceService,
+        reference: invoiceReference,
+        period: month,
+        invoiced_amount: invoiceAmount,
+        tolerance: invoiceTolerance || "0",
+        include_estimated: includeEstimated,
+        note: invoiceNote,
+      });
+      setInvoiceReference("");
+      setInvoiceAmount("");
+      setInvoiceNote("");
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Rapprochement impossible.");
+    } finally {
+      setSavingInvoice(false);
     }
   }
 
@@ -920,6 +963,33 @@ function AdminBillingOverview() {
           </section>
         </div>
       )}
+      <section className="provider-reconciliation">
+        <div className="section-heading"><div><span className="eyebrow">Factures cloud</span><h2>Rapprochement fournisseur</h2></div><span>{invoices.length} facture{invoices.length > 1 ? "s" : ""}</span></div>
+        <form className="invoice-form" onSubmit={recordInvoice}>
+          <label>Fournisseur<input maxLength={80} required value={invoiceProvider} onChange={(event) => setInvoiceProvider(event.target.value)} /></label>
+          <label>Service<input maxLength={80} placeholder="Tous si vide" value={invoiceService} onChange={(event) => setInvoiceService(event.target.value)} /></label>
+          <label>Référence facture<input maxLength={180} required value={invoiceReference} onChange={(event) => setInvoiceReference(event.target.value)} /></label>
+          <label>Montant facturé USD<input min="0" step="0.000001" required type="number" value={invoiceAmount} onChange={(event) => setInvoiceAmount(event.target.value)} /></label>
+          <label>Tolérance USD<input min="0" step="0.000001" type="number" value={invoiceTolerance} onChange={(event) => setInvoiceTolerance(event.target.value)} /></label>
+          <label className="invoice-checkbox"><input checked={includeEstimated} onChange={(event) => setIncludeEstimated(event.target.checked)} type="checkbox" /><span>Inclure les coûts estimés mesurés</span></label>
+          <label className="invoice-note">Note<textarea maxLength={4000} rows={2} value={invoiceNote} onChange={(event) => setInvoiceNote(event.target.value)} /></label>
+          <button className="button primary compact" disabled={savingInvoice} type="submit">{savingInvoice ? "Calcul…" : "Enregistrer et rapprocher"}</button>
+        </form>
+        {invoices.length > 0 && (
+          <div className="billing-table-wrap invoice-table-wrap">
+            <table className="billing-table"><thead><tr><th>Facture</th><th>Périmètre</th><th>Interne</th><th>Facturé</th><th>Écart</th><th>Statut</th></tr></thead><tbody>{invoices.map((invoice) => (
+              <tr key={invoice.id}>
+                <td><strong>{invoice.reference}</strong><small>{new Intl.DateTimeFormat("fr", { dateStyle: "medium" }).format(new Date(invoice.created_at))}</small></td>
+                <td>{invoice.provider}<small>{invoice.service || "Tous services"}{invoice.include_estimated ? " · estimations incluses" : " · confirmé"}</small></td>
+                <td>{formatCurrency(invoice.internal_amount, invoice.currency)}</td>
+                <td>{formatCurrency(invoice.invoiced_amount, invoice.currency)}</td>
+                <td><strong>{formatCurrency(invoice.variance, invoice.currency)}</strong></td>
+                <td><span className={`reconciliation-status ${invoice.status}`}>{invoice.status === "matched" ? "Rapproché" : "Écart"}</span></td>
+              </tr>
+            ))}</tbody></table>
+          </div>
+        )}
+      </section>
     </section>
   );
 }

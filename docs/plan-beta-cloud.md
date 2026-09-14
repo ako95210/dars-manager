@@ -37,7 +37,7 @@ Objectif : mise à disposition d'une bêta privée à un client le 26 octobre 20
   - budget, seuil d'alerte et confirmation explicite des dépenses : terminé ;
   - événements d'impact durables et résumé hebdomadaire privé : terminé ;
   - dashboard administrateur et paiements manuels : première version terminée ;
-  - export des relevés et rapprochement des factures fournisseur : à faire ;
+  - exports CSV/PDF des relevés et rapprochement des factures fournisseur : terminé ;
   - entités de contribution et d'allocation communautaires : à faire.
 
 ## État de départ

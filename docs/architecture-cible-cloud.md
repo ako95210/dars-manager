@@ -102,6 +102,17 @@ au lancement et exige une confirmation explicite quand le seuil est atteint ou
 que le budget serait dépassé. Le budget avertit et confirme sans bloquer
 arbitrairement un cours volontairement accepté.
 
+Le relevé mensuel affiché, le CSV et le PDF sont trois représentations de la
+même synthèse calculée depuis le registre. Le CSV neutralise les cellules qui
+pourraient être interprétées comme des formules par un tableur. Le PDF est
+généré dans l'API sans service externe ni coût supplémentaire.
+
+Les factures fournisseur sont enregistrées séparément par période, fournisseur
+et service. À la saisie, le serveur fige le montant interne correspondant, le
+montant facturé, la tolérance et leur écart. Ces rapprochements sont immuables :
+une même référence ne peut pas être enregistrée deux fois et un écart ultérieur
+nécessite une nouvelle écriture explicite.
+
 Le stockage est mesuré périodiquement en micro-Go-mois cumulés pour éviter les
 erreurs d'arrondi sur les petits intervalles. Le tarif du fournisseur est une
 configuration obligatoire en production, versionnée dans le même catalogue que

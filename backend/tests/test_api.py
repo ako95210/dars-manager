@@ -996,6 +996,17 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(summary.json()["estimated_cost"], "0.060000")
             self.assertEqual(summary.json()["confirmed_cost"], "0.050000")
             self.assertEqual(summary.json()["balance"], "0.050000")
+            csv_statement = client_b.get("/api/billing/statement.csv?month=2026-09")
+            self.assertEqual(csv_statement.status_code, 200, csv_statement.text)
+            self.assertIn("text/csv", csv_statement.headers["content-type"])
+            self.assertIn("releve-dars-2026-09.csv", csv_statement.headers["content-disposition"])
+            self.assertTrue(csv_statement.content.startswith(b"\xef\xbb\xbf"))
+            self.assertIn("Cours financé".encode(), csv_statement.content)
+            pdf_statement = client_b.get("/api/billing/statement.pdf?month=2026-09")
+            self.assertEqual(pdf_statement.status_code, 200, pdf_statement.text)
+            self.assertEqual(pdf_statement.headers["content-type"], "application/pdf")
+            self.assertTrue(pdf_statement.content.startswith(b"%PDF-1.4"))
+            self.assertTrue(pdf_statement.content.rstrip().endswith(b"%%EOF"))
             forbidden = client_b.post(
                 "/api/admin/billing/payments",
                 json={"user_id": billed_user_id, "amount": "0.03", "period": "2026-09"},
@@ -1014,6 +1025,50 @@ class ApiTests(unittest.TestCase):
                 },
             )
             self.assertEqual(payment.status_code, 201, payment.text)
+            matched_invoice = admin_client.post(
+                "/api/admin/billing/provider-invoices",
+                json={
+                    "provider": "OpenAI",
+                    "service": "transcription",
+                    "reference": "OPENAI-2026-09",
+                    "period": "2026-09",
+                    "invoiced_amount": "0.05",
+                    "tolerance": "0.000001",
+                },
+            )
+            self.assertEqual(matched_invoice.status_code, 201, matched_invoice.text)
+            self.assertEqual(matched_invoice.json()["internal_amount"], "0.050000")
+            self.assertEqual(matched_invoice.json()["variance"], "0.000000")
+            self.assertEqual(matched_invoice.json()["status"], "matched")
+            duplicate_invoice = admin_client.post(
+                "/api/admin/billing/provider-invoices",
+                json={
+                    "provider": "openai",
+                    "service": "transcription",
+                    "reference": "OPENAI-2026-09",
+                    "period": "2026-09",
+                    "invoiced_amount": "0.05",
+                },
+            )
+            self.assertEqual(duplicate_invoice.status_code, 409, duplicate_invoice.text)
+            variance_invoice = admin_client.post(
+                "/api/admin/billing/provider-invoices",
+                json={
+                    "provider": "openai",
+                    "service": "transcription",
+                    "reference": "OPENAI-2026-09-CORRECTION",
+                    "period": "2026-09",
+                    "invoiced_amount": "0.055",
+                },
+            )
+            self.assertEqual(variance_invoice.status_code, 201, variance_invoice.text)
+            self.assertEqual(variance_invoice.json()["variance"], "0.005000")
+            self.assertEqual(variance_invoice.json()["status"], "variance")
+            invoices = admin_client.get(
+                "/api/admin/billing/provider-invoices?month=2026-09"
+            )
+            self.assertEqual(invoices.status_code, 200, invoices.text)
+            self.assertEqual(len(invoices.json()), 2)
             clients = admin_client.get("/api/admin/billing/clients?month=2026-09")
             self.assertEqual(clients.status_code, 200, clients.text)
             pilot_b = next(item for item in clients.json() if item["user"]["id"] == billed_user_id)

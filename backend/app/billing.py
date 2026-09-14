@@ -3,16 +3,18 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .auth import require_admin, require_user
+from .billing_exports import statement_csv, statement_pdf
 from .costs import NANOS_PER_CURRENCY_UNIT, cost_control, money_string
 from .database import get_db
 from .impact import weekly_impact
-from .models import BillingPolicy, Payment, UsageEvent, User
+from .models import BillingPolicy, Payment, ProviderInvoice, UsageEvent, User
 
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
@@ -183,6 +185,40 @@ def billing_summary(
     return summary_response(db, user, month)
 
 
+def statement_download(content: bytes, media_type: str, suffix: str, month: str) -> Response:
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="releve-dars-{month}.{suffix}"'
+        },
+    )
+
+
+@router.get("/statement.csv")
+def download_statement_csv(
+    month: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    summary = summary_response(db, user, month)
+    return statement_download(
+        statement_csv(summary), "text/csv", "csv", summary["period"]
+    )
+
+
+@router.get("/statement.pdf")
+def download_statement_pdf(
+    month: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    summary = summary_response(db, user, month)
+    return statement_download(
+        statement_pdf(summary), "application/pdf", "pdf", summary["period"]
+    )
+
+
 @router.get("/impact")
 def impact_summary(
     week: str | None = None,
@@ -254,6 +290,131 @@ class ManualPaymentRequest(BaseModel):
     @classmethod
     def normalize_currency(cls, value: str) -> str:
         return value.upper()
+
+
+class ProviderInvoiceRequest(BaseModel):
+    provider: str = Field(min_length=1, max_length=80)
+    service: str = Field(default="", max_length=80)
+    reference: str = Field(min_length=1, max_length=180)
+    period: str
+    invoiced_amount: Decimal = Field(ge=0, max_digits=18, decimal_places=6)
+    tolerance: Decimal = Field(default=Decimal("0.000001"), ge=0, max_digits=18, decimal_places=6)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    include_estimated: bool = False
+    note: str = Field(default="", max_length=4000)
+
+    @field_validator("provider", "service", mode="before")
+    @classmethod
+    def normalize_provider_fields(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @field_validator("reference", "note", mode="before")
+    @classmethod
+    def strip_invoice_text(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("currency")
+    @classmethod
+    def normalize_invoice_currency(cls, value: str) -> str:
+        return value.upper()
+
+
+def provider_invoice_response(invoice: ProviderInvoice) -> dict:
+    return {
+        "id": invoice.id,
+        "provider": invoice.provider,
+        "service": invoice.service,
+        "reference": invoice.reference,
+        "period": invoice.period_start.strftime("%Y-%m"),
+        "period_start": invoice.period_start,
+        "period_end": invoice.period_end,
+        "currency": invoice.currency,
+        "invoiced_amount": money_string(invoice.invoiced_amount_nanos),
+        "internal_amount": money_string(invoice.internal_amount_nanos),
+        "variance": money_string(invoice.variance_amount_nanos),
+        "tolerance": money_string(invoice.tolerance_amount_nanos),
+        "include_estimated": invoice.include_estimated,
+        "status": invoice.status,
+        "note": invoice.note,
+        "created_at": invoice.created_at,
+    }
+
+
+@admin_router.post("/provider-invoices", status_code=201)
+def reconcile_provider_invoice(
+    payload: ProviderInvoiceRequest,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    if payload.currency != "USD":
+        raise HTTPException(status_code=422, detail="La bêta utilise uniquement USD.")
+    period_start, period_end = month_bounds(payload.period)
+    existing = db.scalar(
+        select(ProviderInvoice).where(
+            ProviderInvoice.provider == payload.provider,
+            ProviderInvoice.service == payload.service,
+            ProviderInvoice.reference == payload.reference,
+        )
+    )
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Cette facture est déjà enregistrée.")
+    start_at = datetime(period_start.year, period_start.month, 1, tzinfo=timezone.utc)
+    end_at = datetime(period_end.year, period_end.month, 1, tzinfo=timezone.utc)
+    statuses = {"confirmed", "estimated"} if payload.include_estimated else {"confirmed"}
+    statement = select(UsageEvent).where(
+        UsageEvent.provider == payload.provider,
+        UsageEvent.currency == payload.currency,
+        UsageEvent.status.in_(statuses),
+        UsageEvent.occurred_at >= start_at,
+        UsageEvent.occurred_at < end_at,
+    )
+    if payload.service:
+        statement = statement.where(UsageEvent.service == payload.service)
+    events = db.scalars(statement).all()
+    internal_nanos = sum(event.amount_nanos for event in events)
+    invoiced_nanos = amount_nanos(payload.invoiced_amount)
+    tolerance_nanos = amount_nanos(payload.tolerance)
+    variance_nanos = invoiced_nanos - internal_nanos
+    invoice = ProviderInvoice(
+        provider=payload.provider,
+        service=payload.service,
+        reference=payload.reference,
+        period_start=period_start,
+        period_end=period_end,
+        currency=payload.currency,
+        invoiced_amount_nanos=invoiced_nanos,
+        internal_amount_nanos=internal_nanos,
+        variance_amount_nanos=variance_nanos,
+        tolerance_amount_nanos=tolerance_nanos,
+        include_estimated=payload.include_estimated,
+        status="matched" if abs(variance_nanos) <= tolerance_nanos else "variance",
+        recorded_by_user_id=admin.id,
+        note=payload.note,
+    )
+    db.add(invoice)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Cette facture est déjà enregistrée.") from exc
+    db.refresh(invoice)
+    return provider_invoice_response(invoice)
+
+
+@admin_router.get("/provider-invoices")
+def list_provider_invoices(
+    month: str | None = None,
+    _admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    statement = select(ProviderInvoice).order_by(ProviderInvoice.created_at.desc())
+    if month:
+        start, end = month_bounds(month)
+        statement = statement.where(
+            ProviderInvoice.period_start == start,
+            ProviderInvoice.period_end == end,
+        )
+    return [provider_invoice_response(row) for row in db.scalars(statement).all()]
 
 
 @admin_router.post("/payments", status_code=201)

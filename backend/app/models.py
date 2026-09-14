@@ -324,3 +324,30 @@ class ImpactEvent(Base):
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, index=True
     )
+
+
+class ProviderInvoice(Base):
+    __tablename__ = "provider_invoices"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider", "service", "reference", name="uq_provider_invoice_reference"
+        ),
+        Index("ix_provider_invoices_period", "period_start", "period_end"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    provider: Mapped[str] = mapped_column(String(80), index=True)
+    service: Mapped[str] = mapped_column(String(80), default="")
+    reference: Mapped[str] = mapped_column(String(180))
+    period_start: Mapped[date] = mapped_column(Date, index=True)
+    period_end: Mapped[date] = mapped_column(Date)
+    currency: Mapped[str] = mapped_column(String(3), default="USD")
+    invoiced_amount_nanos: Mapped[int] = mapped_column(BigInteger)
+    internal_amount_nanos: Mapped[int] = mapped_column(BigInteger)
+    variance_amount_nanos: Mapped[int] = mapped_column(BigInteger)
+    tolerance_amount_nanos: Mapped[int] = mapped_column(BigInteger, default=0)
+    include_estimated: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    recorded_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

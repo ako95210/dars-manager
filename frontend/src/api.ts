@@ -220,6 +220,25 @@ export type ImpactSummary = {
   channels: Record<string, number>;
 };
 
+export type ProviderInvoice = {
+  id: string;
+  provider: string;
+  service: string;
+  reference: string;
+  period: string;
+  period_start: string;
+  period_end: string;
+  currency: string;
+  invoiced_amount: string;
+  internal_amount: string;
+  variance: string;
+  tolerance: string;
+  include_estimated: boolean;
+  status: "matched" | "variance";
+  note: string;
+  created_at: string;
+};
+
 type ApiOptions = RequestInit & { body?: BodyInit | null };
 
 async function request<T>(path: string, options: ApiOptions = {}): Promise<T> {
@@ -489,8 +508,25 @@ export const api = {
   }),
   impactSummary: (week?: string) =>
     request<ImpactSummary>(`/api/billing/impact${week ? `?week=${encodeURIComponent(week)}` : ""}`),
+  statementUrl: (format: "csv" | "pdf", month: string) =>
+    `/api/billing/statement.${format}?month=${encodeURIComponent(month)}`,
   clientBillingSummaries: (month?: string) =>
     request<BillingSummary[]>(`/api/admin/billing/clients${month ? `?month=${encodeURIComponent(month)}` : ""}`),
+  providerInvoices: (month?: string) =>
+    request<ProviderInvoice[]>(`/api/admin/billing/provider-invoices${month ? `?month=${encodeURIComponent(month)}` : ""}`),
+  reconcileProviderInvoice: (values: {
+    provider: string;
+    service: string;
+    reference: string;
+    period: string;
+    invoiced_amount: string;
+    tolerance: string;
+    include_estimated: boolean;
+    note: string;
+  }) => request<ProviderInvoice>("/api/admin/billing/provider-invoices", {
+    method: "POST",
+    body: JSON.stringify({ ...values, currency: "USD" }),
+  }),
   recordManualPayment: (
     userId: string,
     amount: string,

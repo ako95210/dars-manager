@@ -323,6 +323,9 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 
 .month-picker { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
 .month-picker input { min-width: 170px; padding-block: 10px; }
+.billing-header-actions { display: flex; gap: 10px; align-items: flex-end; }
+.billing-header-actions > div { display: flex; gap: 7px; }
+.billing-header-actions a { margin: 0; padding: 10px 12px; font-size: 10px; text-decoration: none; }
 .cost-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; }
 .cost-cards article { padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: white; box-shadow: 0 8px 30px rgba(13, 24, 43, .035); }
 .cost-cards span, .cost-cards strong, .cost-cards small { display: block; }
@@ -379,6 +382,18 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .manual-payment-card form { display: grid; gap: 13px; }
 .manual-payment-card form label { display: grid; gap: 6px; color: #344054; font-size: 11px; font-weight: 700; }
 .manual-payment-card textarea { width: 100%; resize: vertical; border: 1px solid var(--line); border-radius: 11px; padding: 13px 15px; outline: none; }
+.provider-reconciliation { margin-top: 36px; }
+.invoice-form { display: grid; grid-template-columns: 1fr 1fr 1.3fr 1fr 1fr; gap: 11px; align-items: end; padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: white; }
+.invoice-form label { display: grid; gap: 6px; color: #596579; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.invoice-form input, .invoice-form textarea { min-height: 40px; padding: 9px 10px; font-size: 10px; text-transform: none; }
+.invoice-form textarea { width: 100%; resize: vertical; }
+.invoice-form .invoice-checkbox { display: flex; flex-direction: row; gap: 8px; align-items: center; align-self: center; }
+.invoice-checkbox input { width: 16px; min-height: 16px; accent-color: #17936d; }
+.invoice-note { grid-column: span 4; }
+.invoice-form .button { min-height: 40px; margin: 0; font-size: 10px; }
+.invoice-table-wrap { margin-top: 12px; }
+.reconciliation-status { display: inline-block; padding: 5px 8px; border-radius: 999px; color: #176849; background: #e9f9f3; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.reconciliation-status.variance { color: #a4372e; background: #fef0ef; }
 
 @media (max-width: 900px) {
   .login-shell { grid-template-columns: 1fr; }
@@ -399,6 +414,8 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .job-list-card { grid-template-columns: 1fr; gap: 15px; }
   .cost-cards { grid-template-columns: repeat(2, 1fr); }
   .admin-billing-grid { grid-template-columns: 1fr; }
+  .invoice-form { grid-template-columns: repeat(2, 1fr); }
+  .invoice-note { grid-column: span 2; }
   .budget-form { grid-template-columns: 1fr 1fr; }
   .editor-heading { flex-direction: column; }
   .audio-review { grid-template-columns: 40px 1fr; }
@@ -420,6 +437,8 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .sidebar-user { margin: 0 0 0 auto; padding: 0; border: 0; }
   .workspace { padding: 28px 20px; }
   .workspace-header { flex-direction: column; }
+  .billing-header-actions { width: 100%; align-items: stretch; flex-direction: column; }
+  .billing-header-actions > div { flex-wrap: wrap; }
   .impact-strip > header { align-items: flex-start; flex-direction: column; }
   .impact-cards { grid-template-columns: 1fr; }
   .quick-start { padding: 26px 22px; }
@@ -448,5 +467,7 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .cost-cards, .manual-payment-card .cost-cards { grid-template-columns: 1fr; }
   .budget-overview, .project-cost-grid article { align-items: flex-start; flex-direction: column; }
   .budget-form { grid-template-columns: 1fr; }
+  .invoice-form { grid-template-columns: 1fr; }
+  .invoice-note { grid-column: 1; }
   .project-cost-grid article > div:last-child { text-align: left; }
 }
