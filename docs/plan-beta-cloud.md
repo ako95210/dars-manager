@@ -27,7 +27,9 @@ Objectif : mise à disposition d'une bêta privée à un client le 26 octobre 20
   - édition durable des titres, descriptions et timestamps : terminé ;
   - contrôle de concurrence par empreinte et recalcul des transcriptions : terminé ;
   - sélection/concaténation audio par job enfant durable : terminé ;
-  - templates, formats sociaux et archive : à faire.
+  - bibliothèque `BrandKit`, import PNG/JPEG/MP4/MOV et vignettes : terminé ;
+  - modes image extraite/fond animé et choix du format dans l'atelier : terminé ;
+  - zones dynamiques, rendus sociaux et archive : à faire.
 
 ## État de départ
 

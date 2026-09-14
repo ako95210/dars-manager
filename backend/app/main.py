@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from .auth import require_user, router as auth_router
 from .billing import admin_router as admin_billing_router
 from .billing import router as billing_router
+from .brand import router as brand_router
 from .config import settings
 from .costs import seed_default_rates
 from .database import SessionLocal, get_db, init_database
@@ -59,6 +60,7 @@ app.include_router(uploads_router)
 app.include_router(asset_jobs_router)
 app.include_router(transcription_router)
 app.include_router(editor_router)
+app.include_router(brand_router)
 
 
 def owned_job(user_id: str, job_id: str) -> Job:

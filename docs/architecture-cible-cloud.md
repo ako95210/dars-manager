@@ -105,9 +105,17 @@ avant de supprimer les objets expirés.
 ## Templates visuels des éditeurs
 
 Chaque client dispose d'un `BrandKit` contenant son logo, ses couleurs, ses
-polices autorisées et un ou plusieurs templates versionnés. Un template définit
-le format cible, l'image de fond et les zones dynamiques telles que le titre du
-cours, l'intervenant, la date ou le numéro d'épisode.
+polices autorisées et un ou plusieurs templates versionnés. La source d'un
+template peut être une image PNG/JPEG ou une vidéo MP4/MOV existante. Pour une
+vidéo, l'utilisateur choisit soit une image fixe extraite à un instant précis,
+soit la conservation du fond animé sans sa piste audio. Un template définit le
+format cible et les zones dynamiques telles que le titre du cours,
+l'intervenant, la date ou le numéro d'épisode.
+
+Les sources et leurs vignettes sont des objets permanents distincts, privés au
+client et mesurés dans le même registre de stockage que les médias temporaires.
+Les rendus conservent l'identifiant et la version du template afin qu'une
+modification future ne change pas silencieusement une vidéo déjà produite.
 
 Le rendu standard applique les données du projet au template sans appel à une
 IA d'image. La génération IA reste facultative et ne peut remplacer que les

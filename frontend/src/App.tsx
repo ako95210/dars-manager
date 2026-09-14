@@ -1,5 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, BillingSummary, Job, JobAnalysis, Project, TranscriptionQuote, User } from "./api";
+import { TemplateLibrary } from "./TemplateLibrary";
+import type { BrandTemplate } from "./api";
 
 function inspectAudioDuration(file: File): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -168,6 +170,8 @@ function CourseEditor({ job }: { job: Job }) {
   const [exportLoading, setExportLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<BrandTemplate | null>(null);
+  const [videoFormat, setVideoFormat] = useState<"16:9" | "1:1" | "9:16">("16:9");
 
   function load() {
     setLoading(true);
@@ -384,6 +388,26 @@ function CourseEditor({ job }: { job: Job }) {
             </article>
           ))}
           </div>
+
+          <TemplateLibrary
+            onSelect={setSelectedTemplate}
+            selectedId={selectedTemplate?.id || ""}
+          />
+          <section className="video-template-choice">
+            <div>
+              <span className="eyebrow">Prochaine vidéo</span>
+              <h3>{selectedTemplate ? selectedTemplate.name : "Choisissez un template"}</h3>
+              <p>{selectedTemplate ? "Ce design sera proposé au moment de générer la vidéo." : "Importez ou sélectionnez une identité visuelle ci-dessus."}</p>
+            </div>
+            <div className="format-choice" aria-label="Format de sortie">
+              {(["16:9", "1:1", "9:16"] as const).map((format) => (
+                <button className={videoFormat === format ? "active" : ""} key={format} onClick={() => setVideoFormat(format)} type="button">
+                  <span className={`ratio ratio-${format.replace(":", "-")}`} />
+                  {format}
+                </button>
+              ))}
+            </div>
+          </section>
         </>
       )}
     </section>

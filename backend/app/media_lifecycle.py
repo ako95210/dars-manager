@@ -8,11 +8,11 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .costs import record_usage
-from .models import Artifact, Asset, utc_now
+from .models import Artifact, Asset, BrandTemplateFile, utc_now
 from .runtime import media_storage
 
 
-MediaRow: TypeAlias = Asset | Artifact
+MediaRow: TypeAlias = Asset | Artifact | BrandTemplateFile
 BYTES_PER_GB = 1_000_000_000
 SECONDS_PER_MONTH = 30 * 86400
 MICRO_UNITS_PER_GB_MONTH = 1_000_000
@@ -25,6 +25,8 @@ def aware(value: datetime) -> datetime:
 def media_started_at(row: MediaRow) -> datetime | None:
     if isinstance(row, Asset):
         return aware(row.uploaded_at) if row.uploaded_at else None
+    if isinstance(row, BrandTemplateFile):
+        return aware(row.uploaded_at) if row.uploaded_at else None
     return aware(row.created_at)
 
 
@@ -32,7 +34,9 @@ def cumulative_storage_units(row: MediaRow, through: datetime) -> int:
     started_at = media_started_at(row)
     if started_at is None:
         return 0
-    end = min(aware(through), aware(row.expires_at))
+    end = aware(through)
+    if not isinstance(row, BrandTemplateFile):
+        end = min(end, aware(row.expires_at))
     seconds = max(0, int((end - started_at).total_seconds()))
     return (
         row.size_bytes * seconds * MICRO_UNITS_PER_GB_MONTH
@@ -41,7 +45,13 @@ def cumulative_storage_units(row: MediaRow, through: datetime) -> int:
 
 
 def meter_media(db: Session, row: MediaRow, through: datetime | None = None) -> int:
-    model = Asset if isinstance(row, Asset) else Artifact
+    model = (
+        Asset
+        if isinstance(row, Asset)
+        else BrandTemplateFile
+        if isinstance(row, BrandTemplateFile)
+        else Artifact
+    )
     locked = db.get(model, row.id, with_for_update=True)
     if locked is None:
         return 0
@@ -51,12 +61,19 @@ def meter_media(db: Session, row: MediaRow, through: datetime | None = None) -> 
     previous_units = int(row.storage_metered_units or 0)
     delta = max(0, total_units - previous_units)
     if delta:
-        object_type = "asset" if isinstance(row, Asset) else "artifact"
-        job_id = None if isinstance(row, Asset) else row.job_id
+        object_type = (
+            "asset"
+            if isinstance(row, Asset)
+            else "brand_template_file"
+            if isinstance(row, BrandTemplateFile)
+            else "artifact"
+        )
+        job_id = None if isinstance(row, (Asset, BrandTemplateFile)) else row.job_id
+        project_id = None if isinstance(row, BrandTemplateFile) else row.project_id
         record_usage(
             db,
             user_id=row.user_id,
-            project_id=row.project_id,
+            project_id=project_id,
             job_id=job_id,
             provider=settings.storage_provider,
             service="object_storage",
@@ -85,7 +102,8 @@ def meter_all_media(db: Session, through: datetime | None = None) -> int:
     total_delta = 0
     assets = db.scalars(select(Asset).where(Asset.status == "ready")).all()
     artifacts = db.scalars(select(Artifact)).all()
-    for row in [*assets, *artifacts]:
+    template_files = db.scalars(select(BrandTemplateFile)).all()
+    for row in [*assets, *artifacts, *template_files]:
         total_delta += meter_media(db, row, moment)
     db.commit()
     return total_delta

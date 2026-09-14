@@ -196,6 +196,43 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .export-progress { width: min(280px, 35%); display: grid; grid-template-columns: 36px 1fr; gap: 9px; align-items: center; }
 .export-progress strong { color: #158462; font-size: 11px; }
 .export-progress .progress-track { margin: 0; }
+.template-library { margin-top: 32px; padding-top: 30px; border-top: 1px solid var(--line); }
+.template-library > header h3, .video-template-choice h3 { margin: 7px 0 5px; font-size: 18px; }
+.template-library > header p, .video-template-choice p { margin: 0; color: var(--muted); font-size: 11px; }
+.template-loading { min-height: 120px; display: flex; justify-content: center; gap: 12px; align-items: center; color: var(--muted); font-size: 11px; }
+.template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-top: 18px; }
+.template-grid article { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: white; }
+.template-grid article.selected { border-color: #38a37e; box-shadow: 0 0 0 3px rgba(48, 212, 154, .1); }
+.template-choice { width: 100%; display: block; padding: 0; border: 0; color: inherit; background: transparent; text-align: left; }
+.template-choice img, .template-placeholder { width: 100%; height: 110px; display: grid; place-items: center; object-fit: cover; color: #147657; background: #e9f9f3; font-size: 28px; }
+.template-info { display: block; padding: 12px 34px 12px 12px; }
+.template-info strong, .template-info small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.template-info strong { font-size: 12px; }
+.template-info small { margin-top: 4px; color: var(--muted); font-size: 9px; }
+.template-selected { position: absolute; right: 10px; bottom: 13px; display: none; color: #168060; font-weight: 900; }
+.template-grid article.selected .template-selected { display: block; }
+.template-delete { position: absolute; top: 7px; right: 7px; width: 25px; height: 25px; border: 0; border-radius: 50%; color: #66312c; background: rgba(255,255,255,.88); font-size: 17px; }
+.template-empty { margin: 18px 0 0; padding: 17px; border: 1px dashed #cbd5df; border-radius: 11px; color: var(--muted); background: #fafbfd; font-size: 11px; text-align: center; }
+.template-upload { margin-top: 13px; }
+.template-drop { min-height: 70px; display: flex; gap: 10px; align-items: center; padding: 14px 17px; border: 1px dashed #bdc7d3; border-radius: 11px; background: #fafbfd; cursor: pointer; }
+.template-drop.has-file { border-color: #43b990; background: #f4fcf9; }
+.template-drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.template-drop > span { color: #158462; font-size: 22px; }
+.template-drop strong { font-size: 11px; }
+.template-drop small { margin-left: auto; color: var(--muted); font-size: 9px; }
+.template-upload-fields { display: grid; grid-template-columns: 1fr 1fr 180px auto; gap: 10px; align-items: end; margin-top: 10px; padding: 14px; border-radius: 11px; background: #f7f9fb; }
+.template-upload-fields label { display: grid; gap: 6px; color: #596579; font-size: 9px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.template-upload-fields input, .template-upload-fields select { min-height: 41px; padding: 9px 11px; font-size: 11px; }
+.template-upload-fields .button { margin: 0; min-height: 41px; font-size: 10px; }
+.video-template-choice { display: flex; justify-content: space-between; gap: 24px; align-items: center; margin-top: 14px; padding: 18px; border-radius: 12px; color: white; background: linear-gradient(120deg, #101b2e, #172941); }
+.video-template-choice p { color: #94a3b8; }
+.format-choice { display: flex; gap: 7px; }
+.format-choice button { min-width: 65px; display: grid; place-items: center; gap: 5px; padding: 8px 10px; border: 1px solid #35445a; border-radius: 9px; color: #aab6c7; background: #142238; font-size: 9px; font-weight: 800; }
+.format-choice button.active { border-color: #46d4a2; color: white; background: #1b3c39; }
+.ratio { display: block; border: 1.5px solid currentColor; border-radius: 2px; }
+.ratio-16-9 { width: 23px; height: 13px; }
+.ratio-1-1 { width: 17px; height: 17px; }
+.ratio-9-16 { width: 12px; height: 21px; }
 .job-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--line); }
 .job-actions button { padding: 10px 14px; border: 1px solid var(--line); border-radius: 9px; color: #354154; background: white; font-weight: 700; font-size: 12px; }
 .job-actions button:hover:not(:disabled) { border-color: #96cdb9; }
@@ -288,6 +325,7 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .selection-toolbar, .export-status { align-items: stretch; flex-direction: column; }
   .export-result { align-items: stretch; flex-direction: column; }
   .export-result audio, .export-progress { width: 100%; }
+  .template-upload-fields { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 620px) {
@@ -314,6 +352,10 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .time-fields { grid-column: 1; }
   .editor-heading .button { width: 100%; }
   .selection-toolbar > div:last-child { align-items: stretch; flex-direction: column; }
+  .template-drop { align-items: flex-start; flex-wrap: wrap; }
+  .template-drop small { width: 100%; margin-left: 32px; }
+  .template-upload-fields { grid-template-columns: 1fr; }
+  .video-template-choice { align-items: stretch; flex-direction: column; }
   .project-header-actions, .danger-zone, .delete-confirmation { align-items: stretch; flex-direction: column; }
   .cost-cards, .manual-payment-card .cost-cards { grid-template-columns: 1fr; }
 }

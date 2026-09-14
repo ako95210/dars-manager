@@ -21,7 +21,7 @@ engine = create_engine(settings.database_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 INITIAL_REVISION = "20260908_0001"
-CURRENT_REVISION = "20260909_0006"
+CURRENT_REVISION = "20260914_0007"
 INITIAL_TABLES = {
     "users",
     "auth_sessions",

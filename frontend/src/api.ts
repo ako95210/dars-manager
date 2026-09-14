@@ -107,6 +107,32 @@ export type JobAnalysis = {
   parts: CoursePart[];
 };
 
+export type BrandTemplate = {
+  id: string;
+  name: string;
+  original_name: string;
+  source_kind: "image" | "video";
+  usage_mode: "static_frame" | "animated";
+  status: "pending" | "ready";
+  width: number | null;
+  height: number | null;
+  duration_seconds: number | null;
+  version: number;
+  frame_seconds: number;
+  preview_url: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type TemplateUploadReservation = {
+  template: BrandTemplate;
+  upload: {
+    method: "PUT" | "POST";
+    url: string;
+    fields: Record<string, string>;
+  };
+};
+
 export type Payment = {
   id: string;
   amount: string;
@@ -254,6 +280,57 @@ export const api = {
         part_indices: partIndices,
       }),
     }),
+  brandTemplates: () => request<BrandTemplate[]>("/api/brand/templates"),
+  createBrandTemplate: async (
+    name: string,
+    file: File,
+    usageMode: "static_frame" | "animated",
+    frameSeconds: number,
+    onStage?: (stage: "reserve" | "upload" | "validate") => void,
+  ) => {
+    onStage?.("reserve");
+    const reservation = await request<TemplateUploadReservation>("/api/brand/templates", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        filename: file.name,
+        content_type: file.type || "application/octet-stream",
+        size_bytes: file.size,
+        usage_mode: usageMode,
+        frame_seconds: frameSeconds,
+      }),
+    });
+    try {
+      onStage?.("upload");
+      let response: Response;
+      if (reservation.upload.method === "POST") {
+        const body = new FormData();
+        Object.entries(reservation.upload.fields).forEach(([key, value]) => body.append(key, value));
+        body.append("file", file);
+        response = await fetch(reservation.upload.url, { method: "POST", body });
+      } else {
+        response = await fetch(reservation.upload.url, {
+          method: "PUT",
+          body: file,
+          credentials: "include",
+          headers: { "Content-Type": file.type || "application/octet-stream" },
+        });
+      }
+      if (!response.ok) throw new Error("L’envoi du template a échoué.");
+      onStage?.("validate");
+      return await request<BrandTemplate>(
+        `/api/brand/templates/${reservation.template.id}/complete`,
+        { method: "POST" },
+      );
+    } catch (reason) {
+      await request<void>(`/api/brand/templates/${reservation.template.id}`, {
+        method: "DELETE",
+      }).catch(() => undefined);
+      throw reason;
+    }
+  },
+  deleteBrandTemplate: (templateId: string) =>
+    request<void>(`/api/brand/templates/${templateId}`, { method: "DELETE" }),
   billingSummary: (month?: string) =>
     request<BillingSummary>(`/api/billing/summary${month ? `?month=${encodeURIComponent(month)}` : ""}`),
   clientBillingSummaries: (month?: string) =>

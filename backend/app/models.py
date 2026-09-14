@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime, timezone
 from typing import Any
 
-from sqlalchemy import BigInteger, Date, JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import BigInteger, Date, JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -135,6 +135,59 @@ class BrandKit(Base):
     accent_color: Mapped[str] = mapped_column(String(7), default="#34d399")
     settings: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class BrandTemplate(Base):
+    __tablename__ = "brand_templates"
+    __table_args__ = (Index("ix_brand_templates_user_updated", "user_id", "updated_at"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    brand_kit_id: Mapped[str] = mapped_column(
+        ForeignKey("brand_kits.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(180))
+    original_name: Mapped[str] = mapped_column(String(255))
+    source_kind: Mapped[str] = mapped_column(String(20))
+    usage_mode: Mapped[str] = mapped_column(String(30))
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_milliseconds: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    settings: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class BrandTemplateFile(Base):
+    __tablename__ = "brand_template_files"
+    __table_args__ = (
+        UniqueConstraint("template_id", "kind", name="uq_brand_template_files_kind"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    template_id: Mapped[str] = mapped_column(
+        ForeignKey("brand_templates.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(30))
+    content_type: Mapped[str] = mapped_column(String(120))
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    storage_key: Mapped[str] = mapped_column(String(700), unique=True, index=True)
+    checksum_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    storage_metered_units: Mapped[int] = mapped_column(BigInteger, default=0)
+    storage_metered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class PriceRate(Base):

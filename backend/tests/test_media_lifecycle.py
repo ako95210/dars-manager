@@ -4,7 +4,7 @@ import unittest
 from datetime import timedelta
 
 from backend.app.media_lifecycle import cumulative_storage_units
-from backend.app.models import Asset, utc_now
+from backend.app.models import Asset, BrandTemplateFile, utc_now
 
 
 class MediaLifecycleTests(unittest.TestCase):
@@ -29,6 +29,17 @@ class MediaLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(
             cumulative_storage_units(asset, started + timedelta(days=90)),
+            500_000,
+        )
+
+    def test_permanent_template_storage_has_no_expiration_cap(self) -> None:
+        started = utc_now()
+        template = BrandTemplateFile(
+            size_bytes=250_000_000,
+            uploaded_at=started,
+        )
+        self.assertEqual(
+            cumulative_storage_units(template, started + timedelta(days=60)),
             500_000,
         )
 

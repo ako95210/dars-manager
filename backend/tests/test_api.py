@@ -5,7 +5,9 @@ import hashlib
 import shutil
 import unittest
 import uuid
+import wave
 from datetime import timedelta
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,13 +23,19 @@ os.environ["DARSM_COOKIE_SECURE"] = "false"
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
+from PIL import Image
 
 from backend.app.costs import record_usage
 from backend.app.database import CURRENT_REVISION, SessionLocal, engine, init_database
 from backend.app.main import app, manager
 from backend.app.jobs import JobManager
 from backend.app.models import Artifact, Asset, UsageEvent, User, utc_now
-from backend.app.pipeline import PipelineResult, write_analysis
+from backend.app.pipeline import (
+    PipelineResult,
+    generate_cover,
+    render_static_video,
+    write_analysis,
+)
 from backend.app.runtime import media_storage
 from backend.app.security import hash_password
 from backend.app.transcription import ProviderTranscription
@@ -154,6 +162,105 @@ class ApiTests(unittest.TestCase):
             deleted = client.delete(f"/api/projects/{project_id}")
             self.assertEqual(deleted.status_code, 204, deleted.text)
             self.assertEqual(client.get(f"/api/projects/{project_id}").status_code, 404)
+
+    def test_image_and_video_templates_are_private_and_reusable(self) -> None:
+        image_buffer = BytesIO()
+        Image.new("RGB", (640, 360), "#17362c").save(image_buffer, format="PNG")
+        image_content = image_buffer.getvalue()
+
+        template_root = TEST_ROOT / "template-fixtures"
+        template_root.mkdir(parents=True, exist_ok=True)
+        audio_path = template_root / "audio.wav"
+        cover_path = template_root / "cover.png"
+        video_path = template_root / "reference.mp4"
+        with wave.open(str(audio_path), "wb") as output:
+            output.setnchannels(1)
+            output.setsampwidth(2)
+            output.setframerate(8000)
+            output.writeframes(b"\x00\x00" * 8000)
+        generate_cover(cover_path, "Template vidéo", "Référence")
+        render_static_video(cover_path, audio_path, video_path)
+        video_content = video_path.read_bytes()
+
+        def upload_template(
+            client: TestClient,
+            *,
+            name: str,
+            filename: str,
+            content_type: str,
+            content: bytes,
+            usage_mode: str,
+        ) -> dict:
+            reservation = client.post(
+                "/api/brand/templates",
+                json={
+                    "name": name,
+                    "filename": filename,
+                    "content_type": content_type,
+                    "size_bytes": len(content),
+                    "usage_mode": usage_mode,
+                    "frame_seconds": 0,
+                },
+            )
+            self.assertEqual(reservation.status_code, 201, reservation.text)
+            upload = client.put(
+                reservation.json()["upload"]["url"],
+                content=content,
+                headers={"Content-Type": content_type},
+            )
+            self.assertEqual(upload.status_code, 204, upload.text)
+            completed = client.post(
+                f"/api/brand/templates/{reservation.json()['template']['id']}/complete"
+            )
+            self.assertEqual(completed.status_code, 200, completed.text)
+            return completed.json()
+
+        with TestClient(app) as client:
+            self.login(client, "pilot-a@example.com", "mot-de-passe-a")
+            image_template = upload_template(
+                client,
+                name="Fond institutionnel",
+                filename="fond.png",
+                content_type="image/png",
+                content=image_content,
+                usage_mode="animated",
+            )
+            self.assertEqual(image_template["source_kind"], "image")
+            self.assertEqual(image_template["usage_mode"], "static_frame")
+            self.assertEqual(image_template["width"], 640)
+            video_template = upload_template(
+                client,
+                name="Habillage animé",
+                filename="reference.mp4",
+                content_type="video/mp4",
+                content=video_content,
+                usage_mode="animated",
+            )
+            self.assertEqual(video_template["source_kind"], "video")
+            self.assertEqual(video_template["usage_mode"], "animated")
+            self.assertGreater(video_template["duration_seconds"], 0)
+            templates = client.get("/api/brand/templates")
+            self.assertEqual(templates.status_code, 200, templates.text)
+            self.assertEqual(len(templates.json()), 2)
+            preview = client.get(image_template["preview_url"])
+            self.assertEqual(preview.status_code, 200, preview.text)
+            self.assertEqual(preview.headers["content-type"], "image/png")
+
+            self.assertEqual(client.post("/api/auth/logout").status_code, 204)
+            self.login(client, "pilot-b@example.com", "mot-de-passe-b")
+            self.assertEqual(client.get("/api/brand/templates").json(), [])
+            self.assertEqual(client.get(image_template["preview_url"]).status_code, 404)
+
+            self.assertEqual(client.post("/api/auth/logout").status_code, 204)
+            self.login(client, "pilot-a@example.com", "mot-de-passe-a")
+            self.assertEqual(
+                client.delete(f"/api/brand/templates/{image_template['id']}").status_code,
+                204,
+            )
+            self.assertEqual(
+                client.delete(f"/api/brand/templates/{video_template['id']}").status_code,
+                204,
+            )
 
     def test_temporary_upload_is_private_validated_and_launches_from_asset(self) -> None:
         content = b"small-audio-placeholder"
