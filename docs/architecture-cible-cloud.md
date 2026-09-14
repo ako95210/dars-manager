@@ -96,6 +96,12 @@ Chaque appel facturable retourne un enregistrement normalisé contenant le
 client, le projet, le job, le fournisseur, le service, la quantité, l'unité, le
 tarif appliqué, la devise et l'identifiant de requête du fournisseur.
 
+Chaque client peut définir un budget mensuel indicatif, un pourcentage d'alerte
+et un seuil de confirmation par traitement. Le serveur recalcule la projection
+au lancement et exige une confirmation explicite quand le seuil est atteint ou
+que le budget serait dépassé. Le budget avertit et confirme sans bloquer
+arbitrairement un cours volontairement accepté.
+
 Le stockage est mesuré périodiquement en micro-Go-mois cumulés pour éviter les
 erreurs d'arrondi sur les petits intervalles. Le tarif du fournisseur est une
 configuration obligatoire en production, versionnée dans le même catalogue que
@@ -139,6 +145,15 @@ réimport limite le nombre et la taille totale des entrées, refuse les chemins
 sortant de l'archive et vérifie chaque empreinte. L'analyse restaurée devient
 directement un cours éditable : aucun appel de transcription, et donc aucun coût
 IA de transcription, n'est déclenché.
+
+## Mesure d'impact
+
+Les workers produisent des événements d'impact idempotents indépendants de la
+durée de vie des fichiers : cours terminé, vidéo rendue et archive restaurée.
+Le même journal accepte déjà le futur événement `course_published` avec son
+canal. Le résumé hebdomadaire privé agrège cours, durées, volume généré, stockage
+cloud courant et coût issu du registre financier. La suppression d'un média
+temporaire ne supprime donc pas l'historique d'impact.
 
 ## Limites de la bêta
 

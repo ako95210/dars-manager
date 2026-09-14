@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from .auth import require_user
 from .config import settings
 from .database import get_db
-from .costs import record_usage
+from .costs import cost_control, quote_usage, record_usage
 from .media_storage import LocalMediaStorage
 from .media_lifecycle import meter_media
 from .models import Asset, Project, User, utc_now
@@ -53,6 +53,7 @@ class JobFromAsset(BaseModel):
     model: str | None = None
     language: str = Field(default="fr", min_length=2, max_length=20)
     estimated_duration_seconds: float | None = Field(default=None, gt=0, le=24 * 60 * 60)
+    cost_confirmed: bool = False
 
 
 class AssetResponse(BaseModel):
@@ -239,6 +240,27 @@ def create_job_from_asset(
     asset = owned_asset(db, user.id, payload.asset_id)
     if asset.status != "ready" or not asset.storage_key:
         raise HTTPException(status_code=409, detail="Asset upload is not complete")
+    cost_decision = None
+    if settings.transcription_backend == "openai":
+        quote = quote_usage(
+            db,
+            provider="openai",
+            service="transcription",
+            model=settings.transcription_model,
+            quantity=math.ceil(payload.estimated_duration_seconds or 0),
+            unit="audio_second",
+        )
+        cost_decision = cost_control(
+            db,
+            user_id=user.id,
+            proposed_amount_nanos=quote.amount_nanos,
+            lock_policy=True,
+        )
+        if cost_decision.requires_confirmation and not payload.cost_confirmed:
+            raise HTTPException(
+                status_code=409,
+                detail="Ce traitement dépasse un seuil financier et doit être confirmé.",
+            )
     try:
         job = manager.create(
             user.id,
@@ -268,7 +290,13 @@ def create_job_from_asset(
                 unit="audio_second",
                 status="estimated",
                 idempotency_key=f"transcription:{job.id}:estimate",
-                details={"source": "browser_audio_metadata"},
+                details={
+                    "source": "browser_audio_metadata",
+                    "cost_confirmed": payload.cost_confirmed,
+                    "confirmation_reasons": (
+                        list(cost_decision.confirmation_reasons) if cost_decision else []
+                    ),
+                },
             )
             db.commit()
         except Exception:

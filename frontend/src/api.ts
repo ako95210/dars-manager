@@ -88,6 +88,12 @@ export type TranscriptionQuote = {
   currency: string;
   amount: string;
   unit_amount: string;
+  requires_confirmation: boolean;
+  confirmation_reasons: ("approval_threshold" | "monthly_budget")[];
+  monthly_committed: string;
+  monthly_projected: string;
+  monthly_budget: string;
+  budget_state: "disabled" | "ok" | "warning" | "exceeded";
 };
 
 export type AnalysisSegment = {
@@ -173,8 +179,45 @@ export type BillingSummary = {
   estimated_cost: string;
   paid: string;
   balance: string;
+  policy: {
+    currency: string;
+    monthly_budget: string;
+    warning_percent: number;
+    approval_threshold: string;
+    enabled: boolean;
+  };
+  budget: {
+    committed: string;
+    remaining: string;
+    utilization_percent: number;
+    state: "disabled" | "ok" | "warning" | "exceeded";
+  };
+  projects: {
+    project_id: string | null;
+    project_title: string;
+    confirmed_cost: string;
+    estimated_cost: string;
+    total_cost: string;
+    operations: number;
+  }[];
   usage: UsageEvent[];
   payments: Payment[];
+};
+
+export type ImpactSummary = {
+  week_start: string;
+  week_end: string;
+  currency: string;
+  courses_completed: number;
+  videos_rendered: number;
+  archives_restored: number;
+  courses_published: number;
+  completed_duration_seconds: number;
+  published_duration_seconds: number;
+  generated_storage_bytes: number;
+  current_storage_bytes: number;
+  cost: string;
+  channels: Record<string, number>;
 };
 
 type ApiOptions = RequestInit & { body?: BodyInit | null };
@@ -225,6 +268,7 @@ export const api = {
     file: File,
     language: string,
     estimatedDurationSeconds: number,
+    costConfirmed = false,
     onStage?: (stage: "reserve" | "upload" | "validate" | "start") => void,
   ) => {
     onStage?.("reserve");
@@ -271,6 +315,7 @@ export const api = {
         asset_id: reservation.asset.id,
         language,
         estimated_duration_seconds: estimatedDurationSeconds,
+        cost_confirmed: costConfirmed,
       }),
     });
   },
@@ -429,6 +474,21 @@ export const api = {
   },
   billingSummary: (month?: string) =>
     request<BillingSummary>(`/api/billing/summary${month ? `?month=${encodeURIComponent(month)}` : ""}`),
+  updateBillingPolicy: (
+    monthlyBudget: string,
+    warningPercent: number,
+    approvalThreshold: string,
+  ) => request<BillingSummary["policy"]>("/api/billing/policy", {
+    method: "PUT",
+    body: JSON.stringify({
+      monthly_budget: monthlyBudget,
+      warning_percent: warningPercent,
+      approval_threshold: approvalThreshold,
+      currency: "USD",
+    }),
+  }),
+  impactSummary: (week?: string) =>
+    request<ImpactSummary>(`/api/billing/impact${week ? `?week=${encodeURIComponent(week)}` : ""}`),
   clientBillingSummaries: (month?: string) =>
     request<BillingSummary[]>(`/api/admin/billing/clients${month ? `?month=${encodeURIComponent(month)}` : ""}`),
   recordManualPayment: (

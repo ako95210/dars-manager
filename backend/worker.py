@@ -23,6 +23,7 @@ from .app.costs import reconcile_job_estimates, record_usage, seed_default_rates
 from .app.database import SessionLocal, init_database
 from .app.job_state import DatabaseJobStateStore
 from .app.jobs import Job
+from .app.impact import record_impact
 from .app.media_lifecycle import meter_media
 from .app.models import Artifact, Asset, BrandTemplateFile, utc_now
 from .app.pipeline import PipelineResult, render_static_video, run_pipeline
@@ -168,6 +169,29 @@ class Worker:
                 },
             )
             reconcile_job_estimates(db, job.id, "transcription")
+            db.commit()
+
+    def _record_impact_event(
+        self,
+        job: Job,
+        kind: str,
+        *,
+        duration_seconds: float,
+        storage_bytes: int,
+        details: dict | None = None,
+    ) -> None:
+        with SessionLocal() as db:
+            record_impact(
+                db,
+                user_id=job.user_id,
+                project_id=job.project_id,
+                job_id=job.id,
+                kind=kind,
+                duration_seconds=duration_seconds,
+                storage_bytes=storage_bytes,
+                idempotency_key=f"impact:{kind}:{job.id}",
+                details=details,
+            )
             db.commit()
 
     def _process_audio_selection(
@@ -422,10 +446,22 @@ class Worker:
                     db.delete(item)
                 db.add_all(rows)
                 db.commit()
+            rendered_duration = sum(end - start for start, end in ranges)
+            self._record_impact_event(
+                job,
+                "video_rendered",
+                duration_seconds=rendered_duration,
+                storage_bytes=sum(path.stat().st_size for path, _, _ in produced.values()),
+                details={
+                    "template_id": template_id,
+                    "template_version": int(job.options.get("template_version", 1)),
+                    "output_format": output_format,
+                },
+            )
             job.artifacts = keys
             job.metrics = {
                 "selected_parts": len(ranges),
-                "duration_seconds": sum(end - start for start, end in ranges),
+                "duration_seconds": rendered_duration,
                 "elapsed_seconds": time.monotonic() - started,
                 "template_id": template_id,
                 "template_version": int(job.options.get("template_version", 1)),
@@ -655,6 +691,14 @@ class Worker:
                 db.add_all(rows)
                 db.commit()
 
+            self._record_impact_event(
+                job,
+                "archive_restored",
+                duration_seconds=duration,
+                storage_bytes=sum(path.stat().st_size for path in extracted.values()),
+                details={"archive_schema": manifest["schema"]},
+            )
+
             job.artifacts = keys
             job.metrics = {
                 "segments": len(payload["segments"]),
@@ -791,6 +835,20 @@ class Worker:
             self._wait_if_paused(job)
             self._store_artifacts(job, result)
             self._wait_if_paused(job)
+            result_values = asdict(result)
+            self._record_impact_event(
+                job,
+                "course_completed",
+                duration_seconds=result.duration_seconds,
+                storage_bytes=sum(
+                    Path(result_values[path_field]).stat().st_size
+                    for path_field, _, _ in ARTIFACTS.values()
+                ),
+                details={
+                    "segments": result.segment_count,
+                    "parts": result.part_count,
+                },
+            )
             job.state = "completed"
             job.stage = "done"
             job.message = "Pipeline completed"

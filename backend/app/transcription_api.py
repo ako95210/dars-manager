@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from .auth import require_user
 from .config import settings
-from .costs import money_string, quote_usage
+from .costs import cost_control, money_string, quote_usage
 from .database import get_db
 from .models import User
 
@@ -23,7 +23,7 @@ class QuoteRequest(BaseModel):
 @router.post("/quote")
 def quote_transcription(
     payload: QuoteRequest,
-    _user: User = Depends(require_user),
+    user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> dict:
     quantity = math.ceil(payload.duration_seconds)
@@ -35,6 +35,11 @@ def quote_transcription(
         quantity=quantity,
         unit="audio_second",
     )
+    control = cost_control(
+        db,
+        user_id=user.id,
+        proposed_amount_nanos=quote.amount_nanos,
+    )
     return {
         "provider": quote.provider,
         "model": quote.model,
@@ -43,4 +48,10 @@ def quote_transcription(
         "currency": quote.currency,
         "amount": money_string(quote.amount_nanos),
         "unit_amount": money_string(quote.unit_amount_nanos),
+        "requires_confirmation": control.requires_confirmation,
+        "confirmation_reasons": list(control.confirmation_reasons),
+        "monthly_committed": money_string(control.committed_nanos),
+        "monthly_projected": money_string(control.projected_nanos),
+        "monthly_budget": money_string(control.monthly_budget_nanos),
+        "budget_state": control.state,
     }

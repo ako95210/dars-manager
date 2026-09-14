@@ -284,3 +284,43 @@ class BillingStatement(Base):
     status: Mapped[str] = mapped_column(String(30), default="draft", index=True)
     issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class BillingPolicy(Base):
+    __tablename__ = "billing_policies"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    currency: Mapped[str] = mapped_column(String(3), default="USD")
+    monthly_budget_nanos: Mapped[int] = mapped_column(BigInteger, default=0)
+    warning_percent: Mapped[int] = mapped_column(Integer, default=80)
+    approval_threshold_nanos: Mapped[int] = mapped_column(BigInteger, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class ImpactEvent(Base):
+    __tablename__ = "impact_events"
+    __table_args__ = (
+        Index("ix_impact_events_user_occurred", "user_id", "occurred_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    project_id: Mapped[str | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    project_title: Mapped[str] = mapped_column(String(180), default="")
+    job_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(50), index=True)
+    channel: Mapped[str] = mapped_column(String(80), default="")
+    duration_milliseconds: Mapped[int] = mapped_column(BigInteger, default=0)
+    storage_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, index=True
+    )

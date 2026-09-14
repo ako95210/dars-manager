@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, BillingSummary, Job, JobAnalysis, Project, TranscriptionQuote, User } from "./api";
+import { api, BillingSummary, ImpactSummary, Job, JobAnalysis, Project, TranscriptionQuote, User } from "./api";
 import { TemplateLibrary } from "./TemplateLibrary";
 import type { BrandTemplate } from "./api";
 
@@ -119,6 +119,12 @@ function formatDuration(seconds?: number) {
   const rounded = Math.round(seconds);
   const minutes = Math.floor(rounded / 60);
   return `${minutes}:${String(rounded % 60).padStart(2, "0")}`;
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 1024 ? 1 : 0)} Ko`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} Mo`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} Go`;
 }
 
 function formatEditorTime(seconds: number) {
@@ -709,6 +715,24 @@ function BillingDetails({ summary }: { summary: BillingSummary }) {
     <>
       <section className="billing-section">
         <div className="section-heading">
+          <div><span className="eyebrow">Ventilation</span><h2>Coûts par projet</h2></div>
+          <span>{summary.projects.length} projet{summary.projects.length > 1 ? "s" : ""}</span>
+        </div>
+        {summary.projects.length === 0 ? (
+          <div className="empty-state compact-empty"><span className="empty-icon">◎</span><h3>Aucun coût attribué</h3><p>Les dépenses seront regroupées ici par projet.</p></div>
+        ) : (
+          <div className="project-cost-grid">
+            {summary.projects.map((project) => (
+              <article key={project.project_id || project.project_title}>
+                <div><strong>{project.project_title}</strong><small>{project.operations} opération{project.operations > 1 ? "s" : ""}</small></div>
+                <div><strong>{formatCurrency(project.total_cost, summary.currency)}</strong><small>{formatCurrency(project.confirmed_cost, summary.currency)} confirmé · {formatCurrency(project.estimated_cost, summary.currency)} estimé</small></div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+      <section className="billing-section">
+        <div className="section-heading">
           <div><span className="eyebrow">Consommation</span><h2>Détail des opérations</h2></div>
           <span>{summary.usage.length} écriture{summary.usage.length > 1 ? "s" : ""}</span>
         </div>
@@ -750,12 +774,45 @@ function BillingOverview() {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [summary, setSummary] = useState<BillingSummary | null>(null);
   const [error, setError] = useState("");
+  const [monthlyBudget, setMonthlyBudget] = useState("0");
+  const [warningPercent, setWarningPercent] = useState(80);
+  const [approvalThreshold, setApprovalThreshold] = useState("0");
+  const [savingPolicy, setSavingPolicy] = useState(false);
+  const [notice, setNotice] = useState("");
 
   useEffect(() => {
     setSummary(null);
     setError("");
-    api.billingSummary(month).then(setSummary).catch((reason) => setError(reason instanceof Error ? reason.message : "Chargement impossible."));
+    setNotice("");
+    api.billingSummary(month)
+      .then((value) => {
+        setSummary(value);
+        setMonthlyBudget(value.policy.monthly_budget);
+        setWarningPercent(value.policy.warning_percent);
+        setApprovalThreshold(value.policy.approval_threshold);
+      })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Chargement impossible."));
   }, [month]);
+
+  async function savePolicy(event: FormEvent) {
+    event.preventDefault();
+    setSavingPolicy(true);
+    setError("");
+    setNotice("");
+    try {
+      await api.updateBillingPolicy(monthlyBudget || "0", warningPercent, approvalThreshold || "0");
+      const updated = await api.billingSummary(month);
+      setSummary(updated);
+      setMonthlyBudget(updated.policy.monthly_budget);
+      setWarningPercent(updated.policy.warning_percent);
+      setApprovalThreshold(updated.policy.approval_threshold);
+      setNotice("Règles financières enregistrées.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Enregistrement impossible.");
+    } finally {
+      setSavingPolicy(false);
+    }
+  }
 
   return (
     <section className="billing-overview">
@@ -764,7 +821,24 @@ function BillingOverview() {
         <label className="month-picker">Période<input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label>
       </header>
       {error && <p className="form-error notice">{error}</p>}
-      {!summary ? <div className="empty-state"><span className="loader" /><p>Calcul du relevé…</p></div> : <><CostCards summary={summary} /><BillingDetails summary={summary} /></>}
+      {notice && <p className="editor-feedback success">{notice}</p>}
+      {!summary ? <div className="empty-state"><span className="loader" /><p>Calcul du relevé…</p></div> : <>
+        <CostCards summary={summary} />
+        <section className={`budget-panel ${summary.budget.state}`}>
+          <div className="budget-overview">
+            <div><span className="eyebrow">Budget mensuel</span><h2>{summary.policy.enabled ? `${formatCurrency(summary.budget.committed, summary.currency)} sur ${formatCurrency(summary.policy.monthly_budget, summary.currency)}` : "Aucun budget défini"}</h2><p>{summary.policy.enabled ? `${formatCurrency(summary.budget.remaining, summary.currency)} encore disponible · alerte à ${summary.policy.warning_percent}%` : "Définissez un montant pour suivre la consommation et recevoir un avertissement."}</p></div>
+            {summary.policy.enabled && <strong>{Math.round(summary.budget.utilization_percent)}%</strong>}
+          </div>
+          {summary.policy.enabled && <div className="budget-track"><span style={{ width: `${Math.min(100, summary.budget.utilization_percent)}%` }} /></div>}
+          <form className="budget-form" onSubmit={savePolicy}>
+            <label>Budget mensuel USD<input min="0" step="0.01" type="number" value={monthlyBudget} onChange={(event) => setMonthlyBudget(event.target.value)} /></label>
+            <label>Alerte à %<input min="1" max="100" type="number" value={warningPercent} onChange={(event) => setWarningPercent(Number(event.target.value))} /></label>
+            <label>Confirmation dès USD<input min="0" step="0.01" type="number" value={approvalThreshold} onChange={(event) => setApprovalThreshold(event.target.value)} /></label>
+            <button className="button primary compact" disabled={savingPolicy} type="submit">{savingPolicy ? "Enregistrement…" : "Enregistrer les seuils"}</button>
+          </form>
+        </section>
+        <BillingDetails summary={summary} />
+      </>}
     </section>
   );
 }
@@ -859,11 +933,13 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
   const [uploadStage, setUploadStage] = useState<"reserve" | "upload" | "validate" | "start" | null>(null);
   const [actionPending, setActionPending] = useState(false);
   const [error, setError] = useState("");
+  const [costConfirmed, setCostConfirmed] = useState(false);
   const fileIsArchive = Boolean(file?.name.toLowerCase().endsWith(".dars"));
 
   useEffect(() => {
     let active = true;
     setQuote(null);
+    setCostConfirmed(false);
     if (!file) return () => { active = false; };
     if (file.name.toLowerCase().endsWith(".dars")) {
       setQuoteLoading(false);
@@ -916,7 +992,14 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
     try {
       setJob(fileIsArchive
         ? await api.importArchive(project.id, file, setUploadStage)
-        : await api.createJob(project.id, file, "fr", quote!.duration_seconds, setUploadStage));
+        : await api.createJob(
+          project.id,
+          file,
+          "fr",
+          quote!.duration_seconds,
+          costConfirmed,
+          setUploadStage,
+        ));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Import impossible.");
     } finally {
@@ -1001,12 +1084,21 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
                 <>
                   <strong>≈ {Number(quote.amount).toFixed(4)} {quote.currency}</strong>
                   <small>{formatDuration(quote.duration_seconds)} · {quote.model} · coût réel rapproché après traitement</small>
+                  {quote.budget_state !== "disabled" && (
+                    <small>Projection mensuelle : {formatCurrency(quote.monthly_projected, quote.currency)} / {formatCurrency(quote.monthly_budget, quote.currency)}</small>
+                  )}
                 </>
               ) : (
                 <strong>Sélectionnez un audio valide</strong>
               )}
+              {quote?.requires_confirmation && !fileIsArchive && (
+                <label className="cost-confirmation">
+                  <input checked={costConfirmed} onChange={(event) => setCostConfirmed(event.target.checked)} type="checkbox" />
+                  <span>Je confirme cette dépense{quote.confirmation_reasons.includes("monthly_budget") ? " malgré le dépassement du budget mensuel" : " au-dessus du seuil défini"}.</span>
+                </label>
+              )}
             </div>
-            <button className="button accent" disabled={!file || (!fileIsArchive && !quote) || submitting || quoteLoading} type="submit">
+            <button className="button accent" disabled={!file || (!fileIsArchive && (!quote || (quote.requires_confirmation && !costConfirmed))) || submitting || quoteLoading} type="submit">
               {submitting ? ({
                 reserve: "Préparation…",
                 upload: "Envoi temporaire…",
@@ -1084,6 +1176,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [view, setView] = useState<"dashboard" | "jobs" | "billing" | "admin-billing">("dashboard");
+  const [impact, setImpact] = useState<ImpactSummary | null>(null);
 
   useEffect(() => {
     api.projects()
@@ -1091,6 +1184,11 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
       .catch((reason) => setError(reason.message))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (selectedProject || view !== "dashboard") return;
+    api.impactSummary().then(setImpact).catch(() => setImpact(null));
+  }, [selectedProject, view]);
 
   useEffect(() => {
     if (loading) return;
@@ -1197,6 +1295,18 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
           </div>
           <span className="status-pill"><i /> Tous les services sont opérationnels</span>
         </header>
+
+        {impact && (
+          <section className="impact-strip">
+            <header><div><span className="eyebrow">Impact de la semaine</span><strong>Du {new Intl.DateTimeFormat("fr", { day: "numeric", month: "short" }).format(new Date(`${impact.week_start}T00:00:00`))} au {new Intl.DateTimeFormat("fr", { day: "numeric", month: "short" }).format(new Date(`${impact.week_end}T00:00:00`))}</strong></div><small>Données privées · prêtes pour les futurs canaux publics</small></header>
+            <div className="impact-cards">
+              <article><span>Cours terminés</span><strong>{impact.courses_completed}</strong><small>{impact.courses_published} publié · {impact.videos_rendered} vidéo</small></article>
+              <article><span>Heures produites</span><strong>{(impact.completed_duration_seconds / 3600).toFixed(1)} h</strong><small>{formatDuration(impact.completed_duration_seconds)} de cours</small></article>
+              <article><span>Stockage cloud</span><strong>{formatBytes(impact.current_storage_bytes)}</strong><small>{formatBytes(impact.generated_storage_bytes)} générés cette semaine</small></article>
+              <article><span>Coût de la semaine</span><strong>{formatCurrency(impact.cost, impact.currency)}</strong><small>confirmé + encore estimé</small></article>
+            </div>
+          </section>
+        )}
 
         <section className="quick-start">
           <div>

@@ -8,7 +8,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .models import PriceRate, Project, UsageEvent
+from .models import BillingPolicy, PriceRate, Project, UsageEvent
 from .config import settings
 
 
@@ -28,6 +28,21 @@ class CostQuote:
     amount_nanos: int
 
 
+@dataclass(frozen=True)
+class CostControl:
+    currency: str
+    monthly_budget_nanos: int
+    warning_percent: int
+    approval_threshold_nanos: int
+    committed_nanos: int
+    projected_nanos: int
+    remaining_nanos: int
+    utilization_percent: float
+    state: str
+    requires_confirmation: bool
+    confirmation_reasons: tuple[str, ...]
+
+
 def money_decimal(amount_nanos: int) -> Decimal:
     return (Decimal(amount_nanos) / NANOS_PER_CURRENCY_UNIT).quantize(
         Decimal("0.000001"), rounding=ROUND_HALF_UP
@@ -36,6 +51,66 @@ def money_decimal(amount_nanos: int) -> Decimal:
 
 def money_string(amount_nanos: int) -> str:
     return format(money_decimal(amount_nanos), "f")
+
+
+def cost_control(
+    db: Session,
+    *,
+    user_id: str,
+    proposed_amount_nanos: int = 0,
+    at: datetime | None = None,
+    lock_policy: bool = False,
+) -> CostControl:
+    moment = at or datetime.now(timezone.utc)
+    start_at = moment.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if start_at.month == 12:
+        end_at = start_at.replace(year=start_at.year + 1, month=1)
+    else:
+        end_at = start_at.replace(month=start_at.month + 1)
+    statement = select(BillingPolicy).where(BillingPolicy.user_id == user_id)
+    if lock_policy:
+        statement = statement.with_for_update()
+    policy = db.scalar(statement)
+    events = db.scalars(
+        select(UsageEvent).where(
+            UsageEvent.user_id == user_id,
+            UsageEvent.occurred_at >= start_at,
+            UsageEvent.occurred_at < end_at,
+            UsageEvent.status.in_({"confirmed", "estimated"}),
+        )
+    ).all()
+    committed = sum(event.amount_nanos for event in events)
+    projected = committed + max(0, proposed_amount_nanos)
+    budget = int(policy.monthly_budget_nanos) if policy else 0
+    warning_percent = int(policy.warning_percent) if policy else 80
+    threshold = int(policy.approval_threshold_nanos) if policy else 0
+    utilization = (projected * 100 / budget) if budget > 0 else 0.0
+    if budget <= 0:
+        state = "disabled"
+    elif projected > budget:
+        state = "exceeded"
+    elif utilization >= warning_percent:
+        state = "warning"
+    else:
+        state = "ok"
+    reasons: list[str] = []
+    if proposed_amount_nanos > 0 and threshold > 0 and proposed_amount_nanos >= threshold:
+        reasons.append("approval_threshold")
+    if proposed_amount_nanos > 0 and budget > 0 and projected > budget:
+        reasons.append("monthly_budget")
+    return CostControl(
+        currency=policy.currency if policy else "USD",
+        monthly_budget_nanos=budget,
+        warning_percent=warning_percent,
+        approval_threshold_nanos=threshold,
+        committed_nanos=committed,
+        projected_nanos=projected,
+        remaining_nanos=max(0, budget - projected) if budget > 0 else 0,
+        utilization_percent=round(utilization, 2),
+        state=state,
+        requires_confirmation=bool(reasons),
+        confirmation_reasons=tuple(reasons),
+    )
 
 
 def seed_default_rates(db: Session) -> None:

@@ -6,6 +6,7 @@ import shutil
 import unittest
 import uuid
 import wave
+from dataclasses import replace
 from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
@@ -26,10 +27,11 @@ from sqlalchemy import select, text
 from PIL import Image
 
 from backend.app.costs import record_usage
+from backend.app.config import settings as app_settings
 from backend.app.database import CURRENT_REVISION, SessionLocal, engine, init_database
 from backend.app.main import app, manager
 from backend.app.jobs import JobManager
-from backend.app.models import Artifact, Asset, UsageEvent, User, utc_now
+from backend.app.models import Artifact, Asset, BillingPolicy, UsageEvent, User, utc_now
 from backend.app.pipeline import (
     PipelineResult,
     generate_cover,
@@ -111,6 +113,102 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(quote.json()["model"], "whisper-1")
             self.assertEqual(quote.json()["billed_seconds"], 91)
             self.assertEqual(quote.json()["amount"], "0.009100")
+
+    def test_budget_policy_requires_confirmation_and_groups_project_costs(self) -> None:
+        content = b"budget-audio-placeholder"
+        with TestClient(app) as client:
+            self.login(client, "pilot-b@example.com", "mot-de-passe-b")
+            project = client.post("/api/projects", json={"title": "Cours sous budget"})
+            self.assertEqual(project.status_code, 201, project.text)
+            project_id = project.json()["id"]
+            policy = client.put(
+                "/api/billing/policy",
+                json={
+                    "monthly_budget": "0.05",
+                    "warning_percent": 80,
+                    "approval_threshold": "0.005",
+                    "currency": "USD",
+                },
+            )
+            self.assertEqual(policy.status_code, 200, policy.text)
+            self.assertEqual(policy.json()["monthly_budget"], "0.050000")
+
+            quote = client.post(
+                "/api/transcription/quote", json={"duration_seconds": 600}
+            )
+            self.assertEqual(quote.status_code, 200, quote.text)
+            self.assertTrue(quote.json()["requires_confirmation"])
+            self.assertEqual(
+                set(quote.json()["confirmation_reasons"]),
+                {"approval_threshold", "monthly_budget"},
+            )
+            self.assertEqual(quote.json()["budget_state"], "exceeded")
+
+            reservation = client.post(
+                "/api/uploads",
+                json={
+                    "project_id": project_id,
+                    "filename": "budget.wav",
+                    "content_type": "audio/wav",
+                    "size_bytes": len(content),
+                },
+            )
+            self.assertEqual(reservation.status_code, 201, reservation.text)
+            asset_id = reservation.json()["asset"]["id"]
+            self.assertEqual(
+                client.put(reservation.json()["upload"]["url"], content=content).status_code,
+                200,
+            )
+            paid_settings = replace(app_settings, transcription_backend="openai")
+            with (
+                patch("backend.app.uploads.settings", paid_settings),
+                patch("backend.app.uploads.manager.start"),
+            ):
+                refused = client.post(
+                    "/api/jobs/from-asset",
+                    json={"asset_id": asset_id, "estimated_duration_seconds": 600},
+                )
+                self.assertEqual(refused.status_code, 409, refused.text)
+                launched = client.post(
+                    "/api/jobs/from-asset",
+                    json={
+                        "asset_id": asset_id,
+                        "estimated_duration_seconds": 600,
+                        "cost_confirmed": True,
+                    },
+                )
+            self.assertEqual(launched.status_code, 202, launched.text)
+            job_id = launched.json()["id"]
+
+            summary = client.get("/api/billing/summary")
+            self.assertEqual(summary.status_code, 200, summary.text)
+            self.assertEqual(summary.json()["budget"]["state"], "exceeded")
+            project_cost = next(
+                item for item in summary.json()["projects"] if item["project_id"] == project_id
+            )
+            self.assertEqual(project_cost["estimated_cost"], "0.060000")
+            self.assertEqual(project_cost["operations"], 1)
+
+            with SessionLocal() as db:
+                owner = db.scalar(select(User).where(User.email == "pilot-b@example.com"))
+                self.assertIsNotNone(owner)
+                policy_row = db.scalar(
+                    select(BillingPolicy).where(BillingPolicy.user_id == owner.id)
+                )
+                self.assertIsNotNone(policy_row)
+                db.delete(policy_row)
+                budget_events = db.scalars(
+                    select(UsageEvent).where(UsageEvent.job_id == job_id)
+                ).all()
+                for event in budget_events:
+                    db.delete(event)
+                db.commit()
+                user_id = owner.id
+            created_job = manager.get(user_id, job_id)
+            self.assertIsNotNone(created_job)
+            manager.delete(created_job)
+            self.assertEqual(client.delete(f"/api/uploads/{asset_id}").status_code, 204)
+            self.assertEqual(client.delete(f"/api/projects/{project_id}").status_code, 204)
 
     def test_projects_are_isolated_by_user(self) -> None:
         with TestClient(app) as client_a:
@@ -684,6 +782,14 @@ class ApiTests(unittest.TestCase):
             restored_analysis = client.get(f"/api/jobs/{restored_job_id}/analysis")
             self.assertEqual(restored_analysis.status_code, 200, restored_analysis.text)
             self.assertEqual(restored_analysis.json()["parts"][0]["title"], "Titre corrigé")
+            impact = client.get("/api/billing/impact")
+            self.assertEqual(impact.status_code, 200, impact.text)
+            self.assertEqual(impact.json()["courses_completed"], 1)
+            self.assertEqual(impact.json()["videos_rendered"], 1)
+            self.assertEqual(impact.json()["archives_restored"], 1)
+            self.assertEqual(impact.json()["courses_published"], 0)
+            self.assertEqual(impact.json()["completed_duration_seconds"], 30.0)
+            self.assertGreater(impact.json()["generated_storage_bytes"], 0)
             with SessionLocal() as db:
                 saved_analysis = db.scalar(
                     select(Artifact).where(
@@ -713,6 +819,10 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(client.delete(f"/api/jobs/{restored_job_id}/source").status_code, 200)
             self.assertEqual(client.delete(f"/api/jobs/{restored_job_id}").status_code, 204)
             self.assertEqual(client.delete(f"/api/projects/{restored_project_id}").status_code, 204)
+            retained_impact = client.get("/api/billing/impact")
+            self.assertEqual(retained_impact.status_code, 200, retained_impact.text)
+            self.assertEqual(retained_impact.json()["courses_completed"], 1)
+            self.assertEqual(retained_impact.json()["videos_rendered"], 1)
             self.assertEqual(client.delete(f"/api/brand/templates/{template_id}").status_code, 204)
 
     def test_paid_transcription_checkpoint_is_reused(self) -> None:
