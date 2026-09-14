@@ -4,7 +4,20 @@ import uuid
 from datetime import date, datetime, timezone
 from typing import Any
 
-from sqlalchemy import BigInteger, Date, JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -350,4 +363,57 @@ class ProviderInvoice(Base):
     status: Mapped[str] = mapped_column(String(30), index=True)
     recorded_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class CommunityContribution(Base):
+    __tablename__ = "community_contributions"
+    __table_args__ = (
+        CheckConstraint("amount_nanos > 0", name="ck_community_contributions_amount"),
+        Index("ix_community_contributions_received", "received_at", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    contributor_name: Mapped[str] = mapped_column(String(180), default="")
+    is_anonymous: Mapped[bool] = mapped_column(Boolean, default=False)
+    amount_nanos: Mapped[int] = mapped_column(BigInteger)
+    currency: Mapped[str] = mapped_column(String(3), default="USD")
+    status: Mapped[str] = mapped_column(String(30), default="received", index=True)
+    method: Mapped[str] = mapped_column(String(50), default="manual")
+    reference: Mapped[str] = mapped_column(String(180), default="")
+    campaign: Mapped[str] = mapped_column(String(180), default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    recorded_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ContributionAllocation(Base):
+    __tablename__ = "contribution_allocations"
+    __table_args__ = (
+        CheckConstraint("amount_nanos > 0", name="ck_contribution_allocations_amount"),
+        Index(
+            "ix_contribution_allocations_project_period",
+            "project_id",
+            "period_start",
+            "period_end",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    contribution_id: Mapped[str] = mapped_column(
+        ForeignKey("community_contributions.id", ondelete="RESTRICT"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    project_id: Mapped[str | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    project_title: Mapped[str] = mapped_column(String(180))
+    period_start: Mapped[date] = mapped_column(Date, index=True)
+    period_end: Mapped[date] = mapped_column(Date)
+    category: Mapped[str] = mapped_column(String(80), default="cloud_cost")
+    amount_nanos: Mapped[int] = mapped_column(BigInteger)
+    currency: Mapped[str] = mapped_column(String(3), default="USD")
+    note: Mapped[str] = mapped_column(Text, default="")
+    recorded_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

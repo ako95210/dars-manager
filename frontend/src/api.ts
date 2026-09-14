@@ -178,6 +178,7 @@ export type BillingSummary = {
   confirmed_cost: string;
   estimated_cost: string;
   paid: string;
+  community_funded: string;
   balance: string;
   policy: {
     currency: string;
@@ -198,10 +199,13 @@ export type BillingSummary = {
     confirmed_cost: string;
     estimated_cost: string;
     total_cost: string;
+    community_funded: string;
+    amount_due: string;
     operations: number;
   }[];
   usage: UsageEvent[];
   payments: Payment[];
+  community_allocations: CommunityAllocation[];
 };
 
 export type ImpactSummary = {
@@ -236,6 +240,39 @@ export type ProviderInvoice = {
   include_estimated: boolean;
   status: "matched" | "variance";
   note: string;
+  created_at: string;
+};
+
+export type CommunityContribution = {
+  id: string;
+  contributor_name: string;
+  contributor_display: string;
+  is_anonymous: boolean;
+  amount: string;
+  allocated: string;
+  remaining: string;
+  currency: string;
+  status: "received";
+  method: string;
+  reference: string;
+  campaign: string;
+  note: string;
+  received_at: string;
+  created_at: string;
+};
+
+export type CommunityAllocation = {
+  id: string;
+  contribution_id: string;
+  user_id?: string;
+  project_id: string | null;
+  project_title: string;
+  period: string;
+  category: string;
+  amount: string;
+  currency: string;
+  note?: string;
+  contributor_display?: string;
   created_at: string;
 };
 
@@ -524,6 +561,33 @@ export const api = {
     include_estimated: boolean;
     note: string;
   }) => request<ProviderInvoice>("/api/admin/billing/provider-invoices", {
+    method: "POST",
+    body: JSON.stringify({ ...values, currency: "USD" }),
+  }),
+  communityContributions: () =>
+    request<CommunityContribution[]>("/api/admin/billing/community-contributions"),
+  createCommunityContribution: (values: {
+    contributor_name: string;
+    is_anonymous: boolean;
+    amount: string;
+    method: string;
+    reference: string;
+    campaign: string;
+    note: string;
+  }) => request<CommunityContribution>("/api/admin/billing/community-contributions", {
+    method: "POST",
+    body: JSON.stringify({ ...values, currency: "USD" }),
+  }),
+  communityAllocations: (month?: string) =>
+    request<CommunityAllocation[]>(`/api/admin/billing/community-allocations${month ? `?month=${encodeURIComponent(month)}` : ""}`),
+  createCommunityAllocation: (values: {
+    contribution_id: string;
+    project_id: string;
+    period: string;
+    amount: string;
+    category: string;
+    note: string;
+  }) => request<CommunityAllocation>("/api/admin/billing/community-allocations", {
     method: "POST",
     body: JSON.stringify({ ...values, currency: "USD" }),
   }),

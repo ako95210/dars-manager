@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, BillingSummary, ImpactSummary, Job, JobAnalysis, Project, ProviderInvoice, TranscriptionQuote, User } from "./api";
+import { api, BillingSummary, CommunityAllocation, CommunityContribution, ImpactSummary, Job, JobAnalysis, Project, ProviderInvoice, TranscriptionQuote, User } from "./api";
 import { TemplateLibrary } from "./TemplateLibrary";
 import type { BrandTemplate } from "./api";
 
@@ -695,6 +695,7 @@ function CostCards({ summary }: { summary: BillingSummary }) {
     ["Coût confirmé", summary.confirmed_cost],
     ["Encore estimé", summary.estimated_cost],
     ["Paiements enregistrés", summary.paid],
+    ["Financé par la communauté", summary.community_funded],
     ["Solde", summary.balance],
   ];
   return (
@@ -725,7 +726,7 @@ function BillingDetails({ summary }: { summary: BillingSummary }) {
             {summary.projects.map((project) => (
               <article key={project.project_id || project.project_title}>
                 <div><strong>{project.project_title}</strong><small>{project.operations} opération{project.operations > 1 ? "s" : ""}</small></div>
-                <div><strong>{formatCurrency(project.total_cost, summary.currency)}</strong><small>{formatCurrency(project.confirmed_cost, summary.currency)} confirmé · {formatCurrency(project.estimated_cost, summary.currency)} estimé</small></div>
+                <div><strong>{formatCurrency(project.amount_due, summary.currency)} dû</strong><small>{formatCurrency(project.confirmed_cost, summary.currency)} confirmé · {formatCurrency(project.community_funded, summary.currency)} financé par la communauté · {formatCurrency(project.estimated_cost, summary.currency)} estimé</small></div>
               </article>
             ))}
           </div>
@@ -762,6 +763,17 @@ function BillingDetails({ summary }: { summary: BillingSummary }) {
             <article key={payment.id}>
               <div><strong>{payment.reference || "Paiement manuel"}</strong><small>{new Intl.DateTimeFormat("fr", { dateStyle: "long" }).format(new Date(payment.paid_at))}</small></div>
               <strong>{formatCurrency(payment.amount, payment.currency)}</strong>
+            </article>
+          ))}</div>
+        </section>
+      )}
+      {summary.community_allocations.length > 0 && (
+        <section className="billing-section">
+          <div className="section-heading"><div><span className="eyebrow">Communauté</span><h2>Financements attribués</h2></div></div>
+          <div className="payment-list">{summary.community_allocations.map((allocation) => (
+            <article key={allocation.id}>
+              <div><strong>{allocation.project_title}</strong><small>{allocation.category} · {new Intl.DateTimeFormat("fr", { dateStyle: "long" }).format(new Date(allocation.created_at))}</small></div>
+              <strong>{formatCurrency(allocation.amount, allocation.currency)}</strong>
             </article>
           ))}</div>
         </section>
@@ -865,18 +877,50 @@ function AdminBillingOverview() {
   const [includeEstimated, setIncludeEstimated] = useState(false);
   const [invoiceNote, setInvoiceNote] = useState("");
   const [savingInvoice, setSavingInvoice] = useState(false);
+  const [contributions, setContributions] = useState<CommunityContribution[]>([]);
+  const [allocations, setAllocations] = useState<CommunityAllocation[]>([]);
+  const [contributorName, setContributorName] = useState("");
+  const [contributionAnonymous, setContributionAnonymous] = useState(false);
+  const [contributionAmount, setContributionAmount] = useState("");
+  const [contributionReference, setContributionReference] = useState("");
+  const [contributionCampaign, setContributionCampaign] = useState("");
+  const [contributionNote, setContributionNote] = useState("");
+  const [savingContribution, setSavingContribution] = useState(false);
+  const [allocationContribution, setAllocationContribution] = useState("");
+  const [allocationProject, setAllocationProject] = useState("");
+  const [allocationAmount, setAllocationAmount] = useState("");
+  const [allocationCategory, setAllocationCategory] = useState("cloud_cost");
+  const [allocationNote, setAllocationNote] = useState("");
+  const [savingAllocation, setSavingAllocation] = useState(false);
 
   async function refresh() {
     setLoading(true);
     setError("");
     try {
-      const [items, invoiceItems] = await Promise.all([
+      const [items, invoiceItems, contributionItems, allocationItems] = await Promise.all([
         api.clientBillingSummaries(month),
         api.providerInvoices(month),
+        api.communityContributions(),
+        api.communityAllocations(month),
       ]);
       setSummaries(items);
       setInvoices(invoiceItems);
+      setContributions(contributionItems);
+      setAllocations(allocationItems);
       setSelectedUser((current) => current || items[0]?.user.id || "");
+      setAllocationContribution((current) => (
+        contributionItems.some((item) => item.id === current && Number(item.remaining) > 0)
+          ? current
+          : contributionItems.find((item) => Number(item.remaining) > 0)?.id || ""
+      ));
+      const projectIds = new Set(items.flatMap((item) => item.projects
+        .filter((project) => project.project_id && Number(project.confirmed_cost) > Number(project.community_funded))
+        .map((project) => project.project_id as string)));
+      setAllocationProject((current) => (
+        current && projectIds.has(current)
+          ? current
+          : Array.from(projectIds)[0] || ""
+      ));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Chargement impossible.");
     } finally {
@@ -931,7 +975,67 @@ function AdminBillingOverview() {
     }
   }
 
+  async function recordContribution(event: FormEvent) {
+    event.preventDefault();
+    if (!contributionAmount) return;
+    setSavingContribution(true);
+    setError("");
+    try {
+      await api.createCommunityContribution({
+        contributor_name: contributorName,
+        is_anonymous: contributionAnonymous,
+        amount: contributionAmount,
+        method: "manual",
+        reference: contributionReference,
+        campaign: contributionCampaign,
+        note: contributionNote,
+      });
+      setContributorName("");
+      setContributionAmount("");
+      setContributionReference("");
+      setContributionCampaign("");
+      setContributionNote("");
+      setContributionAnonymous(false);
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Enregistrement impossible.");
+    } finally {
+      setSavingContribution(false);
+    }
+  }
+
+  async function recordAllocation(event: FormEvent) {
+    event.preventDefault();
+    if (!allocationContribution || !allocationProject || !allocationAmount) return;
+    setSavingAllocation(true);
+    setError("");
+    try {
+      await api.createCommunityAllocation({
+        contribution_id: allocationContribution,
+        project_id: allocationProject,
+        period: month,
+        amount: allocationAmount,
+        category: allocationCategory,
+        note: allocationNote,
+      });
+      setAllocationAmount("");
+      setAllocationNote("");
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Allocation impossible.");
+    } finally {
+      setSavingAllocation(false);
+    }
+  }
+
   const selected = summaries.find((item) => item.user.id === selectedUser);
+  const allocatableProjects = summaries.flatMap((item) => item.projects
+    .filter((project) => project.project_id && Number(project.confirmed_cost) > Number(project.community_funded))
+    .map((project) => ({
+      id: project.project_id as string,
+      label: `${item.user.display_name} — ${project.project_title}`,
+      remaining: (Number(project.confirmed_cost) - Number(project.community_funded)).toFixed(6),
+    })));
   return (
     <section className="billing-overview">
       <header className="workspace-header">
@@ -989,6 +1093,40 @@ function AdminBillingOverview() {
             ))}</tbody></table>
           </div>
         )}
+      </section>
+      <section className="community-finance">
+        <div className="section-heading"><div><span className="eyebrow">Soutien communautaire</span><h2>Contributions et allocations</h2><p>Les écritures enregistrées restent auditables ; une allocation finance un coût sans le supprimer.</p></div><span>{contributions.length} contribution{contributions.length > 1 ? "s" : ""}</span></div>
+        <div className="community-form-grid">
+          <form className="community-form" onSubmit={recordContribution}>
+            <div><span className="eyebrow">Encaissement manuel</span><h3>Enregistrer une contribution</h3></div>
+            <label>Contributeur<input disabled={contributionAnonymous} maxLength={180} placeholder="Nom facultatif" value={contributorName} onChange={(event) => setContributorName(event.target.value)} /></label>
+            <label>Montant reçu USD<input min="0.000001" step="0.000001" required type="number" value={contributionAmount} onChange={(event) => setContributionAmount(event.target.value)} /></label>
+            <label>Référence<input maxLength={180} placeholder="Reçu, virement…" value={contributionReference} onChange={(event) => setContributionReference(event.target.value)} /></label>
+            <label>Campagne<input maxLength={180} placeholder="Général si vide" value={contributionCampaign} onChange={(event) => setContributionCampaign(event.target.value)} /></label>
+            <label className="invoice-checkbox"><input checked={contributionAnonymous} onChange={(event) => setContributionAnonymous(event.target.checked)} type="checkbox" /><span>Contributeur anonyme</span></label>
+            <label className="community-note">Note<textarea maxLength={4000} rows={2} value={contributionNote} onChange={(event) => setContributionNote(event.target.value)} /></label>
+            <button className="button primary compact" disabled={savingContribution} type="submit">{savingContribution ? "Enregistrement…" : "Enregistrer la contribution"}</button>
+          </form>
+          <form className="community-form" onSubmit={recordAllocation}>
+            <div><span className="eyebrow">Affectation</span><h3>Financer un coût confirmé</h3></div>
+            <label>Contribution<select required value={allocationContribution} onChange={(event) => setAllocationContribution(event.target.value)}><option value="">Sélectionner</option>{contributions.filter((item) => Number(item.remaining) > 0).map((item) => <option key={item.id} value={item.id}>{item.contributor_display} · {formatCurrency(item.remaining, item.currency)} disponible</option>)}</select></label>
+            <label>Projet<select required value={allocationProject} onChange={(event) => setAllocationProject(event.target.value)}><option value="">Sélectionner</option>{allocatableProjects.map((project) => <option key={project.id} value={project.id}>{project.label} · {formatCurrency(project.remaining, "USD")} restant</option>)}</select></label>
+            <label>Montant alloué USD<input min="0.000001" step="0.000001" required type="number" value={allocationAmount} onChange={(event) => setAllocationAmount(event.target.value)} /></label>
+            <label>Catégorie<select value={allocationCategory} onChange={(event) => setAllocationCategory(event.target.value)}><option value="cloud_cost">Coûts cloud</option><option value="transcription">Transcription</option><option value="storage">Stockage</option><option value="publication">Publication</option></select></label>
+            <label className="community-note">Note<textarea maxLength={4000} rows={2} value={allocationNote} onChange={(event) => setAllocationNote(event.target.value)} /></label>
+            <button className="button primary compact" disabled={savingAllocation || !allocationContribution || !allocationProject} type="submit">{savingAllocation ? "Allocation…" : "Allouer la contribution"}</button>
+          </form>
+        </div>
+        <div className="community-ledgers">
+          <div>
+            <h3>Contributions reçues</h3>
+            {contributions.length === 0 ? <p className="muted-line">Aucune contribution enregistrée.</p> : <div className="billing-table-wrap"><table className="billing-table"><thead><tr><th>Contributeur</th><th>Reçu</th><th>Alloué</th><th>Disponible</th></tr></thead><tbody>{contributions.map((item) => <tr key={item.id}><td><strong>{item.contributor_display}</strong><small>{item.campaign || item.reference || "Soutien général"}</small></td><td>{formatCurrency(item.amount, item.currency)}</td><td>{formatCurrency(item.allocated, item.currency)}</td><td><strong>{formatCurrency(item.remaining, item.currency)}</strong></td></tr>)}</tbody></table></div>}
+          </div>
+          <div>
+            <h3>Allocations de {month}</h3>
+            {allocations.length === 0 ? <p className="muted-line">Aucune allocation sur cette période.</p> : <div className="billing-table-wrap"><table className="billing-table"><thead><tr><th>Origine</th><th>Projet</th><th>Catégorie</th><th>Montant</th></tr></thead><tbody>{allocations.map((item) => <tr key={item.id}><td>{item.contributor_display || "Communauté"}</td><td><strong>{item.project_title}</strong></td><td>{item.category}</td><td><strong>{formatCurrency(item.amount, item.currency)}</strong></td></tr>)}</tbody></table></div>}
+          </div>
+        </div>
       </section>
     </section>
   );

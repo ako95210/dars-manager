@@ -25,6 +25,7 @@ def statement_csv(summary: dict[str, Any]) -> bytes:
     writer.writerow(["Coût confirmé", summary["confirmed_cost"]])
     writer.writerow(["Coût estimé", summary["estimated_cost"]])
     writer.writerow(["Paiements", summary["paid"]])
+    writer.writerow(["Financement communautaire", summary["community_funded"]])
     writer.writerow(["Solde", summary["balance"]])
     writer.writerow([])
     writer.writerow([
@@ -60,6 +61,15 @@ def statement_csv(summary: dict[str, Any]) -> bytes:
             _csv_cell(payment["reference"]),
             _csv_cell(payment["note"]),
         ])
+    writer.writerow([])
+    writer.writerow(["Financement communautaire", "Projet", "Catégorie", "Date"])
+    for allocation in summary["community_allocations"]:
+        writer.writerow([
+            allocation["amount"],
+            _csv_cell(allocation["project_title"]),
+            _csv_cell(allocation["category"]),
+            allocation["created_at"].isoformat(),
+        ])
     return ("\ufeff" + output.getvalue()).encode("utf-8")
 
 
@@ -75,6 +85,7 @@ def statement_lines(summary: dict[str, Any]) -> list[str]:
         f"Cout confirme : {summary['confirmed_cost']} {summary['currency']}",
         f"Cout encore estime : {summary['estimated_cost']} {summary['currency']}",
         f"Paiements enregistres : {summary['paid']} {summary['currency']}",
+        f"Financement communautaire : {summary['community_funded']} {summary['currency']}",
         f"Solde : {summary['balance']} {summary['currency']}",
         "",
         "COUTS PAR PROJET",
@@ -84,7 +95,8 @@ def statement_lines(summary: dict[str, Any]) -> list[str]:
     for project in summary["projects"]:
         lines.append(
             f"- {project['project_title']} : {project['total_cost']} {summary['currency']} "
-            f"({project['operations']} operations)"
+            f"({project['operations']} operations, "
+            f"{project['community_funded']} finance par la communaute)"
         )
     lines.extend(["", "DETAIL DES OPERATIONS"])
     if not summary["usage"]:
@@ -104,6 +116,15 @@ def statement_lines(summary: dict[str, Any]) -> list[str]:
         lines.append(
             f"{paid_at} | {payment['amount']} {payment['currency']} | "
             f"{payment['reference'] or payment['method']}"
+        )
+    lines.extend(["", "FINANCEMENT COMMUNAUTAIRE"])
+    if not summary["community_allocations"]:
+        lines.append("Aucune allocation communautaire.")
+    for allocation in summary["community_allocations"]:
+        allocated_at = allocation["created_at"].strftime("%Y-%m-%d")
+        lines.append(
+            f"{allocated_at} | {allocation['project_title']} | "
+            f"{allocation['amount']} {allocation['currency']} | {allocation['category']}"
         )
     lines.extend([
         "",

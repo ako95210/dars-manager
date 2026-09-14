@@ -326,7 +326,7 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .billing-header-actions { display: flex; gap: 10px; align-items: flex-end; }
 .billing-header-actions > div { display: flex; gap: 7px; }
 .billing-header-actions a { margin: 0; padding: 10px 12px; font-size: 10px; text-decoration: none; }
-.cost-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; }
+.cost-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: 13px; }
 .cost-cards article { padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: white; box-shadow: 0 8px 30px rgba(13, 24, 43, .035); }
 .cost-cards span, .cost-cards strong, .cost-cards small { display: block; }
 .cost-cards span { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
@@ -394,6 +394,22 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .invoice-table-wrap { margin-top: 12px; }
 .reconciliation-status { display: inline-block; padding: 5px 8px; border-radius: 999px; color: #176849; background: #e9f9f3; font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .reconciliation-status.variance { color: #a4372e; background: #fef0ef; }
+.community-finance { margin-top: 36px; }
+.community-finance .section-heading p { max-width: 680px; margin: 6px 0 0; color: var(--muted); font-size: 11px; }
+.community-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.community-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: end; padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: white; }
+.community-form > div, .community-form .community-note { grid-column: 1 / -1; }
+.community-form h3, .community-ledgers h3 { margin: 5px 0 0; color: #18263a; font-size: 16px; }
+.community-form label { display: grid; gap: 6px; color: #596579; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.community-form input, .community-form select, .community-form textarea { width: 100%; min-height: 40px; padding: 9px 10px; font-size: 10px; text-transform: none; }
+.community-form textarea { resize: vertical; }
+.community-form .invoice-checkbox { display: flex; flex-direction: row; gap: 8px; align-items: center; align-self: center; }
+.community-form .invoice-checkbox input { width: 16px; }
+.community-form .button { min-height: 40px; margin: 0; font-size: 10px; }
+.community-ledgers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 18px; }
+.community-ledgers > div { min-width: 0; }
+.community-ledgers h3 { margin-bottom: 10px; }
+.muted-line { padding: 20px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); background: #fafbfc; font-size: 11px; }
 
 @media (max-width: 900px) {
   .login-shell { grid-template-columns: 1fr; }
@@ -416,6 +432,7 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .admin-billing-grid { grid-template-columns: 1fr; }
   .invoice-form { grid-template-columns: repeat(2, 1fr); }
   .invoice-note { grid-column: span 2; }
+  .community-form-grid, .community-ledgers { grid-template-columns: 1fr; }
   .budget-form { grid-template-columns: 1fr 1fr; }
   .editor-heading { flex-direction: column; }
   .audio-review { grid-template-columns: 40px 1fr; }
@@ -469,5 +486,7 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .budget-form { grid-template-columns: 1fr; }
   .invoice-form { grid-template-columns: 1fr; }
   .invoice-note { grid-column: 1; }
+  .community-form { grid-template-columns: 1fr; }
+  .community-form > div, .community-form .community-note { grid-column: 1; }
   .project-cost-grid article > div:last-child { text-align: left; }
 }

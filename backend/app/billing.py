@@ -5,7 +5,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -14,7 +14,16 @@ from .billing_exports import statement_csv, statement_pdf
 from .costs import NANOS_PER_CURRENCY_UNIT, cost_control, money_string
 from .database import get_db
 from .impact import weekly_impact
-from .models import BillingPolicy, Payment, ProviderInvoice, UsageEvent, User
+from .models import (
+    BillingPolicy,
+    CommunityContribution,
+    ContributionAllocation,
+    Payment,
+    Project,
+    ProviderInvoice,
+    UsageEvent,
+    User,
+)
 
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
@@ -107,7 +116,18 @@ def summary_response(db: Session, user: User, month: str | None) -> dict:
             .order_by(Payment.paid_at.desc())
         )
     )
-    currencies = {item.currency for item in [*events, *payments]}
+    allocations = list(
+        db.scalars(
+            select(ContributionAllocation)
+            .where(
+                ContributionAllocation.user_id == user.id,
+                ContributionAllocation.period_start == start,
+                ContributionAllocation.period_end == end,
+            )
+            .order_by(ContributionAllocation.created_at.desc())
+        )
+    )
+    currencies = {item.currency for item in [*events, *payments, *allocations]}
     if len(currencies) > 1:
         raise HTTPException(status_code=409, detail="Multiple currencies require reconciliation")
     currency = next(iter(currencies), "USD")
@@ -118,6 +138,7 @@ def summary_response(db: Session, user: User, month: str | None) -> dict:
         event.amount_nanos for event in events if event.status == "estimated"
     )
     paid_nanos = sum(payment.amount_nanos for payment in payments)
+    community_nanos = sum(allocation.amount_nanos for allocation in allocations)
     project_totals: dict[str, dict] = {}
     for event in events:
         if event.status not in {"confirmed", "estimated"}:
@@ -128,10 +149,22 @@ def summary_response(db: Session, user: User, month: str | None) -> dict:
             "project_title": event.project_title or "Infrastructure",
             "confirmed_nanos": 0,
             "estimated_nanos": 0,
+            "community_nanos": 0,
             "operations": 0,
         })
         item[f"{event.status}_nanos"] += event.amount_nanos
         item["operations"] += 1
+    for allocation in allocations:
+        key = allocation.project_id or f"deleted:{allocation.project_title}"
+        item = project_totals.setdefault(key, {
+            "project_id": allocation.project_id,
+            "project_title": allocation.project_title,
+            "confirmed_nanos": 0,
+            "estimated_nanos": 0,
+            "community_nanos": 0,
+            "operations": 0,
+        })
+        item["community_nanos"] += allocation.amount_nanos
     projects = [
         {
             "project_id": item["project_id"],
@@ -139,6 +172,8 @@ def summary_response(db: Session, user: User, month: str | None) -> dict:
             "confirmed_cost": money_string(item["confirmed_nanos"]),
             "estimated_cost": money_string(item["estimated_nanos"]),
             "total_cost": money_string(item["confirmed_nanos"] + item["estimated_nanos"]),
+            "community_funded": money_string(item["community_nanos"]),
+            "amount_due": money_string(item["confirmed_nanos"] - item["community_nanos"]),
             "operations": item["operations"],
         }
         for item in sorted(
@@ -162,7 +197,8 @@ def summary_response(db: Session, user: User, month: str | None) -> dict:
         "confirmed_cost": money_string(confirmed_nanos),
         "estimated_cost": money_string(estimated_nanos),
         "paid": money_string(paid_nanos),
-        "balance": money_string(confirmed_nanos - paid_nanos),
+        "community_funded": money_string(community_nanos),
+        "balance": money_string(confirmed_nanos - paid_nanos - community_nanos),
         "policy": policy_response(policy),
         "budget": {
             "committed": money_string(control.committed_nanos),
@@ -173,6 +209,19 @@ def summary_response(db: Session, user: User, month: str | None) -> dict:
         "projects": projects,
         "usage": [usage_response(event) for event in events],
         "payments": [payment_response(payment) for payment in payments],
+        "community_allocations": [
+            {
+                "id": allocation.id,
+                "project_id": allocation.project_id,
+                "project_title": allocation.project_title,
+                "period": allocation.period_start.strftime("%Y-%m"),
+                "category": allocation.category,
+                "amount": money_string(allocation.amount_nanos),
+                "currency": allocation.currency,
+                "created_at": allocation.created_at,
+            }
+            for allocation in allocations
+        ],
     }
 
 
@@ -319,6 +368,102 @@ class ProviderInvoiceRequest(BaseModel):
         return value.upper()
 
 
+class CommunityContributionRequest(BaseModel):
+    contributor_name: str = Field(default="", max_length=180)
+    is_anonymous: bool = False
+    amount: Decimal = Field(gt=0, max_digits=18, decimal_places=6)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    method: str = Field(default="manual", min_length=1, max_length=50)
+    reference: str = Field(default="", max_length=180)
+    campaign: str = Field(default="", max_length=180)
+    note: str = Field(default="", max_length=4000)
+    received_at: datetime | None = None
+
+    @field_validator(
+        "contributor_name", "method", "reference", "campaign", "note", mode="before"
+    )
+    @classmethod
+    def strip_contribution_text(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("currency")
+    @classmethod
+    def normalize_contribution_currency(cls, value: str) -> str:
+        return value.upper()
+
+
+class ContributionAllocationRequest(BaseModel):
+    contribution_id: str = Field(min_length=32, max_length=32)
+    project_id: str = Field(min_length=32, max_length=32)
+    period: str
+    amount: Decimal = Field(gt=0, max_digits=18, decimal_places=6)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    category: str = Field(default="cloud_cost", min_length=1, max_length=80)
+    note: str = Field(default="", max_length=4000)
+
+    @field_validator("category", "note", mode="before")
+    @classmethod
+    def strip_allocation_text(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("currency")
+    @classmethod
+    def normalize_allocation_currency(cls, value: str) -> str:
+        return value.upper()
+
+
+def contribution_response(
+    contribution: CommunityContribution, allocated_nanos: int
+) -> dict:
+    return {
+        "id": contribution.id,
+        "contributor_name": contribution.contributor_name,
+        "contributor_display": (
+            "Anonyme"
+            if contribution.is_anonymous
+            else contribution.contributor_name or "Communauté"
+        ),
+        "is_anonymous": contribution.is_anonymous,
+        "amount": money_string(contribution.amount_nanos),
+        "allocated": money_string(allocated_nanos),
+        "remaining": money_string(contribution.amount_nanos - allocated_nanos),
+        "currency": contribution.currency,
+        "status": contribution.status,
+        "method": contribution.method,
+        "reference": contribution.reference,
+        "campaign": contribution.campaign,
+        "note": contribution.note,
+        "received_at": contribution.received_at,
+        "created_at": contribution.created_at,
+    }
+
+
+def allocation_response(
+    allocation: ContributionAllocation,
+    contribution: CommunityContribution | None = None,
+) -> dict:
+    response = {
+        "id": allocation.id,
+        "contribution_id": allocation.contribution_id,
+        "user_id": allocation.user_id,
+        "project_id": allocation.project_id,
+        "project_title": allocation.project_title,
+        "period": allocation.period_start.strftime("%Y-%m"),
+        "category": allocation.category,
+        "amount": money_string(allocation.amount_nanos),
+        "currency": allocation.currency,
+        "note": allocation.note,
+        "created_at": allocation.created_at,
+    }
+    if contribution is not None:
+        response["contributor_display"] = (
+            "Anonyme"
+            if contribution.is_anonymous
+            else contribution.contributor_name or "Communauté"
+        )
+    return response
+
+
 def provider_invoice_response(invoice: ProviderInvoice) -> dict:
     return {
         "id": invoice.id,
@@ -415,6 +560,182 @@ def list_provider_invoices(
             ProviderInvoice.period_end == end,
         )
     return [provider_invoice_response(row) for row in db.scalars(statement).all()]
+
+
+@admin_router.post("/community-contributions", status_code=201)
+def create_community_contribution(
+    payload: CommunityContributionRequest,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    if payload.currency != "USD":
+        raise HTTPException(status_code=422, detail="La bêta utilise uniquement USD.")
+    received_at = payload.received_at or datetime.now(timezone.utc)
+    if received_at.tzinfo is None:
+        received_at = received_at.replace(tzinfo=timezone.utc)
+    contribution = CommunityContribution(
+        contributor_name=payload.contributor_name,
+        is_anonymous=payload.is_anonymous,
+        amount_nanos=amount_nanos(payload.amount),
+        currency=payload.currency,
+        status="received",
+        method=payload.method,
+        reference=payload.reference,
+        campaign=payload.campaign,
+        note=payload.note,
+        received_at=received_at,
+        recorded_by_user_id=admin.id,
+    )
+    db.add(contribution)
+    db.commit()
+    db.refresh(contribution)
+    return contribution_response(contribution, 0)
+
+
+@admin_router.get("/community-contributions")
+def list_community_contributions(
+    _admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    contributions = list(
+        db.scalars(
+            select(CommunityContribution).order_by(
+                CommunityContribution.received_at.desc(),
+                CommunityContribution.created_at.desc(),
+            )
+        )
+    )
+    allocated = dict(
+        db.execute(
+            select(
+                ContributionAllocation.contribution_id,
+                func.sum(ContributionAllocation.amount_nanos),
+            ).group_by(ContributionAllocation.contribution_id)
+        ).all()
+    )
+    return [
+        contribution_response(contribution, allocated.get(contribution.id, 0))
+        for contribution in contributions
+    ]
+
+
+@admin_router.post("/community-allocations", status_code=201)
+def create_contribution_allocation(
+    payload: ContributionAllocationRequest,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    if payload.currency != "USD":
+        raise HTTPException(status_code=422, detail="La bêta utilise uniquement USD.")
+    period_start, period_end = month_bounds(payload.period)
+    contribution = db.scalar(
+        select(CommunityContribution)
+        .where(CommunityContribution.id == payload.contribution_id)
+        .with_for_update()
+    )
+    if contribution is None:
+        raise HTTPException(status_code=404, detail="Contribution introuvable.")
+    if contribution.status != "received":
+        raise HTTPException(status_code=409, detail="La contribution n'est pas disponible.")
+    if contribution.currency != payload.currency:
+        raise HTTPException(status_code=409, detail="Les devises ne correspondent pas.")
+    project = db.scalar(
+        select(Project).where(Project.id == payload.project_id).with_for_update()
+    )
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projet introuvable.")
+
+    allocation_nanos = amount_nanos(payload.amount)
+    contribution_allocated = db.scalar(
+        select(func.coalesce(func.sum(ContributionAllocation.amount_nanos), 0)).where(
+            ContributionAllocation.contribution_id == contribution.id
+        )
+    )
+    contribution_remaining = contribution.amount_nanos - int(contribution_allocated or 0)
+    if allocation_nanos > contribution_remaining:
+        raise HTTPException(
+            status_code=409,
+            detail="Le montant dépasse le solde disponible de la contribution.",
+        )
+
+    start_at = datetime(period_start.year, period_start.month, 1, tzinfo=timezone.utc)
+    end_at = datetime(period_end.year, period_end.month, 1, tzinfo=timezone.utc)
+    confirmed_cost = db.scalar(
+        select(func.coalesce(func.sum(UsageEvent.amount_nanos), 0)).where(
+            UsageEvent.project_id == project.id,
+            UsageEvent.status == "confirmed",
+            UsageEvent.currency == payload.currency,
+            UsageEvent.occurred_at >= start_at,
+            UsageEvent.occurred_at < end_at,
+        )
+    )
+    project_allocated = db.scalar(
+        select(func.coalesce(func.sum(ContributionAllocation.amount_nanos), 0)).where(
+            ContributionAllocation.project_id == project.id,
+            ContributionAllocation.period_start == period_start,
+            ContributionAllocation.period_end == period_end,
+            ContributionAllocation.currency == payload.currency,
+        )
+    )
+    cost_remaining = int(confirmed_cost or 0) - int(project_allocated or 0)
+    if allocation_nanos > cost_remaining:
+        raise HTTPException(
+            status_code=409,
+            detail="Le montant dépasse le coût confirmé restant de ce projet.",
+        )
+
+    allocation = ContributionAllocation(
+        contribution_id=contribution.id,
+        user_id=project.user_id,
+        project_id=project.id,
+        project_title=project.title,
+        period_start=period_start,
+        period_end=period_end,
+        category=payload.category,
+        amount_nanos=allocation_nanos,
+        currency=payload.currency,
+        note=payload.note,
+        recorded_by_user_id=admin.id,
+    )
+    db.add(allocation)
+    db.commit()
+    db.refresh(allocation)
+    return allocation_response(allocation, contribution)
+
+
+@admin_router.get("/community-allocations")
+def list_contribution_allocations(
+    month: str | None = None,
+    _admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    statement = select(ContributionAllocation).order_by(
+        ContributionAllocation.created_at.desc()
+    )
+    if month:
+        start, end = month_bounds(month)
+        statement = statement.where(
+            ContributionAllocation.period_start == start,
+            ContributionAllocation.period_end == end,
+        )
+    allocations = list(db.scalars(statement))
+    contribution_ids = {allocation.contribution_id for allocation in allocations}
+    contributions = (
+        {
+            contribution.id: contribution
+            for contribution in db.scalars(
+                select(CommunityContribution).where(
+                    CommunityContribution.id.in_(contribution_ids)
+                )
+            )
+        }
+        if contribution_ids
+        else {}
+    )
+    return [
+        allocation_response(allocation, contributions.get(allocation.contribution_id))
+        for allocation in allocations
+    ]
 
 
 @admin_router.post("/payments", status_code=201)

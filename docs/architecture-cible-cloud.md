@@ -113,6 +113,20 @@ montant facturé, la tolérance et leur écart. Ces rapprochements sont immuable
 une même référence ne peut pas être enregistrée deux fois et un écart ultérieur
 nécessite une nouvelle écriture explicite.
 
+Les contributions communautaires reçues sont des écritures administratives
+distinctes des paiements clients. Une allocation relie une partie d'une
+contribution à un coût confirmé, à un projet et à une période, sans modifier
+l'écriture de consommation initiale. Le relevé expose donc séparément le coût,
+le paiement client, le financement communautaire et le solde restant.
+
+Les contributions et allocations de la bêta sont ajoutées uniquement : elles
+ne proposent ni modification ni suppression. Lors d'une allocation, le serveur
+verrouille à la fois la contribution et le projet, puis refuse tout montant qui
+dépasserait le solde de la contribution ou le coût confirmé encore finançable.
+Cette règle reste valide lorsque plusieurs administrateurs agissent en même
+temps. L'anonymat masque l'identité affichée, tandis que les informations
+d'audit restent réservées à l'administration.
+
 Le stockage est mesuré périodiquement en micro-Go-mois cumulés pour éviter les
 erreurs d'arrondi sur les petits intervalles. Le tarif du fournisseur est une
 configuration obligatoire en production, versionnée dans le même catalogue que

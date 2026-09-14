@@ -32,13 +32,15 @@ Objectif : mise à disposition d'une bêta privée à un client le 26 octobre 20
   - zones dynamiques titre/intervenant/date/épisode : terminé ;
   - rendus worker 16:9, 1:1 et 9:16, fixes ou animés : terminé ;
   - archive `.dars` contrôlée et réimport sans retranscription : terminé.
-- Lot 5 : en cours depuis le 14 septembre 2026.
+- Lot 5 : terminé le 14 septembre 2026.
   - ventilation mensuelle des coûts par projet : terminé ;
   - budget, seuil d'alerte et confirmation explicite des dépenses : terminé ;
   - événements d'impact durables et résumé hebdomadaire privé : terminé ;
   - dashboard administrateur et paiements manuels : première version terminée ;
   - exports CSV/PDF des relevés et rapprochement des factures fournisseur : terminé ;
-  - entités de contribution et d'allocation communautaires : à faire.
+  - contributions manuelles et allocations communautaires auditables : terminé ;
+  - protection transactionnelle contre la surallocation d'une contribution ou d'un coût : terminé ;
+  - prise en compte séparée du financement communautaire dans les relevés : terminé.
 
 ## État de départ
 

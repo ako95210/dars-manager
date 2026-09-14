@@ -1075,6 +1075,147 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(pilot_b["paid"], "0.030000")
             self.assertEqual(pilot_b["balance"], "0.020000")
 
+    def test_community_contributions_are_allocated_without_overfunding(self) -> None:
+        community_email = f"community-{TEST_ID}@example.com"
+        with SessionLocal() as db:
+            db.add(
+                User(
+                    email=community_email,
+                    display_name="Pilote communauté",
+                    password_hash=hash_password("mot-de-passe-community"),
+                )
+            )
+            db.commit()
+        with TestClient(app) as client:
+            self.login(client, community_email, "mot-de-passe-community")
+            first = client.post("/api/projects", json={"title": "Cours communauté A"})
+            second = client.post("/api/projects", json={"title": "Cours communauté B"})
+            self.assertEqual(first.status_code, 201, first.text)
+            self.assertEqual(second.status_code, 201, second.text)
+            first_project_id = first.json()["id"]
+            second_project_id = second.json()["id"]
+            forbidden = client.post(
+                "/api/admin/billing/community-contributions",
+                json={"amount": "0.06", "contributor_name": "Soutien privé"},
+            )
+            self.assertEqual(forbidden.status_code, 403, forbidden.text)
+            with SessionLocal() as db:
+                owner = db.scalar(select(User).where(User.email == community_email))
+                self.assertIsNotNone(owner)
+                for project_id, project_title, suffix in (
+                    (first_project_id, "Cours communauté A", "a"),
+                    (second_project_id, "Cours communauté B", "b"),
+                ):
+                    event = UsageEvent(
+                        user_id=owner.id,
+                        project_id=project_id,
+                        project_title=project_title,
+                        job_id=f"community-job-{suffix}",
+                        provider="community-test",
+                        service="processing",
+                        model="fixed-test-rate",
+                        quantity=500,
+                        unit="audio_second",
+                        currency="USD",
+                        amount_nanos=50_000_000,
+                        status="confirmed",
+                        idempotency_key=f"community-{suffix}-{TEST_ID}",
+                    )
+                    db.add(event)
+                    self.assertEqual(event.amount_nanos, 50_000_000)
+                db.commit()
+
+        with TestClient(app) as admin:
+            self.login(admin, "pilot-a@example.com", "mot-de-passe-a")
+            created = admin.post(
+                "/api/admin/billing/community-contributions",
+                json={
+                    "contributor_name": "Soutien privé",
+                    "is_anonymous": True,
+                    "amount": "0.06",
+                    "reference": "COMM-001",
+                    "campaign": "Cours de septembre",
+                },
+            )
+            self.assertEqual(created.status_code, 201, created.text)
+            contribution_id = created.json()["id"]
+            self.assertEqual(created.json()["contributor_display"], "Anonyme")
+            first_allocation = admin.post(
+                "/api/admin/billing/community-allocations",
+                json={
+                    "contribution_id": contribution_id,
+                    "project_id": first_project_id,
+                    "period": "2026-09",
+                    "amount": "0.04",
+                    "category": "transcription",
+                },
+            )
+            self.assertEqual(first_allocation.status_code, 201, first_allocation.text)
+            cost_overflow = admin.post(
+                "/api/admin/billing/community-allocations",
+                json={
+                    "contribution_id": contribution_id,
+                    "project_id": first_project_id,
+                    "period": "2026-09",
+                    "amount": "0.02",
+                },
+            )
+            self.assertEqual(cost_overflow.status_code, 409, cost_overflow.text)
+            self.assertIn("coût confirmé", cost_overflow.json()["detail"])
+            second_allocation = admin.post(
+                "/api/admin/billing/community-allocations",
+                json={
+                    "contribution_id": contribution_id,
+                    "project_id": second_project_id,
+                    "period": "2026-09",
+                    "amount": "0.02",
+                },
+            )
+            self.assertEqual(second_allocation.status_code, 201, second_allocation.text)
+            contribution_overflow = admin.post(
+                "/api/admin/billing/community-allocations",
+                json={
+                    "contribution_id": contribution_id,
+                    "project_id": second_project_id,
+                    "period": "2026-09",
+                    "amount": "0.001",
+                },
+            )
+            self.assertEqual(contribution_overflow.status_code, 409, contribution_overflow.text)
+            self.assertIn("contribution", contribution_overflow.json()["detail"])
+            contributions = admin.get("/api/admin/billing/community-contributions")
+            self.assertEqual(contributions.status_code, 200, contributions.text)
+            contribution = next(
+                item for item in contributions.json() if item["id"] == contribution_id
+            )
+            self.assertEqual(contribution["allocated"], "0.060000")
+            self.assertEqual(contribution["remaining"], "0.000000")
+            allocations = admin.get(
+                "/api/admin/billing/community-allocations?month=2026-09"
+            )
+            self.assertEqual(allocations.status_code, 200, allocations.text)
+            contribution_allocations = [
+                item
+                for item in allocations.json()
+                if item["contribution_id"] == contribution_id
+            ]
+            self.assertEqual(len(contribution_allocations), 2)
+
+        with TestClient(app) as client:
+            self.login(client, community_email, "mot-de-passe-community")
+            summary = client.get("/api/billing/summary?month=2026-09")
+            self.assertEqual(summary.status_code, 200, summary.text)
+            self.assertEqual(summary.json()["community_funded"], "0.060000")
+            self.assertEqual(len(summary.json()["community_allocations"]), 2)
+            projects = {
+                item["project_id"]: item for item in summary.json()["projects"]
+            }
+            self.assertEqual(projects[first_project_id]["community_funded"], "0.040000")
+            self.assertEqual(projects[first_project_id]["amount_due"], "0.010000")
+            statement = client.get("/api/billing/statement.csv?month=2026-09")
+            self.assertEqual(statement.status_code, 200, statement.text)
+            self.assertIn("Financement communautaire".encode(), statement.content)
+
 
 if __name__ == "__main__":
     unittest.main()
