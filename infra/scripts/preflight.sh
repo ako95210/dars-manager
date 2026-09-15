@@ -27,9 +27,18 @@ fi
 
 postgres_secret="${infra_dir}/${DARSM_POSTGRES_PASSWORD_FILE:-./secrets/postgres_password}"
 openai_secret="${infra_dir}/${DARSM_OPENAI_API_KEY_FILE:-./secrets/openai_api_key}"
+runtime_uid="${DARSM_RUNTIME_UID:-10001}"
+runtime_gid="${DARSM_RUNTIME_GID:-10001}"
 for secret in "${postgres_secret}" "${openai_secret}"; do
   if [[ ! -s "${secret}" ]]; then
     echo "Secret absent ou vide: ${secret}" >&2
+    exit 1
+  fi
+  secret_uid=$(stat -c '%u' "${secret}")
+  secret_gid=$(stat -c '%g' "${secret}")
+  secret_mode=$(stat -c '%a' "${secret}")
+  if [[ "${secret_uid}" != "${runtime_uid}" || "${secret_gid}" != "${runtime_gid}" || "${secret_mode}" != "600" ]]; then
+    echo "Secret mal préparé pour le runtime: ${secret}. Exécutez sudo ./scripts/prepare-runtime-secrets.sh." >&2
     exit 1
   fi
 done
