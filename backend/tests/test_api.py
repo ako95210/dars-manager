@@ -94,6 +94,108 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(home.headers["x-frame-options"], "DENY")
             self.assertTrue(home.headers["x-request-id"])
             self.assertEqual(client.get("/api/auth/me").status_code, 401)
+
+    def test_admin_can_manage_user_accounts_and_revoke_sessions(self) -> None:
+        email = f"managed-{TEST_ID}@example.com"
+        updated_email = f"managed-updated-{TEST_ID}@example.com"
+        with TestClient(app) as anonymous:
+            self.assertEqual(anonymous.get("/api/admin/users").status_code, 401)
+        with TestClient(app) as client:
+            self.login(client, "pilot-b@example.com", "mot-de-passe-b")
+            self.assertEqual(client.get("/api/admin/users").status_code, 403)
+
+        with TestClient(app) as admin, TestClient(app) as managed:
+            self.login(admin, "pilot-a@example.com", "mot-de-passe-a")
+            created = admin.post(
+                "/api/admin/users",
+                json={
+                    "email": email.upper(),
+                    "display_name": "  Compte Piloté  ",
+                    "password": "mot-de-passe-temporaire",
+                    "role": "client",
+                },
+            )
+            self.assertEqual(created.status_code, 201, created.text)
+            account = created.json()
+            self.assertEqual(account["email"], email)
+            self.assertEqual(account["display_name"], "Compte Piloté")
+            self.assertTrue(account["is_active"])
+            self.assertNotIn("password", account)
+            account_id = account["id"]
+
+            duplicate = admin.post(
+                "/api/admin/users",
+                json={
+                    "email": email,
+                    "display_name": "Doublon",
+                    "password": "mot-de-passe-temporaire",
+                    "role": "client",
+                },
+            )
+            self.assertEqual(duplicate.status_code, 409, duplicate.text)
+            self.login(managed, email, "mot-de-passe-temporaire")
+
+            deactivated = admin.put(
+                f"/api/admin/users/{account_id}",
+                json={
+                    "email": updated_email,
+                    "display_name": "Compte mis à jour",
+                    "role": "client",
+                    "is_active": False,
+                },
+            )
+            self.assertEqual(deactivated.status_code, 200, deactivated.text)
+            self.assertFalse(deactivated.json()["is_active"])
+            self.assertEqual(managed.get("/api/auth/me").status_code, 401)
+
+            reactivated = admin.put(
+                f"/api/admin/users/{account_id}",
+                json={
+                    "email": updated_email,
+                    "display_name": "Compte mis à jour",
+                    "role": "client",
+                    "is_active": True,
+                },
+            )
+            self.assertEqual(reactivated.status_code, 200, reactivated.text)
+            self.login(managed, updated_email, "mot-de-passe-temporaire")
+            reset = admin.put(
+                f"/api/admin/users/{account_id}/password",
+                json={"new_password": "nouveau-mot-de-passe"},
+            )
+            self.assertEqual(reset.status_code, 204, reset.text)
+            self.assertEqual(managed.get("/api/auth/me").status_code, 401)
+            self.assertEqual(
+                managed.post(
+                    "/api/auth/login",
+                    json={"email": updated_email, "password": "mot-de-passe-temporaire"},
+                ).status_code,
+                401,
+            )
+            self.login(managed, updated_email, "nouveau-mot-de-passe")
+
+            current = admin.get("/api/auth/me").json()
+            self_update = admin.put(
+                f"/api/admin/users/{current['id']}",
+                json={
+                    "email": current["email"],
+                    "display_name": current["display_name"],
+                    "role": "client",
+                    "is_active": True,
+                },
+            )
+            self.assertEqual(self_update.status_code, 409, self_update.text)
+            self.assertEqual(
+                admin.put(
+                    f"/api/admin/users/{current['id']}/password",
+                    json={"new_password": "nouveau-mot-de-passe"},
+                ).status_code,
+                409,
+            )
+
+            listing = admin.get("/api/admin/users")
+            self.assertEqual(listing.status_code, 200, listing.text)
+            self.assertIn(account_id, {item["id"] for item in listing.json()})
             rejected_origin = client.post(
                 "/api/auth/login",
                 headers={"Origin": "https://malicious.example"},

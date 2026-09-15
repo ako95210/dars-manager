@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .auth import require_admin, require_user, router as auth_router
+from .admin_users import router as admin_users_router
 from .archives import router as archives_router
 from .billing import admin_router as admin_billing_router
 from .billing import router as billing_router
@@ -75,6 +76,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth_router)
+app.include_router(admin_users_router)
 app.include_router(projects_router)
 app.include_router(billing_router)
 app.include_router(admin_billing_router)

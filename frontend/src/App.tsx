@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, BillingSummary, CommunityAllocation, CommunityContribution, ImpactSummary, Job, JobAnalysis, Project, ProviderInvoice, TranscriptionQuote, User } from "./api";
 import { TemplateLibrary } from "./TemplateLibrary";
+import { UserAdministration } from "./UserAdministration";
 import type { BrandTemplate } from "./api";
 
 function inspectAudioDuration(file: File): Promise<number> {
@@ -1420,7 +1421,7 @@ function AccountOverview({ user, onPasswordChanged }: { user: User; onPasswordCh
   );
 }
 
-function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
+function Dashboard({ user, onLogout, onUserUpdated }: { user: User; onLogout: () => void; onUserUpdated: (user: User) => void }) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1428,7 +1429,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [title, setTitle] = useState("");
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
-  const [view, setView] = useState<"dashboard" | "jobs" | "billing" | "admin-billing" | "account">("dashboard");
+  const [view, setView] = useState<"dashboard" | "jobs" | "billing" | "admin-billing" | "admin-users" | "account">("dashboard");
   const [impact, setImpact] = useState<ImpactSummary | null>(null);
 
   useEffect(() => {
@@ -1460,6 +1461,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
         "#jobs": "jobs",
         "#billing": "billing",
         "#admin-billing": "admin-billing",
+        "#admin-users": "admin-users",
         "#account": "account",
       }[window.location.hash] as typeof view | undefined;
       setView(hashView || "dashboard");
@@ -1520,7 +1522,8 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
           <a href="#tools"><span>◇</span> Outils</a>
           <a className={view === "jobs" ? "active" : ""} href="#jobs" onClick={() => { setSelectedProject(null); setView("jobs"); }}><span>↻</span> Traitements</a>
           <a className={view === "billing" ? "active" : ""} href="#billing" onClick={() => { setSelectedProject(null); setView("billing"); }}><span>◉</span> Coûts</a>
-          {user.role === "admin" && <a className={view === "admin-billing" ? "active" : ""} href="#admin-billing" onClick={() => { setSelectedProject(null); setView("admin-billing"); }}><span>▤</span> Administration</a>}
+          {user.role === "admin" && <a className={view === "admin-billing" ? "active" : ""} href="#admin-billing" onClick={() => { setSelectedProject(null); setView("admin-billing"); }}><span>▤</span> Finance admin</a>}
+          {user.role === "admin" && <a className={view === "admin-users" ? "active" : ""} href="#admin-users" onClick={() => { setSelectedProject(null); setView("admin-users"); }}><span>◎</span> Comptes</a>}
           <a className={view === "account" ? "active" : ""} href="#account" onClick={() => { setSelectedProject(null); setView("account"); }}><span>⚙</span> Paramètres</a>
         </nav>
         <div className="sidebar-user">
@@ -1539,6 +1542,8 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
           <BillingOverview />
         ) : view === "admin-billing" && user.role === "admin" ? (
           <AdminBillingOverview />
+        ) : view === "admin-users" && user.role === "admin" ? (
+          <UserAdministration currentUser={user} onCurrentUserUpdated={onUserUpdated} />
         ) : view === "account" ? (
           <AccountOverview user={user} onPasswordChanged={onLogout} />
         ) : (
@@ -1642,5 +1647,5 @@ export default function App() {
   }
 
   if (checking) return <div className="boot"><Brand /><span className="loader" /></div>;
-  return user ? <Dashboard user={user} onLogout={logout} /> : <Login onAuthenticated={setUser} />;
+  return user ? <Dashboard user={user} onLogout={logout} onUserUpdated={setUser} /> : <Login onAuthenticated={setUser} />;
 }

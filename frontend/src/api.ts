@@ -5,6 +5,11 @@ export type User = {
   role: "client" | "admin";
 };
 
+export type AdminUser = User & {
+  is_active: boolean;
+  created_at: string;
+};
+
 export type Project = {
   id: string;
   title: string;
@@ -313,6 +318,30 @@ export const api = {
         current_password: currentPassword,
         new_password: newPassword,
       }),
+    }),
+  adminUsers: () => request<AdminUser[]>("/api/admin/users"),
+  createAdminUser: (values: {
+    email: string;
+    display_name: string;
+    password: string;
+    role: "client" | "admin";
+  }) => request<AdminUser>("/api/admin/users", {
+    method: "POST",
+    body: JSON.stringify(values),
+  }),
+  updateAdminUser: (userId: string, values: {
+    email: string;
+    display_name: string;
+    role: "client" | "admin";
+    is_active: boolean;
+  }) => request<AdminUser>(`/api/admin/users/${userId}`, {
+    method: "PUT",
+    body: JSON.stringify(values),
+  }),
+  resetAdminUserPassword: (userId: string, newPassword: string) =>
+    request<void>(`/api/admin/users/${userId}/password`, {
+      method: "PUT",
+      body: JSON.stringify({ new_password: newPassword }),
     }),
   projects: () => request<Project[]>("/api/projects"),
   createProject: (title: string, description: string) =>

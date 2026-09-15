@@ -16,6 +16,7 @@ administratives répondent `403` à un client authentifié.
 | Coûts, impact et relevés | utilisateur courant uniquement | synthèses séparées par client | dépendance `require_user`, filtre `user_id` |
 | Paiements et factures fournisseur | aucune écriture client | administrateur uniquement | dépendance `require_admin` |
 | Contributions et allocations | financement visible sans identité privée | administrateur uniquement | dépendance `require_admin`, réponse client réduite |
+| Comptes utilisateurs | profil courant uniquement | création, modification, activation et réinitialisation | dépendance `require_admin`, révocation des sessions |
 | État système et métriques | aucun accès | administrateur uniquement | dépendance `require_admin` |
 | Liveness/readiness | public, données minimales | public | aucun secret ni donnée client |
 
