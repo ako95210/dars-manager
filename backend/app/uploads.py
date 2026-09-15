@@ -24,7 +24,17 @@ from .runtime import job_queue, manager, media_storage
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
 jobs_router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
-ALLOWED_AUDIO_EXTENSIONS = {".aac", ".flac", ".m4a", ".mp3", ".ogg", ".wav"}
+ALLOWED_AUDIO_EXTENSIONS = {
+    ".aac",
+    ".flac",
+    ".m4a",
+    ".mp3",
+    ".mpeg",
+    ".mpga",
+    ".ogg",
+    ".opus",
+    ".wav",
+}
 LOCAL_MODELS = {"tiny", "base", "small"}
 
 

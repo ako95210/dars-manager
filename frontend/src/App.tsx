@@ -1348,7 +1348,7 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
           <label className={`drop-zone ${file ? "has-file" : ""}`}>
             <input
               type="file"
-              accept="audio/*,.aac,.m4a,.mp3,.wav,.ogg,.flac,.dars,application/zip"
+              accept="audio/*,.aac,.m4a,.mp3,.mpeg,.mpga,.wav,.ogg,.opus,.flac,.dars,application/zip"
               onChange={(event) => setFile(event.target.files?.[0] ?? null)}
               required
             />

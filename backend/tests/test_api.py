@@ -666,8 +666,8 @@ class ApiTests(unittest.TestCase):
                 "/api/uploads",
                 json={
                     "project_id": project_id,
-                    "filename": "cours.wav",
-                    "content_type": "audio/wav",
+                    "filename": "WhatsApp Audio.mpeg",
+                    "content_type": "audio/mpeg",
                     "size_bytes": len(content),
                 },
             )
@@ -675,6 +675,7 @@ class ApiTests(unittest.TestCase):
             payload = reservation.json()
             asset_id = payload["asset"]["id"]
             self.assertEqual(payload["asset"]["status"], "pending")
+            self.assertEqual(payload["asset"]["original_name"], "WhatsApp Audio.mpeg")
             self.assertEqual(payload["upload"]["method"], "PUT")
 
             wrong_size = client_a.put(payload["upload"]["url"], content=b"short")
@@ -694,7 +695,7 @@ class ApiTests(unittest.TestCase):
             uploaded = client_a.put(
                 payload["upload"]["url"],
                 content=content,
-                headers={"Content-Type": "audio/wav"},
+                headers={"Content-Type": "audio/mpeg"},
             )
             self.assertEqual(uploaded.status_code, 200, uploaded.text)
             self.assertEqual(uploaded.json()["status"], "ready")

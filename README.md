@@ -287,7 +287,7 @@ Pour un service managé, il faut choisir une offre avec disque persistant ou vol
 ## Utilisation
 
 1. Clique sur **Choisir audio**.
-2. Sélectionne un fichier `.aac`, `.mp3`, `.m4a`, `.wav`, `.ogg`, `.flac` ou `.opus`.
+2. Sélectionne un fichier `.aac`, `.mp3`, `.mpeg`, `.mpga`, `.m4a`, `.wav`, `.ogg`, `.flac` ou `.opus`.
 3. Laisse le modèle sur `base` pour commencer, puis clique **Analyser**.
 4. Sélectionne une partie dans la liste, ou plusieurs parties avec `Ctrl`/`Shift`.
 5. Modifie **Titre export** si tu veux changer le nom proposé.
