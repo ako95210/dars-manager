@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .auth import require_admin, require_user, router as auth_router
+from .auth import require_admin, require_client, router as auth_router
 from .admin_users import router as admin_users_router
 from .archives import router as archives_router
 from .billing import admin_router as admin_billing_router
@@ -138,7 +138,7 @@ async def create_job(
     project_id: Annotated[str, Form()],
     model: Annotated[str, Form()] = "base",
     language: Annotated[str, Form()] = "fr",
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> dict:
     if model not in {"tiny", "base", "small"}:
@@ -183,7 +183,7 @@ async def create_job(
 @app.get("/api/jobs")
 def list_jobs(
     project_id: str | None = None,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> list[dict]:
     if project_id and db.scalar(
@@ -194,14 +194,14 @@ def list_jobs(
 
 
 @app.get("/api/jobs/{job_id}")
-def get_job(job_id: str, user: User = Depends(require_user)) -> dict:
+def get_job(job_id: str, user: User = Depends(require_client)) -> dict:
     return owned_job(user.id, job_id).public()
 
 
 @app.get("/api/jobs/{job_id}/events")
 async def job_events(
     job_id: str,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
 ) -> StreamingResponse:
     job = owned_job(user.id, job_id)
 
@@ -221,7 +221,7 @@ async def job_events(
 
 
 @app.post("/api/jobs/{job_id}/pause")
-def pause_job(job_id: str, user: User = Depends(require_user)) -> dict:
+def pause_job(job_id: str, user: User = Depends(require_client)) -> dict:
     job = owned_job(user.id, job_id)
     try:
         manager.pause(job)
@@ -231,7 +231,7 @@ def pause_job(job_id: str, user: User = Depends(require_user)) -> dict:
 
 
 @app.post("/api/jobs/{job_id}/resume")
-def resume_job(job_id: str, user: User = Depends(require_user)) -> dict:
+def resume_job(job_id: str, user: User = Depends(require_client)) -> dict:
     job = owned_job(user.id, job_id)
     try:
         manager.resume(job)
@@ -246,7 +246,7 @@ def resume_job(job_id: str, user: User = Depends(require_user)) -> dict:
 
 
 @app.post("/api/jobs/{job_id}/cancel")
-def cancel_job(job_id: str, user: User = Depends(require_user)) -> dict:
+def cancel_job(job_id: str, user: User = Depends(require_client)) -> dict:
     job = owned_job(user.id, job_id)
     try:
         manager.cancel(job)
@@ -259,7 +259,7 @@ def cancel_job(job_id: str, user: User = Depends(require_user)) -> dict:
 def download_artifact(
     job_id: str,
     artifact: str,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> Response:
     job = owned_job(user.id, job_id)
@@ -311,7 +311,7 @@ def download_artifact(
 @app.delete("/api/jobs/{job_id}/source")
 def delete_job_source(
     job_id: str,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> dict:
     job = owned_job(user.id, job_id)
@@ -341,7 +341,7 @@ def delete_job_source(
 @app.delete("/api/jobs/{job_id}", status_code=204)
 def delete_job(
     job_id: str,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> None:
     job = owned_job(user.id, job_id)

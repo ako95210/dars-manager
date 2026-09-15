@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .auth import require_admin, require_user
+from .auth import require_admin, require_client
 from .billing_exports import statement_csv, statement_pdf
 from .costs import NANOS_PER_CURRENCY_UNIT, cost_control, money_string
 from .database import get_db
@@ -228,7 +228,7 @@ def summary_response(db: Session, user: User, month: str | None) -> dict:
 @router.get("/summary")
 def billing_summary(
     month: str | None = None,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> dict:
     return summary_response(db, user, month)
@@ -247,7 +247,7 @@ def statement_download(content: bytes, media_type: str, suffix: str, month: str)
 @router.get("/statement.csv")
 def download_statement_csv(
     month: str | None = None,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> Response:
     summary = summary_response(db, user, month)
@@ -259,7 +259,7 @@ def download_statement_csv(
 @router.get("/statement.pdf")
 def download_statement_pdf(
     month: str | None = None,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> Response:
     summary = summary_response(db, user, month)
@@ -271,7 +271,7 @@ def download_statement_pdf(
 @router.get("/impact")
 def impact_summary(
     week: str | None = None,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> dict:
     try:
@@ -303,7 +303,7 @@ def amount_nanos(value: Decimal) -> int:
 @router.put("/policy")
 def update_billing_policy(
     payload: BillingPolicyRequest,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> dict:
     if payload.currency != "USD":
@@ -745,7 +745,7 @@ def create_manual_payment(
     db: Session = Depends(get_db),
 ) -> dict:
     billed_user = db.get(User, payload.user_id)
-    if billed_user is None:
+    if billed_user is None or billed_user.role != "client":
         raise HTTPException(status_code=404, detail="User not found")
     period_start, _ = month_bounds(payload.period)
     payment_amount_nanos = amount_nanos(payload.amount)

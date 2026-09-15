@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .auth import require_user
+from .auth import require_client
 from .config import settings
 from .database import get_db
 from .jobs import TERMINAL_STATES
@@ -247,7 +247,7 @@ def video_preview(
 
 @router.get("/templates", response_model=list[TemplateResponse])
 def list_templates(
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> list[TemplateResponse]:
     templates = db.scalars(
@@ -269,7 +269,7 @@ def list_templates(
 @router.post("/templates", response_model=TemplateUploadResponse, status_code=201)
 def create_template(
     payload: TemplateCreate,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> TemplateUploadResponse:
     suffix = Path(payload.filename).suffix.lower()
@@ -350,7 +350,7 @@ def create_template(
 async def upload_local_template(
     template_id: str,
     request: Request,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> None:
     if not isinstance(media_storage, LocalMediaStorage):
@@ -388,7 +388,7 @@ async def upload_local_template(
 @router.post("/templates/{template_id}/complete", response_model=TemplateResponse)
 def complete_template(
     template_id: str,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> TemplateResponse:
     template = owned_template(db, user.id, template_id, for_update=True)
@@ -463,7 +463,7 @@ def complete_template(
 @router.get("/templates/{template_id}/preview")
 def template_preview(
     template_id: str,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> Response:
     template = owned_template(db, user.id, template_id)
@@ -491,7 +491,7 @@ def template_preview(
 def update_template(
     template_id: str,
     payload: TemplateUpdate,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> TemplateResponse:
     template = owned_template(db, user.id, template_id, for_update=True)
@@ -511,7 +511,7 @@ def update_template(
 @router.delete("/templates/{template_id}", status_code=204)
 def delete_template(
     template_id: str,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> None:
     template = owned_template(db, user.id, template_id, for_update=True)

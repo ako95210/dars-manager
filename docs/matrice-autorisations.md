@@ -6,17 +6,17 @@ administratives répondent `403` à un client authentifié.
 
 | Ressource | Lecture/écriture client | Administration | Contrôle appliqué |
 | --- | --- | --- | --- |
-| Projets | propriétaire uniquement | pas d'accès transversal par défaut | `Project.user_id` |
+| Projets | propriétaire uniquement | aucun accès | rôle `client` puis `Project.user_id` |
 | Uploads et assets | propriétaire uniquement | pas d'accès transversal par défaut | `Asset.user_id` et projet propriétaire |
 | Jobs et progression | propriétaire uniquement | pas d'accès transversal par défaut | recherche `JobManager` par `user_id` |
 | Artefacts et téléchargements | propriétaire uniquement | pas d'accès transversal par défaut | job possédé puis `Artifact.user_id` |
 | Analyse et exports | propriétaire du job source | pas d'accès transversal par défaut | job, projet, artefact et template possédés |
 | Templates et vignettes | propriétaire uniquement | pas d'accès transversal par défaut | `BrandTemplate.user_id` et fichier possédé |
 | Archives `.dars` | propriétaire de l'asset et du projet | pas d'accès transversal par défaut | `Asset.user_id` et projet propriétaire |
-| Coûts, impact et relevés | utilisateur courant uniquement | synthèses séparées par client | dépendance `require_user`, filtre `user_id` |
+| Coûts, impact et relevés | utilisateur courant uniquement | synthèses séparées par client via les routes admin | rôle `client`, filtre `user_id` |
 | Paiements et factures fournisseur | aucune écriture client | administrateur uniquement | dépendance `require_admin` |
 | Contributions et allocations | financement visible sans identité privée | administrateur uniquement | dépendance `require_admin`, réponse client réduite |
-| Comptes utilisateurs | profil courant uniquement | création, modification, activation et réinitialisation | dépendance `require_admin`, révocation des sessions |
+| Comptes utilisateurs | profil courant uniquement | création, modification, suppression logique, activation et réinitialisation | dépendance `require_admin`, anonymisation et révocation des sessions |
 | État système et métriques | aucun accès | administrateur uniquement | dépendance `require_admin` |
 | Liveness/readiness | public, données minimales | public | aucun secret ni donnée client |
 
@@ -24,3 +24,7 @@ Les tests d'API exercent les tentatives croisées sur les projets, uploads,
 templates, vignettes, jobs, analyses, exports et routes financières. Toute
 nouvelle route qui reçoit un identifiant métier doit ajouter un test équivalent
 avant intégration.
+
+Les rôles sont volontairement exclusifs : un administrateur supervise les
+comptes et les finances, tandis qu'un client utilise les outils de production.
+Un administrateur ne peut donc ni créer un projet ni lancer un traitement.

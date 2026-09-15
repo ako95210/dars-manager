@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .auth import require_user
+from .auth import require_client
 from .config import settings
 from .database import get_db
 from .costs import cost_control, quote_usage, record_usage
@@ -95,7 +95,7 @@ def owned_asset(db: Session, user_id: str, asset_id: str) -> Asset:
 @router.post("", response_model=UploadResponse, status_code=201)
 def create_upload(
     payload: UploadCreate,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> UploadResponse:
     project = db.scalar(
@@ -144,7 +144,7 @@ def create_upload(
 async def upload_local_content(
     asset_id: str,
     request: Request,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> AssetResponse:
     if not isinstance(media_storage, LocalMediaStorage):
@@ -185,7 +185,7 @@ async def upload_local_content(
 @router.post("/{asset_id}/complete", response_model=AssetResponse)
 def complete_upload(
     asset_id: str,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> AssetResponse:
     asset = owned_asset(db, user.id, asset_id)
@@ -210,7 +210,7 @@ def complete_upload(
 @router.delete("/{asset_id}", status_code=204)
 def delete_upload(
     asset_id: str,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> None:
     asset = owned_asset(db, user.id, asset_id)
@@ -224,7 +224,7 @@ def delete_upload(
 @jobs_router.post("/from-asset", status_code=202)
 def create_job_from_asset(
     payload: JobFromAsset,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     if settings.transcription_backend == "openai":

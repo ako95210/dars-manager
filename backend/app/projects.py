@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .auth import require_user
+from .auth import require_client
 from .database import get_db
 from .jobs import TERMINAL_STATES
 from .media_lifecycle import meter_media
@@ -59,7 +59,7 @@ def project_response(project: Project) -> ProjectResponse:
 
 
 @router.get("", response_model=list[ProjectResponse])
-def list_projects(user: User = Depends(require_user), db: Session = Depends(get_db)) -> list[ProjectResponse]:
+def list_projects(user: User = Depends(require_client), db: Session = Depends(get_db)) -> list[ProjectResponse]:
     projects = db.scalars(
         select(Project).where(Project.user_id == user.id).order_by(Project.updated_at.desc())
     ).all()
@@ -69,7 +69,7 @@ def list_projects(user: User = Depends(require_user), db: Session = Depends(get_
 @router.post("", response_model=ProjectResponse, status_code=201)
 def create_project(
     payload: ProjectCreate,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> ProjectResponse:
     project = Project(
@@ -86,7 +86,7 @@ def create_project(
 @router.get("/{project_id}", response_model=ProjectResponse)
 def get_project(
     project_id: str,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> ProjectResponse:
     project = db.scalar(
@@ -101,7 +101,7 @@ def get_project(
 def update_project(
     project_id: str,
     payload: ProjectUpdate,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> ProjectResponse:
     project = db.scalar(
@@ -119,7 +119,7 @@ def update_project(
 @router.delete("/{project_id}", status_code=204)
 def delete_project(
     project_id: str,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> None:
     project = db.scalar(

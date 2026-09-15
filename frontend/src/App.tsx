@@ -1429,24 +1429,40 @@ function Dashboard({ user, onLogout, onUserUpdated }: { user: User; onLogout: ()
   const [title, setTitle] = useState("");
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
-  const [view, setView] = useState<"dashboard" | "jobs" | "billing" | "admin-billing" | "admin-users" | "account">("dashboard");
+  const [view, setView] = useState<"dashboard" | "jobs" | "billing" | "admin-billing" | "admin-users" | "account">(
+    user.role === "admin" ? "admin-users" : "dashboard",
+  );
   const [impact, setImpact] = useState<ImpactSummary | null>(null);
 
   useEffect(() => {
+    if (user.role !== "client") {
+      setLoading(false);
+      return;
+    }
     api.projects()
       .then(setProjects)
       .catch((reason) => setError(reason.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [user.role]);
 
   useEffect(() => {
-    if (selectedProject || view !== "dashboard") return;
+    if (user.role !== "client" || selectedProject || view !== "dashboard") return;
     api.impactSummary().then(setImpact).catch(() => setImpact(null));
-  }, [selectedProject, view]);
+  }, [selectedProject, user.role, view]);
 
   useEffect(() => {
     if (loading) return;
     const restoreLocation = () => {
+      if (user.role === "admin") {
+        setSelectedProject(null);
+        const adminView = {
+          "#admin-users": "admin-users",
+          "#admin-billing": "admin-billing",
+          "#account": "account",
+        }[window.location.hash] as typeof view | undefined;
+        setView(adminView || "admin-users");
+        return;
+      }
       const projectId = window.location.hash.match(/^#project-([a-f0-9]{32})$/)?.[1];
       if (projectId) {
         const project = projects.find((item) => item.id === projectId);
@@ -1460,8 +1476,6 @@ function Dashboard({ user, onLogout, onUserUpdated }: { user: User; onLogout: ()
       const hashView = {
         "#jobs": "jobs",
         "#billing": "billing",
-        "#admin-billing": "admin-billing",
-        "#admin-users": "admin-users",
         "#account": "account",
       }[window.location.hash] as typeof view | undefined;
       setView(hashView || "dashboard");
@@ -1469,7 +1483,7 @@ function Dashboard({ user, onLogout, onUserUpdated }: { user: User; onLogout: ()
     restoreLocation();
     window.addEventListener("hashchange", restoreLocation);
     return () => window.removeEventListener("hashchange", restoreLocation);
-  }, [loading, projects]);
+  }, [loading, projects, user.role]);
 
   async function createProject(event: FormEvent) {
     event.preventDefault();
@@ -1517,13 +1531,16 @@ function Dashboard({ user, onLogout, onUserUpdated }: { user: User; onLogout: ()
       <aside className="sidebar">
         <Brand />
         <nav>
-          <a className={!selectedProject && view === "dashboard" ? "active" : ""} href="#dashboard" onClick={() => showDashboard()}><span>⌂</span> Vue d’ensemble</a>
-          <a href="#projects" onClick={() => showDashboard("projects")}><span>▱</span> Mes projets</a>
-          <a href="#tools"><span>◇</span> Outils</a>
-          <a className={view === "jobs" ? "active" : ""} href="#jobs" onClick={() => { setSelectedProject(null); setView("jobs"); }}><span>↻</span> Traitements</a>
-          <a className={view === "billing" ? "active" : ""} href="#billing" onClick={() => { setSelectedProject(null); setView("billing"); }}><span>◉</span> Coûts</a>
-          {user.role === "admin" && <a className={view === "admin-billing" ? "active" : ""} href="#admin-billing" onClick={() => { setSelectedProject(null); setView("admin-billing"); }}><span>▤</span> Finance admin</a>}
-          {user.role === "admin" && <a className={view === "admin-users" ? "active" : ""} href="#admin-users" onClick={() => { setSelectedProject(null); setView("admin-users"); }}><span>◎</span> Comptes</a>}
+          {user.role === "client" ? <>
+            <a className={!selectedProject && view === "dashboard" ? "active" : ""} href="#dashboard" onClick={() => showDashboard()}><span>⌂</span> Vue d’ensemble</a>
+            <a href="#projects" onClick={() => showDashboard("projects")}><span>▱</span> Mes projets</a>
+            <a href="#tools"><span>◇</span> Outils</a>
+            <a className={view === "jobs" ? "active" : ""} href="#jobs" onClick={() => { setSelectedProject(null); setView("jobs"); }}><span>↻</span> Traitements</a>
+            <a className={view === "billing" ? "active" : ""} href="#billing" onClick={() => { setSelectedProject(null); setView("billing"); }}><span>◉</span> Coûts</a>
+          </> : <>
+            <a className={view === "admin-users" ? "active" : ""} href="#admin-users" onClick={() => { setSelectedProject(null); setView("admin-users"); }}><span>◎</span> Comptes clients</a>
+            <a className={view === "admin-billing" ? "active" : ""} href="#admin-billing" onClick={() => { setSelectedProject(null); setView("admin-billing"); }}><span>▤</span> Suivi financier</a>
+          </>}
           <a className={view === "account" ? "active" : ""} href="#account" onClick={() => { setSelectedProject(null); setView("account"); }}><span>⚙</span> Paramètres</a>
         </nav>
         <div className="sidebar-user">
@@ -1534,18 +1551,18 @@ function Dashboard({ user, onLogout, onUserUpdated }: { user: User; onLogout: ()
       </aside>
 
       <main className="workspace" id="dashboard">
-        {selectedProject ? (
+        {user.role === "admin" && view === "admin-users" ? (
+          <UserAdministration currentUser={user} onCurrentUserUpdated={onUserUpdated} />
+        ) : user.role === "admin" && view === "admin-billing" ? (
+          <AdminBillingOverview />
+        ) : view === "account" ? (
+          <AccountOverview user={user} onPasswordChanged={onLogout} />
+        ) : selectedProject ? (
           <ProjectWorkspace project={selectedProject} onBack={() => showDashboard("projects")} onEdit={() => setEditingProject(selectedProject)} />
         ) : view === "jobs" ? (
           <JobsOverview projects={projects} onOpen={openProject} />
         ) : view === "billing" ? (
           <BillingOverview />
-        ) : view === "admin-billing" && user.role === "admin" ? (
-          <AdminBillingOverview />
-        ) : view === "admin-users" && user.role === "admin" ? (
-          <UserAdministration currentUser={user} onCurrentUserUpdated={onUserUpdated} />
-        ) : view === "account" ? (
-          <AccountOverview user={user} onPasswordChanged={onLogout} />
         ) : (
           <>
         <header className="workspace-header">

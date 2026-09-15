@@ -7,6 +7,7 @@ export type User = {
 
 export type AdminUser = User & {
   is_active: boolean;
+  deleted_at: string | null;
   created_at: string;
 };
 
@@ -343,6 +344,8 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ new_password: newPassword }),
     }),
+  deleteAdminUser: (userId: string) =>
+    request<void>(`/api/admin/users/${userId}`, { method: "DELETE" }),
   projects: () => request<Project[]>("/api/projects"),
   createProject: (title: string, description: string) =>
     request<Project>("/api/projects", {

@@ -27,11 +27,13 @@ function AccountEditor({
   account,
   currentUserId,
   onClose,
+  onDeleted,
   onSaved,
 }: {
   account: AdminUser | null;
   currentUserId: string;
   onClose: () => void;
+  onDeleted: (accountId: string) => void;
   onSaved: (account: AdminUser) => void;
 }) {
   const [draft, setDraft] = useState<AccountDraft>(account ? {
@@ -44,6 +46,8 @@ function AccountEditor({
   } : emptyDraft);
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const isCurrentUser = account?.id === currentUserId;
@@ -106,6 +110,21 @@ function AccountEditor({
     }
   }
 
+  async function deleteAccount() {
+    if (!account) return;
+    setDeleting(true);
+    setError("");
+    try {
+      await api.deleteAdminUser(account.id);
+      onDeleted(account.id);
+      onClose();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Suppression impossible.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget) onClose();
@@ -142,14 +161,22 @@ function AccountEditor({
           </div>
         </form>
         {account && !isCurrentUser && (
-          <form className="password-reset-panel" onSubmit={resetPassword}>
-            <div><strong>Réinitialiser le mot de passe</strong><p>Cette action ferme toutes les sessions actuellement ouvertes par cet utilisateur.</p></div>
-            <div className="account-form-grid">
-              <label>Nouveau mot de passe<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={draft.password} onChange={(event) => update("password", event.target.value)} /></label>
-              <label>Confirmation<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={draft.confirmation} onChange={(event) => update("confirmation", event.target.value)} /></label>
+          <>
+            <form className="password-reset-panel" onSubmit={resetPassword}>
+              <div><strong>Réinitialiser le mot de passe</strong><p>Cette action ferme toutes les sessions actuellement ouvertes par cet utilisateur.</p></div>
+              <div className="account-form-grid">
+                <label>Nouveau mot de passe<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={draft.password} onChange={(event) => update("password", event.target.value)} /></label>
+                <label>Confirmation<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={draft.confirmation} onChange={(event) => update("confirmation", event.target.value)} /></label>
+              </div>
+              <button className="danger-outline" disabled={resetting} type="submit">{resetting ? "Réinitialisation…" : "Réinitialiser"}</button>
+            </form>
+            <div className="account-delete-panel">
+              <div><strong>Supprimer le compte</strong><p>L’accès sera fermé et l’identité du compte anonymisée. L’historique financier sera conservé.</p></div>
+              {deleteConfirmation ? (
+                <div className="delete-confirmation"><span>Confirmer la suppression ?</span><button disabled={deleting} onClick={deleteAccount} className="danger" type="button">{deleting ? "Suppression…" : "Oui, supprimer"}</button><button onClick={() => setDeleteConfirmation(false)} type="button">Annuler</button></div>
+              ) : <button className="danger-outline" onClick={() => setDeleteConfirmation(true)} type="button">Supprimer le compte</button>}
             </div>
-            <button className="danger-outline" disabled={resetting} type="submit">{resetting ? "Réinitialisation…" : "Réinitialiser"}</button>
-          </form>
+          </>
         )}
       </article>
     </div>
@@ -196,8 +223,20 @@ export function UserAdministration({
     if (account.id === currentUser.id) onCurrentUserUpdated(account);
   }
 
-  const activeCount = users.filter((account) => account.is_active).length;
+  function deleted(accountId: string) {
+    setUsers((current) => current.map((account) => account.id === accountId ? {
+      ...account,
+      display_name: `Compte supprimé (${account.id.slice(0, 8)})`,
+      email: `deleted-${account.id}@dars-manager.com`,
+      role: account.role,
+      is_active: false,
+      deleted_at: new Date().toISOString(),
+    } : account));
+  }
+
+  const activeCount = users.filter((account) => account.is_active && !account.deleted_at).length;
   const adminCount = users.filter((account) => account.role === "admin" && account.is_active).length;
+  const deletedCount = users.filter((account) => account.deleted_at).length;
 
   return (
     <section className="user-administration">
@@ -207,7 +246,7 @@ export function UserAdministration({
       </header>
       <div className="account-stat-grid">
         <article><span>Comptes</span><strong>{users.length}</strong><small>créés au total</small></article>
-        <article><span>Actifs</span><strong>{activeCount}</strong><small>{users.length - activeCount} désactivé{users.length - activeCount > 1 ? "s" : ""}</small></article>
+        <article><span>Actifs</span><strong>{activeCount}</strong><small>{users.length - activeCount - deletedCount} désactivé{users.length - activeCount - deletedCount > 1 ? "s" : ""} · {deletedCount} supprimé{deletedCount > 1 ? "s" : ""}</small></article>
         <article><span>Administrateurs</span><strong>{adminCount}</strong><small>avec accès actif</small></article>
       </div>
       <div className="account-list-toolbar">
@@ -226,9 +265,9 @@ export function UserAdministration({
                 <tr key={account.id}>
                   <td><div className="account-table-identity"><span className="avatar">{account.display_name.charAt(0).toUpperCase()}</span><span><strong>{account.display_name}{account.id === currentUser.id && <em>Vous</em>}</strong><small>{account.email}</small></span></div></td>
                   <td><span className={`role-pill ${account.role}`}>{accountLabel(account.role)}</span></td>
-                  <td><span className={`access-pill ${account.is_active ? "active" : "inactive"}`}><i />{account.is_active ? "Actif" : "Désactivé"}</span></td>
+                  <td><span className={`access-pill ${account.deleted_at ? "deleted" : account.is_active ? "active" : "inactive"}`}><i />{account.deleted_at ? "Supprimé" : account.is_active ? "Actif" : "Désactivé"}</span></td>
                   <td>{new Intl.DateTimeFormat("fr", { dateStyle: "medium" }).format(new Date(account.created_at))}</td>
-                  <td><button className="table-action" onClick={() => setSelected(account)}>Modifier</button></td>
+                  <td><button className="table-action" disabled={Boolean(account.deleted_at)} onClick={() => setSelected(account)}>{account.deleted_at ? "Supprimé" : "Modifier"}</button></td>
                 </tr>
               ))}
               {filtered.length === 0 && <tr><td className="account-table-empty" colSpan={5}>Aucun compte ne correspond à cette recherche.</td></tr>}
@@ -237,7 +276,7 @@ export function UserAdministration({
         </div>
       )}
       {selected !== undefined && (
-        <AccountEditor account={selected} currentUserId={currentUser.id} onClose={() => setSelected(undefined)} onSaved={saved} />
+        <AccountEditor account={selected} currentUserId={currentUser.id} onClose={() => setSelected(undefined)} onDeleted={deleted} onSaved={saved} />
       )}
     </section>
   );

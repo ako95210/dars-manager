@@ -52,9 +52,9 @@ l'ouverture.
 ## Résultats de l'exercice local du 14 septembre 2026
 
 - image applicative construite et exécutée avec `uid=10001(dars)` ;
-- migrations `0001` à `0010` appliquées sur PostgreSQL 17 ;
+- migrations `0001` à `0011` appliquées sur PostgreSQL 17 ;
 - dump custom produit puis restauré dans une base éphémère : révision
-  `20260914_0010` contrôlée ;
+  `20260915_0011` contrôlée ;
 - arrêt de Redis : API disponible en `degraded`, PostgreSQL toujours prêt ;
 - sonde interne : 500 requêtes, concurrence 25, aucune erreur, 328,9 req/s,
   latence p95 117,69 ms et p99 134,09 ms ;

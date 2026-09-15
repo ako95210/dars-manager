@@ -58,12 +58,17 @@ class ApiTests(unittest.TestCase):
                         email="pilot-a@example.com",
                         display_name="Pilote A",
                         password_hash=hash_password("mot-de-passe-a"),
-                        role="admin",
                     ),
                     User(
                         email="pilot-b@example.com",
                         display_name="Pilote B",
                         password_hash=hash_password("mot-de-passe-b"),
+                    ),
+                    User(
+                        email="admin@example.com",
+                        display_name="Administration",
+                        password_hash=hash_password("mot-de-passe-admin"),
+                        role="admin",
                     ),
                 ]
             )
@@ -94,6 +99,23 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(home.headers["x-frame-options"], "DENY")
             self.assertTrue(home.headers["x-request-id"])
             self.assertEqual(client.get("/api/auth/me").status_code, 401)
+            rejected_origin = client.post(
+                "/api/auth/login",
+                headers={"Origin": "https://malicious.example"},
+                json={"email": "pilot-a@example.com", "password": "mot-de-passe-a"},
+            )
+            self.assertEqual(rejected_origin.status_code, 403, rejected_origin.text)
+            self.assertEqual(
+                client.post(
+                    "/api/auth/login",
+                    json={"email": "pilot-a@example.com", "password": "incorrect"},
+                ).status_code,
+                401,
+            )
+            self.login(client, "pilot-a@example.com", "mot-de-passe-a")
+            self.assertEqual(client.get("/api/auth/me").json()["display_name"], "Pilote A")
+            self.assertEqual(client.post("/api/auth/logout").status_code, 204)
+            self.assertEqual(client.get("/api/auth/me").status_code, 401)
 
     def test_admin_can_manage_user_accounts_and_revoke_sessions(self) -> None:
         email = f"managed-{TEST_ID}@example.com"
@@ -105,7 +127,7 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(client.get("/api/admin/users").status_code, 403)
 
         with TestClient(app) as admin, TestClient(app) as managed:
-            self.login(admin, "pilot-a@example.com", "mot-de-passe-a")
+            self.login(admin, "admin@example.com", "mot-de-passe-admin")
             created = admin.post(
                 "/api/admin/users",
                 json={
@@ -193,26 +215,49 @@ class ApiTests(unittest.TestCase):
                 409,
             )
 
+            deleted = admin.delete(f"/api/admin/users/{account_id}")
+            self.assertEqual(deleted.status_code, 204, deleted.text)
+            self.assertEqual(managed.get("/api/auth/me").status_code, 401)
+            self.assertEqual(
+                admin.put(
+                    f"/api/admin/users/{account_id}",
+                    json={
+                        "email": updated_email,
+                        "display_name": "Réactivation interdite",
+                        "role": "client",
+                        "is_active": True,
+                    },
+                ).status_code,
+                409,
+            )
+
             listing = admin.get("/api/admin/users")
             self.assertEqual(listing.status_code, 200, listing.text)
-            self.assertIn(account_id, {item["id"] for item in listing.json()})
-            rejected_origin = client.post(
-                "/api/auth/login",
-                headers={"Origin": "https://malicious.example"},
-                json={"email": "pilot-a@example.com", "password": "mot-de-passe-a"},
-            )
-            self.assertEqual(rejected_origin.status_code, 403, rejected_origin.text)
+            deleted_account = next(item for item in listing.json() if item["id"] == account_id)
+            self.assertIsNotNone(deleted_account["deleted_at"])
+            self.assertNotEqual(deleted_account["email"], updated_email)
+
+    def test_admin_is_restricted_to_administration(self) -> None:
+        with TestClient(app) as admin:
+            self.login(admin, "admin@example.com", "mot-de-passe-admin")
+            self.assertEqual(admin.get("/api/projects").status_code, 403)
             self.assertEqual(
-                client.post(
-                    "/api/auth/login",
-                    json={"email": "pilot-a@example.com", "password": "incorrect"},
+                admin.post(
+                    "/api/projects",
+                    json={"title": "Projet administrateur interdit"},
                 ).status_code,
-                401,
+                403,
             )
-            self.login(client, "pilot-a@example.com", "mot-de-passe-a")
-            self.assertEqual(client.get("/api/auth/me").json()["display_name"], "Pilote A")
-            self.assertEqual(client.post("/api/auth/logout").status_code, 204)
-            self.assertEqual(client.get("/api/auth/me").status_code, 401)
+            self.assertEqual(
+                admin.post(
+                    "/api/transcription/quote",
+                    json={"duration_seconds": 60},
+                ).status_code,
+                403,
+            )
+            self.assertEqual(admin.get("/api/billing/summary").status_code, 403)
+            self.assertEqual(admin.get("/api/admin/users").status_code, 200)
+            self.assertEqual(admin.get("/api/admin/system").status_code, 200)
 
     def test_password_change_revokes_every_session(self) -> None:
         email = f"password-{TEST_ID}@example.com"
@@ -267,7 +312,7 @@ class ApiTests(unittest.TestCase):
             self.login(client, "pilot-b@example.com", "mot-de-passe-b")
             self.assertEqual(client.get("/api/admin/system").status_code, 403)
         with TestClient(app) as admin:
-            self.login(admin, "pilot-a@example.com", "mot-de-passe-a")
+            self.login(admin, "admin@example.com", "mot-de-passe-admin")
             system = admin.get("/api/admin/system")
             self.assertEqual(system.status_code, 200, system.text)
             self.assertIn("metrics", system.json())
@@ -1184,7 +1229,7 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(forbidden.status_code, 403, forbidden.text)
 
         with TestClient(app) as admin_client:
-            self.login(admin_client, "pilot-a@example.com", "mot-de-passe-a")
+            self.login(admin_client, "admin@example.com", "mot-de-passe-admin")
             payment = admin_client.post(
                 "/api/admin/billing/payments",
                 json={
@@ -1296,7 +1341,7 @@ class ApiTests(unittest.TestCase):
                 db.commit()
 
         with TestClient(app) as admin:
-            self.login(admin, "pilot-a@example.com", "mot-de-passe-a")
+            self.login(admin, "admin@example.com", "mot-de-passe-admin")
             created = admin.post(
                 "/api/admin/billing/community-contributions",
                 json={

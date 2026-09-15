@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from .auth import require_user
+from .auth import require_client
 from .config import settings
 from .costs import cost_control, money_string, quote_usage
 from .database import get_db
@@ -23,7 +23,7 @@ class QuoteRequest(BaseModel):
 @router.post("/quote")
 def quote_transcription(
     payload: QuoteRequest,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> dict:
     quantity = math.ceil(payload.duration_seconds)

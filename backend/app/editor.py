@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .auth import require_user
+from .auth import require_client
 from .config import settings
 from .database import get_db
 from .jobs import Job
@@ -257,7 +257,7 @@ def write_payload(path: Path, payload: dict[str, Any]) -> None:
 @router.get("/{job_id}/analysis")
 def get_analysis(
     job_id: str,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     job = owned_completed_job(user.id, job_id)
@@ -284,7 +284,7 @@ def get_analysis(
 def update_analysis(
     job_id: str,
     update: AnalysisUpdate,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     job = owned_completed_job(user.id, job_id)
@@ -357,7 +357,7 @@ def update_analysis(
 def create_audio_export(
     job_id: str,
     request: AudioExportRequest,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     source_job = owned_completed_job(user.id, job_id)
@@ -470,7 +470,7 @@ def create_audio_export(
 def create_video_export(
     job_id: str,
     request: VideoExportRequest,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     source_job = owned_completed_job(user.id, job_id)
@@ -597,7 +597,7 @@ def create_video_export(
 def create_archive_export(
     job_id: str,
     request: ArchiveExportRequest,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     source_job = owned_completed_job(user.id, job_id)

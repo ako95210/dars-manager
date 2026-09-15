@@ -80,6 +80,15 @@ def require_admin(user: User = Depends(require_user)) -> User:
     return user
 
 
+def require_client(user: User = Depends(require_user)) -> User:
+    if user.role != "client":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Client workspace access required",
+        )
+    return user
+
+
 @router.post("/login", response_model=UserResponse)
 def login(
     payload: LoginRequest,

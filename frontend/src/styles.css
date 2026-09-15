@@ -442,9 +442,11 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .role-pill.admin { color: #665024; background: #fff6dc; }
 .access-pill.active { color: #176849; background: #e9f9f3; }
 .access-pill.inactive { color: #8a3933; background: #fef0ef; }
+.access-pill.deleted { color: #667085; background: #eef0f3; }
 .access-pill i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .table-action { padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; color: #176849; background: white; font-size: 10px; font-weight: 800; }
 .table-action:hover { border-color: #9fd4c2; background: #f7fcfa; }
+.table-action:disabled { color: #98a2b3; cursor: default; background: #f7f8fa; }
 .account-table-empty { padding-block: 38px !important; color: var(--muted); text-align: center !important; }
 .account-editor { width: min(720px, 100%); }
 .account-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
@@ -460,6 +462,10 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .password-reset-panel > div:first-child p { margin: 4px 0 15px; color: var(--muted); font-size: 10px; }
 .password-reset-panel .danger-outline { margin-top: 13px; }
 .password-reset-panel .danger-outline:disabled { cursor: wait; opacity: .6; }
+.account-delete-panel { display: flex; justify-content: space-between; gap: 20px; align-items: center; margin-top: 22px; padding-top: 22px; border-top: 1px solid #f0d5d2; }
+.account-delete-panel strong { color: #972c25; font-size: 13px; }
+.account-delete-panel p { max-width: 430px; margin: 4px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.account-delete-panel .delete-confirmation { flex-wrap: wrap; justify-content: flex-end; }
 .notice button { margin-left: 6px; padding: 0; border: 0; color: inherit; background: transparent; font-weight: 800; text-decoration: underline; }
 
 @media (max-width: 900px) {
@@ -544,4 +550,5 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .account-stat-grid, .account-form-grid { grid-template-columns: 1fr; }
   .account-list-toolbar { align-items: stretch; flex-direction: column; }
   .account-list-toolbar input { width: 100%; }
+  .account-delete-panel { align-items: stretch; flex-direction: column; }
 }

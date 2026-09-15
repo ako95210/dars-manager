@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .auth import require_user
+from .auth import require_client
 from .config import settings
 from .database import get_db
 from .models import Asset, Project, User, utc_now
@@ -56,7 +56,7 @@ def owned_archive(db: Session, user_id: str, asset_id: str) -> Asset:
 @router.post("", response_model=UploadResponse, status_code=201)
 def create_archive_upload(
     payload: ArchiveUploadCreate,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> UploadResponse:
     project = db.scalar(
@@ -105,7 +105,7 @@ def create_archive_upload(
 @router.post("/{asset_id}/import", status_code=202)
 def import_archive(
     asset_id: str,
-    user: User = Depends(require_user),
+    user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     asset = owned_archive(db, user.id, asset_id)

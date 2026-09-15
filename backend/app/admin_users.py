@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 from datetime import datetime
 from typing import Literal
 
@@ -11,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from .auth import require_admin
 from .database import get_db
-from .models import AuthSession, User
+from .models import AuthSession, User, utc_now
 from .security import hash_password, normalize_email
 
 
@@ -24,6 +25,7 @@ class AdminUserResponse(BaseModel):
     display_name: str
     role: Literal["client", "admin"]
     is_active: bool
+    deleted_at: datetime | None
     created_at: datetime
 
 
@@ -62,6 +64,7 @@ def admin_user_response(user: User) -> AdminUserResponse:
         display_name=user.display_name,
         role=user.role,
         is_active=user.is_active,
+        deleted_at=user.deleted_at,
         created_at=user.created_at,
     )
 
@@ -130,6 +133,8 @@ def update_user(
     db: Session = Depends(get_db),
 ) -> AdminUserResponse:
     user = user_or_404(db, user_id)
+    if user.deleted_at is not None:
+        raise HTTPException(status_code=409, detail="A deleted account cannot be modified")
     if user.id == admin.id and (payload.role != "admin" or not payload.is_active):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -162,12 +167,39 @@ def reset_user_password(
     db: Session = Depends(get_db),
 ) -> Response:
     user = user_or_404(db, user_id)
+    if user.deleted_at is not None:
+        raise HTTPException(status_code=409, detail="A deleted account cannot be modified")
     if user.id == admin.id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Use your security settings to change your own password",
         )
     user.password_hash = hash_password(payload.new_password)
+    db.execute(delete(AuthSession).where(AuthSession.user_id == user.id))
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(
+    user_id: str,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> Response:
+    user = user_or_404(db, user_id)
+    if user.deleted_at is not None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    if user.id == admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You cannot delete your own administrator account",
+        )
+    ensure_an_active_admin_remains(db, user, "client", False)
+    user.email = f"deleted-{user.id}@dars-manager.com"
+    user.display_name = f"Compte supprimé ({user.id[:8]})"
+    user.password_hash = hash_password(secrets.token_urlsafe(32))
+    user.is_active = False
+    user.deleted_at = utc_now()
     db.execute(delete(AuthSession).where(AuthSession.user_id == user.id))
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
