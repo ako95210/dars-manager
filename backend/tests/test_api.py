@@ -662,12 +662,22 @@ class ApiTests(unittest.TestCase):
             project = client_a.post("/api/projects", json={"title": "Upload objet"})
             self.assertEqual(project.status_code, 201, project.text)
             project_id = project.json()["id"]
+            rejected_video = client_a.post(
+                "/api/uploads",
+                json={
+                    "project_id": project_id,
+                    "filename": "video.wav",
+                    "content_type": "video/mpeg",
+                    "size_bytes": len(content),
+                },
+            )
+            self.assertEqual(rejected_video.status_code, 422, rejected_video.text)
             reservation = client_a.post(
                 "/api/uploads",
                 json={
                     "project_id": project_id,
                     "filename": "WhatsApp Audio.mpeg",
-                    "content_type": "audio/mpeg",
+                    "content_type": "video/mpeg",
                     "size_bytes": len(content),
                 },
             )
@@ -695,7 +705,7 @@ class ApiTests(unittest.TestCase):
             uploaded = client_a.put(
                 payload["upload"]["url"],
                 content=content,
-                headers={"Content-Type": "audio/mpeg"},
+                headers={"Content-Type": "video/mpeg"},
             )
             self.assertEqual(uploaded.status_code, 200, uploaded.text)
             self.assertEqual(uploaded.json()["status"], "ready")

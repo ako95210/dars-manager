@@ -35,6 +35,10 @@ ALLOWED_AUDIO_EXTENSIONS = {
     ".opus",
     ".wav",
 }
+ALLOWED_CONTAINER_CONTENT_TYPES = {
+    ".mpeg": {"video/mpeg"},
+    ".mpga": {"video/mpeg"},
+}
 LOCAL_MODELS = {"tiny", "base", "small"}
 
 
@@ -121,6 +125,7 @@ def create_upload(
     if not (
         payload.content_type.startswith("audio/")
         or payload.content_type == "application/octet-stream"
+        or payload.content_type in ALLOWED_CONTAINER_CONTENT_TYPES.get(suffix, set())
     ):
         raise HTTPException(status_code=422, detail="Unsupported audio content type")
 
