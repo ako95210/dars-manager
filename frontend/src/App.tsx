@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, BillingSummary, CommunityAllocation, CommunityContribution, ImpactSummary, Job, JobAnalysis, Project, ProviderInvoice, TranscriptionQuote, User } from "./api";
+import { api, BillingSummary, CommunityAllocation, CommunityContribution, ImpactSummary, InvitationDetails, Job, JobAnalysis, Project, ProviderInvoice, TranscriptionQuote, User } from "./api";
 import { TemplateLibrary } from "./TemplateLibrary";
 import { UserAdministration } from "./UserAdministration";
 import type { BrandTemplate } from "./api";
@@ -100,6 +100,83 @@ function Login({ onAuthenticated }: { onAuthenticated: (user: User) => void }) {
             {loading ? "Connexion…" : "Se connecter"}
           </button>
         </form>
+      </section>
+    </main>
+  );
+}
+
+function invitationTokenFromHash() {
+  const match = window.location.hash.match(/^#invitation=([^&]+)$/);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+function InvitationAcceptance({ token }: { token: string }) {
+  const [details, setDetails] = useState<InvitationDetails | null>(null);
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [accepted, setAccepted] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api.invitationDetails(token)
+      .then(setDetails)
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Invitation invalide."))
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    if (password !== confirmation) {
+      setError("Les deux mots de passe ne correspondent pas.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.acceptInvitation(token, password);
+      setAccepted(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Activation impossible.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <main className="invitation-shell">
+      <Brand />
+      <section className="invitation-card">
+        {loading ? <div className="invitation-loading"><span className="loader" /><p>Vérification de l’invitation…</p></div> : accepted ? <>
+          <span className="invitation-success">✓</span>
+          <span className="eyebrow">Compte activé</span>
+          <h1>Bienvenue sur Dars Manager</h1>
+          <p>Votre adresse e-mail est vérifiée et votre mot de passe a été enregistré.</p>
+          <a className="button primary invitation-login" href="/">Se connecter</a>
+        </> : details ? <>
+          <span className="eyebrow">Invitation sécurisée</span>
+          <h1>Activez votre compte</h1>
+          <p>Bonjour {details.display_name}. Confirmez l’accès à <strong>{details.email}</strong> en choisissant votre mot de passe.</p>
+          <form onSubmit={submit}>
+            <label>Mot de passe<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+            <label>Confirmation<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
+            {error && <p className="form-error notice">{error}</p>}
+            <button className="button primary" disabled={saving} type="submit">{saving ? "Activation…" : "Activer mon compte"}</button>
+          </form>
+          <small>Ce lien expire le {new Intl.DateTimeFormat("fr", { dateStyle: "long", timeStyle: "short" }).format(new Date(details.expires_at))}.</small>
+        </> : <>
+          <span className="invitation-error">!</span>
+          <span className="eyebrow">Invitation indisponible</span>
+          <h1>Ce lien n’est plus valide</h1>
+          <p>{error || "Demandez à l’administrateur de vous envoyer une nouvelle invitation."}</p>
+          <a className="button secondary invitation-login" href="/">Retour à la connexion</a>
+        </>}
       </section>
     </main>
   );
@@ -1663,6 +1740,8 @@ export default function App() {
     setUser(null);
   }
 
+  const invitationToken = invitationTokenFromHash();
+  if (invitationToken) return <InvitationAcceptance token={invitationToken} />;
   if (checking) return <div className="boot"><Brand /><span className="loader" /></div>;
   return user ? <Dashboard user={user} onLogout={logout} onUserUpdated={setUser} /> : <Login onAuthenticated={setUser} />;
 }

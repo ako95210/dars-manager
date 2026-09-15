@@ -11,6 +11,7 @@ chmod 700 -- "${secrets_dir}"
 
 postgres_secret="${secrets_dir}/postgres_password"
 openai_secret="${secrets_dir}/openai_api_key"
+smtp_secret="${secrets_dir}/smtp_password"
 
 if [[ ! -s "${postgres_secret}" ]]; then
   openssl rand -base64 48 | tr -d '\n' > "${postgres_secret}"
@@ -38,4 +39,9 @@ else
 fi
 
 chmod 600 -- "${postgres_secret}" "${openai_secret}"
+if [[ ! -e "${smtp_secret}" ]]; then
+  : > "${smtp_secret}"
+  echo "Emplacement du secret SMTP créé (vide tant que l’envoi n’est pas configuré)."
+fi
+chmod 600 -- "${smtp_secret}"
 echo "Secrets prêts dans ${secrets_dir}."

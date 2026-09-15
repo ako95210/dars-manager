@@ -49,6 +49,20 @@ input:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .1
 .button.accent { color: #072c25; background: var(--green); white-space: nowrap; }
 .form-error { color: #b42318 !important; font-size: 13px !important; }
 
+.invitation-shell { min-height: 100vh; display: grid; place-content: center; justify-items: center; gap: 28px; padding: 32px; background: radial-gradient(circle at 75% 10%, #1b4b47 0, transparent 26%), linear-gradient(145deg, #0b1220, #111d31); }
+.invitation-shell > .brand { color: white; }
+.invitation-card { width: min(520px, calc(100vw - 40px)); padding: 38px; border-radius: 18px; background: white; box-shadow: 0 28px 80px rgba(0, 0, 0, .28); }
+.invitation-card h1 { margin: 11px 0 8px; color: #172033; font-size: 30px; letter-spacing: -.035em; }
+.invitation-card > p { color: var(--muted); font-size: 13px; line-height: 1.65; }
+.invitation-card form { display: grid; gap: 13px; margin-top: 25px; }
+.invitation-card form label { display: grid; gap: 7px; color: #344054; font-size: 12px; font-weight: 700; }
+.invitation-card > small { display: block; margin-top: 18px; color: #8b94a3; font-size: 10px; text-align: center; }
+.invitation-loading { min-height: 210px; display: grid; place-content: center; justify-items: center; color: var(--muted); font-size: 12px; }
+.invitation-success, .invitation-error { width: 46px; height: 46px; display: grid; place-items: center; margin-bottom: 18px; border-radius: 13px; font-size: 24px; font-weight: 800; }
+.invitation-success { color: #137253; background: #e1f7ef; }
+.invitation-error { color: #a4372e; background: #fef0ef; }
+.invitation-login { display: block; margin-top: 24px; text-align: center; text-decoration: none; }
+
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 248px 1fr; }
 .sidebar { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; padding: 30px 20px 20px; color: white; background: var(--navy); }
 .sidebar .brand { padding: 0 8px 32px; }
@@ -442,11 +456,14 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .role-pill.admin { color: #665024; background: #fff6dc; }
 .access-pill.active { color: #176849; background: #e9f9f3; }
 .access-pill.inactive { color: #8a3933; background: #fef0ef; }
+.access-pill.pending { color: #865c16; background: #fff7df; }
 .access-pill.deleted { color: #667085; background: #eef0f3; }
 .access-pill i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .table-action { padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; color: #176849; background: white; font-size: 10px; font-weight: 800; }
 .table-action:hover { border-color: #9fd4c2; background: #f7fcfa; }
 .table-action:disabled { color: #98a2b3; cursor: default; background: #f7f8fa; }
+.account-row-actions { display: flex; gap: 7px; justify-content: flex-end; }
+.invitation-action { color: #765719; border-color: #ead79f; background: #fffdf7; }
 .account-table-empty { padding-block: 38px !important; color: var(--muted); text-align: center !important; }
 .account-editor { width: min(720px, 100%); }
 .account-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
@@ -457,6 +474,10 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .initial-password-fields { margin-top: 20px; padding: 16px; border-radius: 12px; background: #f7f9fb; }
 .initial-password-fields > p { margin: 0 0 13px; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .account-notice { padding: 12px 15px; border-radius: 9px; color: #176849; background: #e9f9f3; font-size: 11px; }
+.account-page-notice { margin: 0 0 18px; }
+.email-setup-warning { margin: -16px 0 22px; padding: 16px 18px; border: 1px solid #ead79f; border-radius: 12px; color: #765719; background: #fffaf0; }
+.email-setup-warning strong { font-size: 12px; }
+.email-setup-warning p { margin: 4px 0 0; color: #8a6b2e; font-size: 10px; }
 .password-reset-panel { margin-top: 24px; padding-top: 22px; border-top: 1px solid #f0d5d2; }
 .password-reset-panel > div:first-child strong { color: #972c25; font-size: 13px; }
 .password-reset-panel > div:first-child p { margin: 4px 0 15px; color: var(--muted); font-size: 10px; }

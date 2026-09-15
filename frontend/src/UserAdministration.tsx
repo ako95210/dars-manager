@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { AdminUser, api, User } from "./api";
+import { AdminUser, api, EmailDeliveryStatus, User } from "./api";
 
 type AccountDraft = {
   email: string;
@@ -14,7 +14,7 @@ const emptyDraft: AccountDraft = {
   email: "",
   display_name: "",
   role: "client",
-  is_active: true,
+  is_active: false,
   password: "",
   confirmation: "",
 };
@@ -61,10 +61,6 @@ function AccountEditor({
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
-    if (!account && draft.password !== draft.confirmation) {
-      setError("Les deux mots de passe ne correspondent pas.");
-      return;
-    }
     setSaving(true);
     try {
       const saved = account
@@ -77,7 +73,6 @@ function AccountEditor({
         : await api.createAdminUser({
           email: draft.email,
           display_name: draft.display_name,
-          password: draft.password,
           role: draft.role,
         });
       onSaved(saved);
@@ -142,34 +137,30 @@ function AccountEditor({
             <label>Nom affiché<input maxLength={120} required value={draft.display_name} onChange={(event) => update("display_name", event.target.value)} /></label>
             <label>Adresse e-mail<input autoComplete="email" maxLength={320} required type="email" value={draft.email} onChange={(event) => update("email", event.target.value)} /></label>
             <label>Rôle<select disabled={isCurrentUser} value={draft.role} onChange={(event) => update("role", event.target.value as AccountDraft["role"])}><option value="client">Client</option><option value="admin">Administrateur</option></select></label>
-            {account && <label className="account-active-choice"><span>Accès au compte</span><span><input checked={draft.is_active} disabled={isCurrentUser} type="checkbox" onChange={(event) => update("is_active", event.target.checked)} /> Compte actif</span></label>}
+            {account && <label className="account-active-choice"><span>Accès au compte</span><span><input checked={draft.is_active} disabled={isCurrentUser || !account.email_verified_at} type="checkbox" onChange={(event) => update("is_active", event.target.checked)} /> {account.email_verified_at ? "Compte actif" : "En attente de vérification"}</span></label>}
           </div>
           {!account && (
             <div className="initial-password-fields">
-              <p>Définissez un mot de passe provisoire d’au moins 10 caractères et transmettez-le par un canal sûr.</p>
-              <div className="account-form-grid">
-                <label>Mot de passe provisoire<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={draft.password} onChange={(event) => update("password", event.target.value)} /></label>
-                <label>Confirmation<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={draft.confirmation} onChange={(event) => update("confirmation", event.target.value)} /></label>
-              </div>
+              <p>Une invitation personnelle sera envoyée à cette adresse. Le compte restera inaccessible tant que son destinataire n’aura pas ouvert le lien et choisi son mot de passe.</p>
             </div>
           )}
           {error && <p className="form-error notice">{error}</p>}
           {notice && <p className="account-notice">{notice}</p>}
           <div className="modal-actions">
             <button className="button secondary" onClick={onClose} type="button">Annuler</button>
-            <button className="button primary compact" disabled={saving} type="submit">{saving ? "Enregistrement…" : account ? "Enregistrer" : "Créer le compte"}</button>
+            <button className="button primary compact" disabled={saving} type="submit">{saving ? "Enregistrement…" : account ? "Enregistrer" : "Envoyer l’invitation"}</button>
           </div>
         </form>
         {account && !isCurrentUser && (
           <>
-            <form className="password-reset-panel" onSubmit={resetPassword}>
+            {account.email_verified_at && <form className="password-reset-panel" onSubmit={resetPassword}>
               <div><strong>Réinitialiser le mot de passe</strong><p>Cette action ferme toutes les sessions actuellement ouvertes par cet utilisateur.</p></div>
               <div className="account-form-grid">
                 <label>Nouveau mot de passe<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={draft.password} onChange={(event) => update("password", event.target.value)} /></label>
                 <label>Confirmation<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={draft.confirmation} onChange={(event) => update("confirmation", event.target.value)} /></label>
               </div>
               <button className="danger-outline" disabled={resetting} type="submit">{resetting ? "Réinitialisation…" : "Réinitialiser"}</button>
-            </form>
+            </form>}
             <div className="account-delete-panel">
               <div><strong>Supprimer le compte</strong><p>L’accès sera fermé et l’identité du compte anonymisée. L’historique financier sera conservé.</p></div>
               {deleteConfirmation ? (
@@ -195,12 +186,18 @@ export function UserAdministration({
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [emailStatus, setEmailStatus] = useState<EmailDeliveryStatus | null>(null);
+  const [sendingInvitationId, setSendingInvitationId] = useState<string | null>(null);
 
   function load() {
     setLoading(true);
     setError("");
-    api.adminUsers()
-      .then(setUsers)
+    Promise.all([api.adminUsers(), api.emailDeliveryStatus()])
+      .then(([accounts, delivery]) => {
+        setUsers(accounts);
+        setEmailStatus(delivery);
+      })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Chargement impossible."))
       .finally(() => setLoading(false));
   }
@@ -234,19 +231,37 @@ export function UserAdministration({
     } : account));
   }
 
+  async function resendInvitation(account: AdminUser) {
+    setSendingInvitationId(account.id);
+    setError("");
+    setNotice("");
+    try {
+      const updated = await api.resendAdminUserInvitation(account.id);
+      saved(updated);
+      setNotice(`Une nouvelle invitation a été envoyée à ${updated.email}.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Envoi impossible.");
+    } finally {
+      setSendingInvitationId(null);
+    }
+  }
+
   const activeCount = users.filter((account) => account.is_active && !account.deleted_at).length;
   const adminCount = users.filter((account) => account.role === "admin" && account.is_active).length;
   const deletedCount = users.filter((account) => account.deleted_at).length;
+  const pendingCount = users.filter((account) => !account.deleted_at && !account.email_verified_at).length;
 
   return (
     <section className="user-administration">
       <header className="workspace-header">
         <div><span className="eyebrow">Administration</span><h1>Comptes utilisateurs</h1><p>Créez les accès clients et contrôlez les comptes existants.</p></div>
-        <button className="button primary compact" onClick={() => setSelected(null)}>＋ Ajouter un compte</button>
+        <button className="button primary compact" disabled={!emailStatus?.configured} onClick={() => setSelected(null)}>＋ Ajouter un compte</button>
       </header>
+      {emailStatus && !emailStatus.configured && <div className="email-setup-warning"><strong>Envoi d’e-mails à configurer</strong><p>La création de comptes est bloquée tant qu’un fournisseur SMTP n’est pas connecté à Dars Manager.</p></div>}
+      {notice && <p className="account-notice account-page-notice">{notice}</p>}
       <div className="account-stat-grid">
         <article><span>Comptes</span><strong>{users.length}</strong><small>créés au total</small></article>
-        <article><span>Actifs</span><strong>{activeCount}</strong><small>{users.length - activeCount - deletedCount} désactivé{users.length - activeCount - deletedCount > 1 ? "s" : ""} · {deletedCount} supprimé{deletedCount > 1 ? "s" : ""}</small></article>
+        <article><span>Actifs</span><strong>{activeCount}</strong><small>{users.length - activeCount - deletedCount - pendingCount} désactivé{users.length - activeCount - deletedCount - pendingCount > 1 ? "s" : ""} · {pendingCount} en attente</small></article>
         <article><span>Administrateurs</span><strong>{adminCount}</strong><small>avec accès actif</small></article>
       </div>
       <div className="account-list-toolbar">
@@ -265,9 +280,9 @@ export function UserAdministration({
                 <tr key={account.id}>
                   <td><div className="account-table-identity"><span className="avatar">{account.display_name.charAt(0).toUpperCase()}</span><span><strong>{account.display_name}{account.id === currentUser.id && <em>Vous</em>}</strong><small>{account.email}</small></span></div></td>
                   <td><span className={`role-pill ${account.role}`}>{accountLabel(account.role)}</span></td>
-                  <td><span className={`access-pill ${account.deleted_at ? "deleted" : account.is_active ? "active" : "inactive"}`}><i />{account.deleted_at ? "Supprimé" : account.is_active ? "Actif" : "Désactivé"}</span></td>
+                  <td><span className={`access-pill ${account.deleted_at ? "deleted" : !account.email_verified_at ? "pending" : account.is_active ? "active" : "inactive"}`}><i />{account.deleted_at ? "Supprimé" : !account.email_verified_at ? "En attente" : account.is_active ? "Actif" : "Désactivé"}</span></td>
                   <td>{new Intl.DateTimeFormat("fr", { dateStyle: "medium" }).format(new Date(account.created_at))}</td>
-                  <td><button className="table-action" disabled={Boolean(account.deleted_at)} onClick={() => setSelected(account)}>{account.deleted_at ? "Supprimé" : "Modifier"}</button></td>
+                  <td><div className="account-row-actions">{!account.deleted_at && !account.email_verified_at && <button className="table-action invitation-action" disabled={sendingInvitationId === account.id || !emailStatus?.configured} onClick={() => resendInvitation(account)}>{sendingInvitationId === account.id ? "Envoi…" : "Renvoyer"}</button>}<button className="table-action" disabled={Boolean(account.deleted_at)} onClick={() => setSelected(account)}>{account.deleted_at ? "Supprimé" : "Modifier"}</button></div></td>
                 </tr>
               ))}
               {filtered.length === 0 && <tr><td className="account-table-empty" colSpan={5}>Aucun compte ne correspond à cette recherche.</td></tr>}

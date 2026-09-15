@@ -1,19 +1,21 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from .config import settings
 from .database import get_db
-from .models import AuthSession, User
+from .models import AccountInvitation, AuthSession, User, utc_now
 from .security import (
     DUMMY_PASSWORD_HASH,
     LoginThrottle,
     hash_password,
+    hash_invitation_token,
     hash_session_token,
     is_expired,
     new_session_token,
@@ -45,6 +47,20 @@ class PasswordChangeRequest(BaseModel):
     new_password: str = Field(min_length=10, max_length=256)
 
 
+class InvitationTokenRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=256)
+
+
+class InvitationAcceptRequest(InvitationTokenRequest):
+    new_password: str = Field(min_length=10, max_length=256)
+
+
+class InvitationResponse(BaseModel):
+    email: EmailStr
+    display_name: str
+    expires_at: datetime
+
+
 def user_response(user: User) -> UserResponse:
     return UserResponse(
         id=user.id,
@@ -69,7 +85,7 @@ def require_user(
             db.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
     user = db.get(User, auth_session.user_id)
-    if user is None or not user.is_active:
+    if user is None or not user.is_active or user.email_verified_at is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive account")
     return user
 
@@ -113,7 +129,12 @@ def login(
     user = db.scalar(select(User).where(User.email == normalized_email))
     password_hash = user.password_hash if user is not None else DUMMY_PASSWORD_HASH
     password_valid = verify_password(payload.password, password_hash)
-    if user is None or not password_valid or not user.is_active:
+    if (
+        user is None
+        or not password_valid
+        or not user.is_active
+        or user.email_verified_at is None
+    ):
         account_login_throttle.failure(account_key)
         address_login_throttle.failure(address_key)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
@@ -145,6 +166,58 @@ def login(
 @router.get("/me", response_model=UserResponse)
 def me(user: User = Depends(require_user)) -> UserResponse:
     return user_response(user)
+
+
+def valid_invitation(db: Session, token: str, *, for_update: bool = False) -> tuple[AccountInvitation, User]:
+    statement = select(AccountInvitation).where(
+        AccountInvitation.token_hash == hash_invitation_token(token)
+    )
+    if for_update:
+        statement = statement.with_for_update()
+    invitation = db.scalar(statement)
+    if invitation is None or invitation.used_at is not None or is_expired(invitation.expires_at):
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Ce lien d’invitation est invalide ou a expiré.",
+        )
+    user = db.get(User, invitation.user_id)
+    if user is None or user.deleted_at is not None or user.email_verified_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Ce lien d’invitation n’est plus utilisable.",
+        )
+    return invitation, user
+
+
+@router.post("/invitation", response_model=InvitationResponse)
+def invitation_details(
+    payload: InvitationTokenRequest,
+    db: Session = Depends(get_db),
+) -> InvitationResponse:
+    invitation, user = valid_invitation(db, payload.token)
+    return InvitationResponse(
+        email=user.email,
+        display_name=user.display_name,
+        expires_at=invitation.expires_at,
+    )
+
+
+@router.post("/invitation/accept", status_code=status.HTTP_204_NO_CONTENT)
+def accept_invitation(
+    payload: InvitationAcceptRequest,
+    db: Session = Depends(get_db),
+) -> None:
+    invitation, user = valid_invitation(db, payload.token, for_update=True)
+    now = utc_now()
+    user.password_hash = hash_password(payload.new_password)
+    user.email_verified_at = now
+    user.is_active = True
+    db.execute(
+        update(AccountInvitation)
+        .where(AccountInvitation.user_id == user.id, AccountInvitation.used_at.is_(None))
+        .values(used_at=now)
+    )
+    db.commit()
 
 
 @router.put("/password", status_code=204)

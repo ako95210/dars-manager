@@ -4,7 +4,8 @@
 
 1. Ouvrez l'adresse HTTPS transmise par l'administrateur.
 2. Connectez-vous avec l'identifiant reçu séparément.
-3. Ouvrez **Paramètres** et remplacez immédiatement le mot de passe initial.
+3. Ouvrez l’invitation reçue par e-mail et choisissez votre mot de passe. Le
+   compte ne peut pas être utilisé avant cette vérification.
 4. Reconnectez-vous avec le nouveau mot de passe.
 
 Dars Manager fonctionne dans le navigateur sous Windows, macOS et Linux. Il

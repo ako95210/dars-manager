@@ -70,6 +70,14 @@ class Settings:
     allowed_hosts: tuple[str, ...]
     trusted_origins: tuple[str, ...]
     frontend_dist: Path
+    smtp_host: str | None
+    smtp_port: int
+    smtp_username: str
+    smtp_password: str
+    smtp_starttls: bool
+    smtp_ssl: bool
+    email_from: str | None
+    invitation_ttl_seconds: int
 
 
 def validate_settings(settings: Settings) -> None:
@@ -220,6 +228,18 @@ def load_settings() -> Settings:
         frontend_dist=Path(
             os.environ.get("DARSM_FRONTEND_DIST", str(default_frontend))
         ).expanduser().resolve(),
+        smtp_host=os.environ.get("DARSM_SMTP_HOST", "").strip() or None,
+        smtp_port=max(1, int(os.environ.get("DARSM_SMTP_PORT", "587"))),
+        smtp_username=os.environ.get("DARSM_SMTP_USERNAME", "").strip(),
+        smtp_password=secret_value("DARSM_SMTP_PASSWORD"),
+        smtp_starttls=os.environ.get("DARSM_SMTP_STARTTLS", "true").strip().lower()
+        in {"1", "true", "yes", "on"},
+        smtp_ssl=os.environ.get("DARSM_SMTP_SSL", "false").strip().lower()
+        in {"1", "true", "yes", "on"},
+        email_from=os.environ.get("DARSM_EMAIL_FROM", "").strip() or None,
+        invitation_ttl_seconds=max(
+            900, int(os.environ.get("DARSM_INVITATION_TTL_SECONDS", str(48 * 3600)))
+        ),
     )
     validate_settings(loaded)
     return loaded

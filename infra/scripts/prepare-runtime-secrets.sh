@@ -16,6 +16,7 @@ secrets=(
   "${secrets_dir}/postgres_password"
   "${secrets_dir}/openai_api_key"
 )
+smtp_secret="${secrets_dir}/smtp_password"
 
 install -d -o root -g root -m 0700 -- "${secrets_dir}"
 for secret in "${secrets[@]}"; do
@@ -26,5 +27,12 @@ for secret in "${secrets[@]}"; do
   chown -- "${runtime_uid}:${runtime_gid}" "${secret}"
   chmod 0600 -- "${secret}"
 done
+
+if [[ ! -e "${smtp_secret}" ]]; then
+  install -o "${runtime_uid}" -g "${runtime_gid}" -m 0600 /dev/null "${smtp_secret}"
+else
+  chown -- "${runtime_uid}:${runtime_gid}" "${smtp_secret}"
+  chmod 0600 -- "${smtp_secret}"
+fi
 
 echo "Secrets préparés pour le runtime ${runtime_uid}:${runtime_gid} (mode 0600)."

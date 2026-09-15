@@ -81,6 +81,14 @@ def hash_session_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def new_invitation_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def hash_invitation_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def session_expiration(ttl_seconds: int) -> datetime:
     return datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
 

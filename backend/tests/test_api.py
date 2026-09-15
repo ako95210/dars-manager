@@ -58,17 +58,20 @@ class ApiTests(unittest.TestCase):
                         email="pilot-a@example.com",
                         display_name="Pilote A",
                         password_hash=hash_password("mot-de-passe-a"),
+                        email_verified_at=utc_now(),
                     ),
                     User(
                         email="pilot-b@example.com",
                         display_name="Pilote B",
                         password_hash=hash_password("mot-de-passe-b"),
+                        email_verified_at=utc_now(),
                     ),
                     User(
                         email="admin@example.com",
                         display_name="Administration",
                         password_hash=hash_password("mot-de-passe-admin"),
                         role="admin",
+                        email_verified_at=utc_now(),
                     ),
                 ]
             )
@@ -126,14 +129,15 @@ class ApiTests(unittest.TestCase):
             self.login(client, "pilot-b@example.com", "mot-de-passe-b")
             self.assertEqual(client.get("/api/admin/users").status_code, 403)
 
-        with TestClient(app) as admin, TestClient(app) as managed:
+        with TestClient(app) as admin, TestClient(app) as managed, patch(
+            "backend.app.admin_users.email_delivery_configured", return_value=True
+        ), patch("backend.app.admin_users.send_account_invitation") as delivery:
             self.login(admin, "admin@example.com", "mot-de-passe-admin")
             created = admin.post(
                 "/api/admin/users",
                 json={
                     "email": email.upper(),
                     "display_name": "  Compte Piloté  ",
-                    "password": "mot-de-passe-temporaire",
                     "role": "client",
                 },
             )
@@ -141,16 +145,49 @@ class ApiTests(unittest.TestCase):
             account = created.json()
             self.assertEqual(account["email"], email)
             self.assertEqual(account["display_name"], "Compte Piloté")
-            self.assertTrue(account["is_active"])
+            self.assertFalse(account["is_active"])
+            self.assertIsNone(account["email_verified_at"])
+            self.assertIsNotNone(account["invitation_sent_at"])
             self.assertNotIn("password", account)
             account_id = account["id"]
+            first_token = delivery.call_args.args[2]
+            self.assertEqual(
+                managed.post(
+                    "/api/auth/login",
+                    json={"email": email, "password": "mot-de-passe-temporaire"},
+                ).status_code,
+                401,
+            )
+            details = managed.post("/api/auth/invitation", json={"token": first_token})
+            self.assertEqual(details.status_code, 200, details.text)
+            self.assertEqual(details.json()["email"], email)
+
+            resent = admin.post(f"/api/admin/users/{account_id}/invitation")
+            self.assertEqual(resent.status_code, 200, resent.text)
+            second_token = delivery.call_args.args[2]
+            self.assertNotEqual(first_token, second_token)
+            self.assertEqual(
+                managed.post("/api/auth/invitation", json={"token": first_token}).status_code,
+                410,
+            )
+            accepted = managed.post(
+                "/api/auth/invitation/accept",
+                json={
+                    "token": second_token,
+                    "new_password": "mot-de-passe-temporaire",
+                },
+            )
+            self.assertEqual(accepted.status_code, 204, accepted.text)
+            self.assertEqual(
+                managed.post("/api/auth/invitation", json={"token": second_token}).status_code,
+                410,
+            )
 
             duplicate = admin.post(
                 "/api/admin/users",
                 json={
                     "email": email,
                     "display_name": "Doublon",
-                    "password": "mot-de-passe-temporaire",
                     "role": "client",
                 },
             )
@@ -160,7 +197,7 @@ class ApiTests(unittest.TestCase):
             deactivated = admin.put(
                 f"/api/admin/users/{account_id}",
                 json={
-                    "email": updated_email,
+                    "email": email,
                     "display_name": "Compte mis à jour",
                     "role": "client",
                     "is_active": False,
@@ -173,13 +210,37 @@ class ApiTests(unittest.TestCase):
             reactivated = admin.put(
                 f"/api/admin/users/{account_id}",
                 json={
-                    "email": updated_email,
+                    "email": email,
                     "display_name": "Compte mis à jour",
                     "role": "client",
                     "is_active": True,
                 },
             )
             self.assertEqual(reactivated.status_code, 200, reactivated.text)
+            self.login(managed, email, "mot-de-passe-temporaire")
+
+            changed_email = admin.put(
+                f"/api/admin/users/{account_id}",
+                json={
+                    "email": updated_email,
+                    "display_name": "Compte vérifié à nouveau",
+                    "role": "client",
+                    "is_active": True,
+                },
+            )
+            self.assertEqual(changed_email.status_code, 200, changed_email.text)
+            self.assertFalse(changed_email.json()["is_active"])
+            self.assertIsNone(changed_email.json()["email_verified_at"])
+            self.assertEqual(managed.get("/api/auth/me").status_code, 401)
+            email_change_token = delivery.call_args.args[2]
+            accepted_change = managed.post(
+                "/api/auth/invitation/accept",
+                json={
+                    "token": email_change_token,
+                    "new_password": "mot-de-passe-temporaire",
+                },
+            )
+            self.assertEqual(accepted_change.status_code, 204, accepted_change.text)
             self.login(managed, updated_email, "mot-de-passe-temporaire")
             reset = admin.put(
                 f"/api/admin/users/{account_id}/password",
@@ -237,6 +298,24 @@ class ApiTests(unittest.TestCase):
             self.assertIsNotNone(deleted_account["deleted_at"])
             self.assertNotEqual(deleted_account["email"], updated_email)
 
+    def test_account_creation_fails_closed_without_email_delivery(self) -> None:
+        with TestClient(app) as admin, patch(
+            "backend.app.admin_users.email_delivery_configured", return_value=False
+        ):
+            self.login(admin, "admin@example.com", "mot-de-passe-admin")
+            status_response = admin.get("/api/admin/users/email-status")
+            self.assertEqual(status_response.status_code, 200, status_response.text)
+            self.assertFalse(status_response.json()["configured"])
+            refused = admin.post(
+                "/api/admin/users",
+                json={
+                    "email": f"no-delivery-{TEST_ID}@example.com",
+                    "display_name": "Sans envoi",
+                    "role": "client",
+                },
+            )
+            self.assertEqual(refused.status_code, 503, refused.text)
+
     def test_admin_is_restricted_to_administration(self) -> None:
         with TestClient(app) as admin:
             self.login(admin, "admin@example.com", "mot-de-passe-admin")
@@ -267,6 +346,7 @@ class ApiTests(unittest.TestCase):
                     email=email,
                     display_name="Password Pilot",
                     password_hash=hash_password("mot-de-passe-initial"),
+                    email_verified_at=utc_now(),
                 )
             )
             db.commit()
@@ -1298,6 +1378,7 @@ class ApiTests(unittest.TestCase):
                     email=community_email,
                     display_name="Pilote communauté",
                     password_hash=hash_password("mot-de-passe-community"),
+                    email_verified_at=utc_now(),
                 )
             )
             db.commit()

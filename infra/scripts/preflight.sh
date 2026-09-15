@@ -27,6 +27,7 @@ fi
 
 postgres_secret="${infra_dir}/${DARSM_POSTGRES_PASSWORD_FILE:-./secrets/postgres_password}"
 openai_secret="${infra_dir}/${DARSM_OPENAI_API_KEY_FILE:-./secrets/openai_api_key}"
+smtp_secret="${infra_dir}/${DARSM_SMTP_PASSWORD_FILE:-./secrets/smtp_password}"
 runtime_uid="${DARSM_RUNTIME_UID:-10001}"
 runtime_gid="${DARSM_RUNTIME_GID:-10001}"
 for secret in "${postgres_secret}" "${openai_secret}"; do
@@ -42,6 +43,24 @@ for secret in "${postgres_secret}" "${openai_secret}"; do
     exit 1
   fi
 done
+
+if [[ ! -e "${smtp_secret}" ]]; then
+  echo "Emplacement du secret SMTP absent: ${smtp_secret}. Exécutez sudo ./scripts/prepare-runtime-secrets.sh." >&2
+  exit 1
+fi
+smtp_uid=$(stat -c '%u' "${smtp_secret}")
+smtp_gid=$(stat -c '%g' "${smtp_secret}")
+smtp_mode=$(stat -c '%a' "${smtp_secret}")
+if [[ "${smtp_uid}" != "${runtime_uid}" || "${smtp_gid}" != "${runtime_gid}" || "${smtp_mode}" != "600" ]]; then
+  echo "Secret SMTP mal préparé pour le runtime: ${smtp_secret}." >&2
+  exit 1
+fi
+if [[ -n "${DARSM_SMTP_HOST:-}" ]]; then
+  if [[ -z "${DARSM_EMAIL_FROM:-}" || -z "${DARSM_SMTP_USERNAME:-}" || ! -s "${smtp_secret}" ]]; then
+    echo "La configuration SMTP est incomplète (expéditeur, utilisateur ou mot de passe)." >&2
+    exit 1
+  fi
+fi
 
 docker compose --env-file "${env_file}" -f "${compose_file}" config --quiet
 echo "Préflight réussi pour https://${DARSM_DOMAIN}."

@@ -36,6 +36,13 @@ x-app-environment: &app-environment
   DARSM_S3_BUCKET: ${DARSM_S3_BUCKET:-}
   DARSM_S3_REGION: ${DARSM_S3_REGION:-eu-west-3}
   DARSM_S3_ENDPOINT_URL: ${DARSM_S3_ENDPOINT_URL:-}
+  DARSM_SMTP_HOST: ${DARSM_SMTP_HOST:-}
+  DARSM_SMTP_PORT: ${DARSM_SMTP_PORT:-587}
+  DARSM_SMTP_USERNAME: ${DARSM_SMTP_USERNAME:-}
+  DARSM_SMTP_STARTTLS: ${DARSM_SMTP_STARTTLS:-true}
+  DARSM_SMTP_SSL: ${DARSM_SMTP_SSL:-false}
+  DARSM_EMAIL_FROM: ${DARSM_EMAIL_FROM:-}
+  DARSM_INVITATION_TTL_SECONDS: ${DARSM_INVITATION_TTL_SECONDS:-172800}
 
 x-app-security: &app-security
   init: true
@@ -76,6 +83,7 @@ services:
       dockerfile: backend/Dockerfile
     environment:
       <<: *app-environment
+      DARSM_SMTP_PASSWORD_FILE: /run/secrets/smtp_password
     expose:
       - "8000"
     command:
@@ -91,6 +99,7 @@ services:
       - --forwarded-allow-ips=*
     secrets:
       - postgres_password
+      - smtp_password
     volumes:
       - model-cache:/models
       - media-data:/workspaces/media
@@ -205,6 +214,8 @@ secrets:
     file: ${DARSM_POSTGRES_PASSWORD_FILE:-./secrets/postgres_password}
   openai_api_key:
     file: ${DARSM_OPENAI_API_KEY_FILE:-./secrets/openai_api_key}
+  smtp_password:
+    file: ${DARSM_SMTP_PASSWORD_FILE:-./secrets/smtp_password}
 
 volumes:
   postgres-data:

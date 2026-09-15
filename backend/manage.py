@@ -6,7 +6,7 @@ import getpass
 from sqlalchemy import select
 
 from backend.app.database import SessionLocal, init_database
-from backend.app.models import User
+from backend.app.models import User, utc_now
 from backend.app.security import hash_password, normalize_email
 
 
@@ -21,6 +21,7 @@ def create_user(email: str, display_name: str, password: str, role: str = "clien
             display_name=display_name.strip(),
             password_hash=hash_password(password),
             role=role,
+            email_verified_at=utc_now(),
         )
         db.add(user)
         db.commit()

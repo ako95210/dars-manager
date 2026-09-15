@@ -21,6 +21,7 @@ pas être attestés depuis le poste de développement.
 - [x] hôtes autorisés explicites et configuration bêta fail-closed ;
 - [x] mots de passe Argon2 et changement avec révocation des sessions ;
 - [x] limitation des échecs de connexion ;
+- [x] comptes inactifs avant vérification, invitations hachées et expirantes ;
 - [x] ressources métier filtrées par propriétaire et administration séparée ;
 - [x] secrets Docker montés par fichier, clé OpenAI absente de l'API ;
 - [x] API et worker non-root, systèmes de fichiers en lecture seule ;
@@ -43,7 +44,8 @@ pas être attestés depuis le poste de développement.
 - [ ] sonde de charge sans erreur et p95 inférieur à 500 ms ;
 - [ ] cours de référence traité, téléchargé et réimporté ;
 - [ ] validation du coût réel et de l'expiration par l'administrateur ;
-- [ ] compte pilote créé et mot de passe transmis par canal séparé.
+- [ ] domaine d'envoi validé, SPF/DKIM/DMARC publiés et livraison SMTP testée ;
+- [ ] compte pilote créé et activé depuis l'invitation reçue.
 
 Le passage à **GO client** exige la totalité de cette seconde liste. Toute
 exception doit être datée, justifiée et acceptée explicitement avant
@@ -52,14 +54,14 @@ l'ouverture.
 ## Résultats de l'exercice local du 14 septembre 2026
 
 - image applicative construite et exécutée avec `uid=10001(dars)` ;
-- migrations `0001` à `0011` appliquées sur PostgreSQL 17 ;
+- migrations `0001` à `0012` appliquées sur PostgreSQL 17 ;
 - dump custom produit puis restauré dans une base éphémère : révision
-  `20260915_0011` contrôlée ;
+  `20260915_0012` contrôlée ;
 - arrêt de Redis : API disponible en `degraded`, PostgreSQL toujours prêt ;
 - sonde interne : 500 requêtes, concurrence 25, aucune erreur, 328,9 req/s,
   latence p95 117,69 ms et p99 134,09 ms ;
 - configuration Caddy validée avec Caddy 2.11.4 ;
-- suite automatisée : 43 tests backend réussis et build frontend réussi.
+- suite automatisée : 47 tests backend réussis et build frontend réussi.
 
 Ces chiffres valident la machine de développement et ne remplacent pas la
 mesure depuis Internet vers le futur serveur bêta.

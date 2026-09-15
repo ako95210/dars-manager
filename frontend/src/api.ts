@@ -7,8 +7,21 @@ export type User = {
 
 export type AdminUser = User & {
   is_active: boolean;
+  email_verified_at: string | null;
+  invitation_sent_at: string | null;
   deleted_at: string | null;
   created_at: string;
+};
+
+export type EmailDeliveryStatus = {
+  configured: boolean;
+  sender: string;
+};
+
+export type InvitationDetails = {
+  email: string;
+  display_name: string;
+  expires_at: string;
 };
 
 export type Project = {
@@ -320,11 +333,21 @@ export const api = {
         new_password: newPassword,
       }),
     }),
+  invitationDetails: (token: string) =>
+    request<InvitationDetails>("/api/auth/invitation", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    }),
+  acceptInvitation: (token: string, newPassword: string) =>
+    request<void>("/api/auth/invitation/accept", {
+      method: "POST",
+      body: JSON.stringify({ token, new_password: newPassword }),
+    }),
   adminUsers: () => request<AdminUser[]>("/api/admin/users"),
+  emailDeliveryStatus: () => request<EmailDeliveryStatus>("/api/admin/users/email-status"),
   createAdminUser: (values: {
     email: string;
     display_name: string;
-    password: string;
     role: "client" | "admin";
   }) => request<AdminUser>("/api/admin/users", {
     method: "POST",
@@ -344,6 +367,8 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ new_password: newPassword }),
     }),
+  resendAdminUserInvitation: (userId: string) =>
+    request<AdminUser>(`/api/admin/users/${userId}/invitation`, { method: "POST" }),
   deleteAdminUser: (userId: string) =>
     request<void>(`/api/admin/users/${userId}`, { method: "DELETE" }),
   projects: () => request<Project[]>("/api/projects"),
