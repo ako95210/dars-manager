@@ -1438,7 +1438,7 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
                   </label>
                   <label className={transcriptionMode === "local" ? "mode-option active" : "mode-option"}>
                     <input checked={transcriptionMode === "local"} name="transcription-mode" onChange={() => setTranscriptionMode("local")} type="radio" />
-                    <span><strong>Serveur local — économique</strong><small><b>Avantages :</b> aucun appel de transcription facturé, traitement sur le serveur Dars Manager.</small><small><b>Inconvénients :</b> plus lent, qualité plus variable et attente possible dans la file.</small></span>
+                    <span><strong>Serveur local — économique</strong><small><b>Avantages :</b> aucun appel de transcription facturé, traitement sur le serveur Dars Manager.</small><small><b>Inconvénients :</b> le temps de transcription est plus long et la qualité peut varier. Si plusieurs utilisateurs choisissent ce mode, les traitements sont placés dans une file d’attente et exécutés l’un après l’autre.</small></span>
                   </label>
                 </div>
               </fieldset>
