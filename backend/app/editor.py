@@ -13,11 +13,13 @@ from sqlalchemy.orm import Session
 
 from .auth import require_client
 from .config import settings
+from .costs import cost_control, money_string, quote_usage, record_usage
 from .database import get_db
 from .jobs import Job
 from .media_lifecycle import meter_media
 from .models import Artifact, BrandTemplate, BrandTemplateFile, Project, User, utc_now
 from .runtime import job_queue, manager, media_storage
+from .semantic_analysis import estimate_semantic_tokens
 
 
 router = APIRouter(prefix="/api/jobs", tags=["editor"])
@@ -45,6 +47,11 @@ class EditablePart(BaseModel):
 class AnalysisUpdate(BaseModel):
     checksum_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     parts: list[EditablePart] = Field(min_length=1, max_length=500)
+
+
+class SemanticReanalysisRequest(BaseModel):
+    checksum_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    cost_confirmed: bool = False
 
 
 class AudioExportRequest(BaseModel):
@@ -254,6 +261,32 @@ def write_payload(path: Path, payload: dict[str, Any]) -> None:
     )
 
 
+def semantic_quote(db: Session, duration_seconds: float) -> tuple[int, int, int, str]:
+    input_tokens, output_tokens = estimate_semantic_tokens(duration_seconds)
+    input_quote = quote_usage(
+        db,
+        provider="openai",
+        service="content_analysis",
+        model=settings.semantic_analysis_model,
+        quantity=input_tokens,
+        unit="input_token",
+    )
+    output_quote = quote_usage(
+        db,
+        provider="openai",
+        service="content_analysis",
+        model=settings.semantic_analysis_model,
+        quantity=output_tokens,
+        unit="output_token",
+    )
+    return (
+        input_tokens,
+        output_tokens,
+        input_quote.amount_nanos + output_quote.amount_nanos,
+        input_quote.currency,
+    )
+
+
 @router.get("/{job_id}/analysis")
 def get_analysis(
     job_id: str,
@@ -351,6 +384,140 @@ def update_analysis(
         row.storage_metered_at = utc_now()
         db.commit()
         return response_payload(job, payload, checksum)
+
+
+@router.get("/{job_id}/analysis/reanalysis-quote")
+def quote_semantic_reanalysis(
+    job_id: str,
+    user: User = Depends(require_client),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    job = owned_completed_job(user.id, job_id)
+    if settings.semantic_analysis_backend != "openai":
+        raise HTTPException(status_code=409, detail="L’analyse sémantique cloud est désactivée.")
+    duration = float(job.metrics.get("duration_seconds", 0) or 0)
+    if duration <= 0:
+        raise HTTPException(status_code=422, detail="La durée du cours est inconnue.")
+    input_tokens, output_tokens, amount_nanos, currency = semantic_quote(db, duration)
+    control = cost_control(db, user_id=user.id, proposed_amount_nanos=amount_nanos)
+    return {
+        "provider": "openai",
+        "model": settings.semantic_analysis_model,
+        "estimated_input_tokens": input_tokens,
+        "estimated_output_tokens": output_tokens,
+        "currency": currency,
+        "amount": money_string(amount_nanos),
+        "requires_confirmation": control.requires_confirmation,
+        "confirmation_reasons": list(control.confirmation_reasons),
+        "monthly_projected": money_string(control.projected_nanos),
+        "monthly_budget": money_string(control.monthly_budget_nanos),
+        "budget_state": control.state,
+    }
+
+
+@router.post("/{job_id}/analysis/reanalyze", status_code=202)
+def create_semantic_reanalysis(
+    job_id: str,
+    request: SemanticReanalysisRequest,
+    user: User = Depends(require_client),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    source_job = owned_completed_job(user.id, job_id)
+    if source_job.tool != "audio_pipeline":
+        raise HTTPException(status_code=422, detail="Ce traitement ne contient pas de cours source.")
+    if source_job.execution_backend != "worker":
+        raise HTTPException(status_code=409, detail="La réanalyse nécessite le worker cloud.")
+    if settings.semantic_analysis_backend != "openai":
+        raise HTTPException(status_code=409, detail="L’analyse sémantique cloud est désactivée.")
+    analysis = analysis_artifact(db, source_job, user.id, for_update=True)
+    if analysis.checksum_sha256 and analysis.checksum_sha256 != request.checksum_sha256:
+        raise HTTPException(status_code=409, detail="L'analyse a changé. Rechargez-la.")
+
+    previous = [
+        item
+        for item in manager.list_for_user(user.id, source_job.project_id)
+        if item.tool == "semantic_reanalysis"
+        and item.options.get("source_job_id") == source_job.id
+    ]
+    identical = next(
+        (
+            item
+            for item in previous
+            if item.options.get("analysis_checksum") == request.checksum_sha256
+            and item.state not in {"failed", "cancelled", "expired"}
+        ),
+        None,
+    )
+    if identical is not None:
+        return identical.public()
+    if any(item.state not in {"completed", "failed", "cancelled", "expired"} for item in previous):
+        raise HTTPException(status_code=409, detail="Une réanalyse est déjà en cours.")
+
+    duration = float(source_job.metrics.get("duration_seconds", 0) or 0)
+    if duration <= 0:
+        raise HTTPException(status_code=422, detail="La durée du cours est inconnue.")
+    input_tokens, output_tokens, amount_nanos, _currency = semantic_quote(db, duration)
+    control = cost_control(
+        db,
+        user_id=user.id,
+        proposed_amount_nanos=amount_nanos,
+        lock_policy=True,
+    )
+    if control.requires_confirmation and not request.cost_confirmed:
+        raise HTTPException(
+            status_code=409,
+            detail="Cette réanalyse dépasse un seuil financier et doit être confirmée.",
+        )
+
+    child = manager.create(
+        user.id,
+        source_job.project_id,
+        "analysis.json",
+        settings.semantic_analysis_model,
+        source_job.language,
+        settings.whisper_cpu_threads,
+        execution_backend="worker",
+        allocate_workspace=False,
+        tool="semantic_reanalysis",
+        options={
+            "source_job_id": source_job.id,
+            "analysis_storage_key": analysis.storage_key,
+            "analysis_checksum": request.checksum_sha256,
+        },
+    )
+    try:
+        for quantity, unit in (
+            (input_tokens, "input_token"),
+            (output_tokens, "output_token"),
+        ):
+            record_usage(
+                db,
+                user_id=user.id,
+                project_id=source_job.project_id,
+                job_id=child.id,
+                provider="openai",
+                service="content_analysis",
+                model=settings.semantic_analysis_model,
+                quantity=quantity,
+                unit=unit,
+                status="estimated",
+                idempotency_key=f"content-analysis:{child.id}:estimate:{unit}",
+                details={
+                    "source": "existing_transcript_duration",
+                    "source_job_id": source_job.id,
+                    "cost_confirmed": request.cost_confirmed,
+                },
+            )
+        db.commit()
+    except Exception:
+        db.rollback()
+        manager.delete(child)
+        raise
+    try:
+        job_queue.enqueue(child.id)
+    except Exception:
+        pass
+    return child.public()
 
 
 @router.post("/{job_id}/exports/audio", status_code=202)

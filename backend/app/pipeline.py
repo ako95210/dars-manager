@@ -29,6 +29,7 @@ from drsm_core import (
 )
 
 from .transcription import TranscriptionProvider, UsageCallback, transcribe_in_chunks
+from .semantic_analysis import SemanticAnalyzer, SemanticUsageCallback
 
 
 ProgressCallback = Callable[[dict], None]
@@ -160,6 +161,8 @@ def run_pipeline(
     transcription_chunk_seconds: int = 540,
     transcription_chunk_max_bytes: int = 24_000_000,
     on_transcription_usage: UsageCallback | None = None,
+    semantic_analyzer: SemanticAnalyzer | None = None,
+    on_semantic_usage: SemanticUsageCallback | None = None,
 ) -> PipelineResult:
     started = time.monotonic()
 
@@ -222,11 +225,24 @@ def run_pipeline(
                 control_point=control_point,
                 on_usage=on_transcription_usage,
             )
+        if not segments:
+            raise ValueError("Whisper did not return any transcript segment")
         if should_cancel and should_cancel():
             raise AnalysisCancelled("Analysis cancelled")
         control_point()
-        report("segmentation", "Segmenting course", 0.62)
-        parts = segment_course(segments)
+        if semantic_analyzer is None:
+            report("segmentation", "Découpage heuristique du cours", 0.62)
+            parts = segment_course(segments)
+        else:
+            report(
+                "semantic_analysis",
+                "Analyse des sous-sujets et création des titres",
+                0.62,
+            )
+            semantic_result = semantic_analyzer.analyze(segments, language)
+            parts = list(semantic_result.parts)
+            if on_semantic_usage:
+                on_semantic_usage(semantic_result.call)
 
     if not segments:
         raise ValueError("Whisper did not return any transcript segment")

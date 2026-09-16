@@ -61,7 +61,7 @@ l'ouverture.
 - sonde interne : 500 requêtes, concurrence 25, aucune erreur, 328,9 req/s,
   latence p95 117,69 ms et p99 134,09 ms ;
 - configuration Caddy validée avec Caddy 2.11.4 ;
-- suite automatisée : 47 tests backend réussis et build frontend réussi.
+- suite automatisée : 51 tests backend réussis et build frontend réussi.
 
 Ces chiffres valident la machine de développement et ne remplacent pas la
 mesure depuis Internet vers le futur serveur bêta.

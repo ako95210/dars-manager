@@ -59,6 +59,8 @@ class Settings:
     local_whisper_model: str
     transcription_chunk_seconds: int
     transcription_chunk_max_bytes: int
+    semantic_analysis_backend: str
+    semantic_analysis_model: str
     openai_api_key: str | None
     openai_timeout_seconds: float
     database_url: str
@@ -119,6 +121,14 @@ def load_settings() -> Settings:
     ).strip().lower()
     if transcription_backend not in {"local", "openai"}:
         raise ValueError("DARSM_TRANSCRIPTION_BACKEND must be 'local' or 'openai'")
+    semantic_analysis_backend = os.environ.get(
+        "DARSM_SEMANTIC_ANALYSIS_BACKEND",
+        "openai" if transcription_backend == "openai" else "heuristic",
+    ).strip().lower()
+    if semantic_analysis_backend not in {"heuristic", "openai"}:
+        raise ValueError(
+            "DARSM_SEMANTIC_ANALYSIS_BACKEND must be 'heuristic' or 'openai'"
+        )
     raw_storage_price = os.environ.get("DARSM_STORAGE_GB_MONTH_USD", "").strip()
     if media_backend == "s3" and not raw_storage_price:
         raise ValueError(
@@ -207,6 +217,10 @@ def load_settings() -> Settings:
             1_000_000,
             int(os.environ.get("DARSM_TRANSCRIPTION_CHUNK_MAX_BYTES", "24000000")),
         ),
+        semantic_analysis_backend=semantic_analysis_backend,
+        semantic_analysis_model=os.environ.get(
+            "DARSM_SEMANTIC_ANALYSIS_MODEL", "gpt-5.6-luna"
+        ).strip(),
         openai_api_key=secret_value("OPENAI_API_KEY") or None,
         openai_timeout_seconds=max(
             10.0, float(os.environ.get("DARSM_OPENAI_TIMEOUT_SECONDS", "900"))

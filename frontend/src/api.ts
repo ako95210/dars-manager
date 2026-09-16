@@ -52,6 +52,8 @@ export type Job = {
     parts?: number;
     duration_seconds?: number;
     elapsed_seconds?: number;
+    semantic_input_tokens?: number;
+    semantic_output_tokens?: number;
     selected_parts?: number;
     template_id?: string;
     template_version?: number;
@@ -106,10 +108,31 @@ export type TranscriptionQuote = {
   billed_seconds: number;
   currency: string;
   amount: string;
+  transcription_amount: string;
+  semantic_analysis: {
+    model: string;
+    estimated_input_tokens: number;
+    estimated_output_tokens: number;
+    amount: string;
+  };
   unit_amount: string;
   requires_confirmation: boolean;
   confirmation_reasons: ("approval_threshold" | "monthly_budget")[];
   monthly_committed: string;
+  monthly_projected: string;
+  monthly_budget: string;
+  budget_state: "disabled" | "ok" | "warning" | "exceeded";
+};
+
+export type SemanticReanalysisQuote = {
+  provider: string;
+  model: string;
+  estimated_input_tokens: number;
+  estimated_output_tokens: number;
+  currency: string;
+  amount: string;
+  requires_confirmation: boolean;
+  confirmation_reasons: ("approval_threshold" | "monthly_budget")[];
   monthly_projected: string;
   monthly_budget: string;
   budget_state: "disabled" | "ok" | "warning" | "exceeded";
@@ -456,6 +479,19 @@ export const api = {
   ) => request<JobAnalysis>(`/api/jobs/${jobId}/analysis`, {
     method: "PUT",
     body: JSON.stringify({ checksum_sha256: checksumSha256, parts }),
+  }),
+  semanticReanalysisQuote: (jobId: string) =>
+    request<SemanticReanalysisQuote>(`/api/jobs/${jobId}/analysis/reanalysis-quote`),
+  createSemanticReanalysis: (
+    jobId: string,
+    checksumSha256: string,
+    costConfirmed: boolean,
+  ) => request<Job>(`/api/jobs/${jobId}/analysis/reanalyze`, {
+    method: "POST",
+    body: JSON.stringify({
+      checksum_sha256: checksumSha256,
+      cost_confirmed: costConfirmed,
+    }),
   }),
   createAudioExport: (jobId: string, checksumSha256: string, partIndices: number[]) =>
     request<Job>(`/api/jobs/${jobId}/exports/audio`, {

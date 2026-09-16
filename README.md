@@ -5,6 +5,10 @@
 La cible active est désormais l'application React/FastAPI avec traitement
 cloud, worker séparé, PostgreSQL, Redis et stockage média temporaire. Le
 déploiement HTTPS reproductible se trouve dans `infra/compose.beta.yml`.
+Après la transcription horodatée, une analyse éditoriale distincte détecte les
+changements réels de sous-sujet et produit des sous-chapitres avec des titres
+fidèles au contenu. Un cours existant peut aussi être rechapitré sans relancer
+ni repayer sa transcription.
 
 - exploitation et déploiement : `docs/exploitation-beta.md` ;
 - accueil du client pilote : `docs/guide-client-pilote.md` ;

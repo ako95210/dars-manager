@@ -19,6 +19,7 @@ from .media_storage import LocalMediaStorage
 from .media_lifecycle import meter_media
 from .models import Asset, Project, User, utc_now
 from .runtime import job_queue, manager, media_storage
+from .semantic_analysis import estimate_semantic_tokens
 
 
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
@@ -257,7 +258,7 @@ def create_job_from_asset(
         raise HTTPException(status_code=409, detail="Asset upload is not complete")
     cost_decision = None
     if settings.transcription_backend == "openai":
-        quote = quote_usage(
+        transcription_quote = quote_usage(
             db,
             provider="openai",
             service="transcription",
@@ -265,10 +266,33 @@ def create_job_from_asset(
             quantity=math.ceil(payload.estimated_duration_seconds or 0),
             unit="audio_second",
         )
+        analysis_input_tokens = 0
+        analysis_output_tokens = 0
+        analysis_amount_nanos = 0
+        if settings.semantic_analysis_backend == "openai":
+            analysis_input_tokens, analysis_output_tokens = estimate_semantic_tokens(
+                payload.estimated_duration_seconds or 0
+            )
+            analysis_amount_nanos = sum(
+                quote_usage(
+                    db,
+                    provider="openai",
+                    service="content_analysis",
+                    model=settings.semantic_analysis_model,
+                    quantity=quantity,
+                    unit=unit,
+                ).amount_nanos
+                for quantity, unit in (
+                    (analysis_input_tokens, "input_token"),
+                    (analysis_output_tokens, "output_token"),
+                )
+            )
         cost_decision = cost_control(
             db,
             user_id=user.id,
-            proposed_amount_nanos=quote.amount_nanos,
+            proposed_amount_nanos=(
+                transcription_quote.amount_nanos + analysis_amount_nanos
+            ),
             lock_policy=True,
         )
         if cost_decision.requires_confirmation and not payload.cost_confirmed:
@@ -313,6 +337,30 @@ def create_job_from_asset(
                     ),
                 },
             )
+            if settings.semantic_analysis_backend == "openai":
+                for quantity, unit in (
+                    (analysis_input_tokens, "input_token"),
+                    (analysis_output_tokens, "output_token"),
+                ):
+                    record_usage(
+                        db,
+                        user_id=user.id,
+                        project_id=asset.project_id,
+                        job_id=job.id,
+                        provider="openai",
+                        service="content_analysis",
+                        model=settings.semantic_analysis_model,
+                        quantity=quantity,
+                        unit=unit,
+                        status="estimated",
+                        idempotency_key=(
+                            f"content-analysis:{job.id}:estimate:{unit}"
+                        ),
+                        details={
+                            "source": "audio_duration_estimate",
+                            "cost_confirmed": payload.cost_confirmed,
+                        },
+                    )
             db.commit()
         except Exception:
             db.rollback()

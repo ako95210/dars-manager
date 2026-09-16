@@ -254,6 +254,7 @@ function CourseEditor({ job }: { job: Job }) {
   const [exportJob, setExportJob] = useState<Job | null>(null);
   const [videoJob, setVideoJob] = useState<Job | null>(null);
   const [archiveJob, setArchiveJob] = useState<Job | null>(null);
+  const [reanalysisJob, setReanalysisJob] = useState<Job | null>(null);
   const [exportLoading, setExportLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -303,6 +304,11 @@ function CourseEditor({ job }: { job: Job }) {
         setExportJob(jobs.find((item) => item.tool === "audio_selection" && item.parent_job_id === job.id) ?? null);
         setVideoJob(jobs.find((item) => item.tool === "video_render" && item.parent_job_id === job.id) ?? null);
         setArchiveJob(jobs.find((item) => item.tool === "archive_export" && item.parent_job_id === job.id) ?? null);
+        setReanalysisJob(jobs.find((item) => (
+          item.tool === "semantic_reanalysis"
+          && item.parent_job_id === job.id
+          && !terminalStates.has(item.state)
+        )) ?? null);
       })
       .catch(() => { if (active) setExportJob(null); })
       .finally(() => { if (active) setExportLoading(false); });
@@ -338,6 +344,24 @@ function CourseEditor({ job }: { job: Job }) {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [archiveJob?.id, archiveJob?.state]);
+
+  useEffect(() => {
+    if (!reanalysisJob) return;
+    if (reanalysisJob.state === "completed") {
+      load().then(() => {
+        setNotice("Les sous-chapitres et leurs titres ont été recréés à partir du contenu.");
+        setReanalysisJob(null);
+      });
+      return;
+    }
+    if (terminalStates.has(reanalysisJob.state)) return;
+    const timer = window.setInterval(() => {
+      api.job(reanalysisJob.id)
+        .then(setReanalysisJob)
+        .catch((reason) => setError(reason instanceof Error ? reason.message : "Suivi de la réanalyse impossible."));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [reanalysisJob?.id, reanalysisJob?.state]);
 
   function changePart(index: number, field: keyof PartDraft, value: string) {
     setParts((current) => current.map((part, position) => (
@@ -377,6 +401,29 @@ function CourseEditor({ job }: { job: Job }) {
       setError(reason instanceof Error ? reason.message : "Sauvegarde impossible.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function reanalyze() {
+    if (!analysis) return;
+    setError("");
+    setNotice("");
+    try {
+      const quote = await api.semanticReanalysisQuote(job.id);
+      const replacementWarning = dirty
+        ? " Vos modifications non enregistrées seront remplacées."
+        : "";
+      const confirmed = window.confirm(
+        `Recréer les sous-chapitres et les titres avec ${quote.model} pour environ ${Number(quote.amount).toFixed(4)} ${quote.currency} ?${replacementWarning}`,
+      );
+      if (!confirmed) return;
+      setReanalysisJob(await api.createSemanticReanalysis(
+        job.id,
+        analysis.checksum_sha256,
+        true,
+      ));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Réanalyse impossible.");
     }
   }
 
@@ -465,6 +512,8 @@ function CourseEditor({ job }: { job: Job }) {
   const videoProgress = Math.round(Math.max(0, Math.min(1, videoJob?.progress ?? 0)) * 100);
   const archiveBusy = Boolean(archiveJob && !terminalStates.has(archiveJob.state));
   const archiveProgress = Math.round(Math.max(0, Math.min(1, archiveJob?.progress ?? 0)) * 100);
+  const reanalysisBusy = Boolean(reanalysisJob && !terminalStates.has(reanalysisJob.state));
+  const reanalysisProgress = Math.round(Math.max(0, Math.min(1, reanalysisJob?.progress ?? 0)) * 100);
 
   return (
     <section className="course-editor">
@@ -474,10 +523,28 @@ function CourseEditor({ job }: { job: Job }) {
           <h2>Relire et structurer le cours</h2>
           <p>Écoutez le rendu puis ajustez les titres, descriptions et limites de chaque partie.</p>
         </div>
-        <button className="button primary compact" disabled={loading || saving || !analysis} onClick={save}>
-          {saving ? "Enregistrement…" : "Enregistrer les corrections"}
-        </button>
+        <div className="project-header-actions">
+          <button className="button secondary compact" disabled={loading || !analysis || reanalysisBusy} onClick={reanalyze}>
+            {reanalysisBusy ? "Analyse des sous-sujets…" : "Recréer les chapitres avec l’IA"}
+          </button>
+          <button className="button primary compact" disabled={loading || saving || !analysis || reanalysisBusy} onClick={save}>
+            {saving ? "Enregistrement…" : "Enregistrer les corrections"}
+          </button>
+        </div>
       </header>
+
+      {reanalysisJob && (
+        <div className={`export-status ${reanalysisJob.state}`}>
+          <div>
+            <span className={`job-state ${reanalysisJob.state}`}>{reanalysisJob.state}</span>
+            <strong>Analyse éditoriale des sous-sujets</strong>
+            <small>{reanalysisJob.error || reanalysisJob.message}</small>
+          </div>
+          {reanalysisBusy && (
+            <div className="export-progress"><strong>{reanalysisProgress}%</strong><div className="progress-track"><span style={{ width: `${reanalysisProgress}%` }} /></div></div>
+          )}
+        </div>
+      )}
 
       {job.artifacts.includes("audio") && (
         <div className="audio-review">
@@ -1358,7 +1425,7 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
           </label>
           <div className="upload-options">
             <div className="transcription-quote">
-              <span>{fileIsArchive ? "Restauration du cours" : "Estimation transcription cloud"}</span>
+              <span>{fileIsArchive ? "Restauration du cours" : "Estimation traitement IA cloud"}</span>
               {fileIsArchive ? (
                 <>
                   <strong>0 coût de transcription</strong>
@@ -1370,6 +1437,12 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
                 <>
                   <strong>≈ {Number(quote.amount).toFixed(4)} {quote.currency}</strong>
                   <small>{formatDuration(quote.duration_seconds)} · {quote.model} · coût réel rapproché après traitement</small>
+                  <small>
+                    Transcription {Number(quote.transcription_amount).toFixed(4)} {quote.currency}
+                    {Number(quote.semantic_analysis.amount) > 0
+                      ? ` · chapitrage ${Number(quote.semantic_analysis.amount).toFixed(4)} ${quote.currency}`
+                      : ""}
+                  </small>
                   {quote.budget_state !== "disabled" && (
                     <small>Projection mensuelle : {formatCurrency(quote.monthly_projected, quote.currency)} / {formatCurrency(quote.monthly_budget, quote.currency)}</small>
                   )}

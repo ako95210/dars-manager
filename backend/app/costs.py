@@ -148,6 +148,34 @@ def seed_default_rates(db: Session) -> None:
                 "month_definition": "30 days",
             },
         },
+        {
+            "provider": "openai",
+            "service": "content_analysis",
+            "model": settings.semantic_analysis_model,
+            "unit": "input_token",
+            "currency": "USD",
+            # USD 0.20 / 1M input tokens.
+            "unit_amount_nanos": 200,
+            "effective_from": datetime(2026, 9, 16, tzinfo=timezone.utc),
+            "source_url": (
+                "https://developers.openai.com/api/docs/models/gpt-5.6-luna"
+            ),
+            "details": {"published_rate": "0.20 USD/1M input tokens"},
+        },
+        {
+            "provider": "openai",
+            "service": "content_analysis",
+            "model": settings.semantic_analysis_model,
+            "unit": "output_token",
+            "currency": "USD",
+            # USD 1.20 / 1M output tokens.
+            "unit_amount_nanos": 1_200,
+            "effective_from": datetime(2026, 9, 16, tzinfo=timezone.utc),
+            "source_url": (
+                "https://developers.openai.com/api/docs/models/gpt-5.6-luna"
+            ),
+            "details": {"published_rate": "1.20 USD/1M output tokens"},
+        },
     ]
     for values in defaults:
         exists = db.scalar(

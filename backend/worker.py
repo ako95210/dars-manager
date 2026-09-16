@@ -16,7 +16,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from drsm_core import AnalysisCancelled, audio_duration, export_clips
+from drsm_core import AnalysisCancelled, TranscriptSegment, audio_duration, export_clips
 
 from .app.archive_format import ALLOWED_FILES, InvalidArchive, build_archive, extract_archive
 from .app.config import settings
@@ -30,6 +30,7 @@ from .app.models import Artifact, Asset, BrandTemplateFile, utc_now
 from .app.observability import configure_logging
 from .app.pipeline import PipelineResult, render_static_video, run_pipeline
 from .app.rendering import compose_cover, render_animated_video
+from .app.semantic_analysis import OpenAISemanticAnalyzer, SemanticAnalysisCall
 from .app.runtime import job_queue, media_storage, storage
 from .app.transcription import (
     OpenAIWhisperProvider,
@@ -63,14 +64,24 @@ class Worker:
         self.state = DatabaseJobStateStore(settings.job_ttl_seconds)
         self.stop_requested = threading.Event()
         self.transcription_provider = None
+        self.semantic_analyzer = None
+        if (
+            settings.transcription_backend == "openai"
+            or settings.semantic_analysis_backend == "openai"
+        ) and not settings.openai_api_key:
+            raise RuntimeError(
+                "OPENAI_API_KEY or OPENAI_API_KEY_FILE is required by the worker"
+            )
         if settings.transcription_backend == "openai":
-            if not settings.openai_api_key:
-                raise RuntimeError(
-                    "OPENAI_API_KEY or OPENAI_API_KEY_FILE is required by the worker"
-                )
             self.transcription_provider = OpenAIWhisperProvider(
                 api_key=settings.openai_api_key,
                 model=settings.transcription_model,
+                timeout_seconds=settings.openai_timeout_seconds,
+            )
+        if settings.semantic_analysis_backend == "openai":
+            self.semantic_analyzer = OpenAISemanticAnalyzer(
+                api_key=settings.openai_api_key,
+                model=settings.semantic_analysis_model,
                 timeout_seconds=settings.openai_timeout_seconds,
             )
 
@@ -178,6 +189,39 @@ class Worker:
             reconcile_job_estimates(db, job.id, "transcription")
             db.commit()
 
+    def _record_semantic_analysis_call(
+        self,
+        job: Job,
+        call: SemanticAnalysisCall,
+    ) -> None:
+        with SessionLocal() as db:
+            request_key = call.request_id or uuid.uuid4().hex
+            for quantity, unit in (
+                (call.input_tokens, "input_token"),
+                (call.output_tokens, "output_token"),
+            ):
+                if quantity <= 0:
+                    continue
+                record_usage(
+                    db,
+                    user_id=job.user_id,
+                    project_id=job.project_id,
+                    job_id=job.id,
+                    provider=call.provider,
+                    service="content_analysis",
+                    model=call.model,
+                    quantity=quantity,
+                    unit=unit,
+                    status="confirmed",
+                    idempotency_key=(
+                        f"content-analysis:{job.id}:{request_key}:{unit}"
+                    ),
+                    provider_request_id=call.request_id,
+                    details={"purpose": "semantic_chapters_and_titles"},
+                )
+            reconcile_job_estimates(db, job.id, "content_analysis")
+            db.commit()
+
     def _record_impact_event(
         self,
         job: Job,
@@ -200,6 +244,145 @@ class Worker:
                 details=details,
             )
             db.commit()
+
+    def _process_semantic_reanalysis(
+        self,
+        job: Job,
+        heartbeat_stopped: threading.Event,
+        heartbeat: threading.Thread,
+    ) -> bool:
+        started = time.monotonic()
+        try:
+            if self.semantic_analyzer is None:
+                raise ValueError("Semantic analysis provider is unavailable")
+            source_job_id = str(job.options.get("source_job_id", ""))
+            storage_key = str(job.options.get("analysis_storage_key", ""))
+            expected_checksum = str(job.options.get("analysis_checksum", ""))
+            if not source_job_id or not storage_key or len(expected_checksum) != 64:
+                raise ValueError("Invalid semantic reanalysis job")
+
+            self._save_progress(
+                job,
+                {
+                    "stage": "semantic_analysis",
+                    "message": "Lecture de la transcription existante",
+                    "progress": 0.1,
+                },
+            )
+            analysis_path = job.workspace / "analysis.json"
+            media_storage.download_file(storage_key, analysis_path)
+            if sha256_file(analysis_path) != expected_checksum:
+                raise ValueError("Source analysis checksum mismatch")
+            payload = json.loads(analysis_path.read_text(encoding="utf-8"))
+            raw_segments = payload.get("segments") if isinstance(payload, dict) else None
+            if not isinstance(raw_segments, list) or not raw_segments:
+                raise ValueError("Source analysis has no transcript segments")
+            segments = [
+                TranscriptSegment(
+                    start=float(item["start"]),
+                    end=float(item["end"]),
+                    text=str(item["text"]).strip(),
+                )
+                for item in raw_segments
+                if isinstance(item, dict)
+                and isinstance(item.get("start"), (int, float))
+                and isinstance(item.get("end"), (int, float))
+                and str(item.get("text", "")).strip()
+            ]
+            if len(segments) != len(raw_segments):
+                raise ValueError("Source transcript segments are invalid")
+
+            self._wait_if_paused(job)
+            self._save_progress(
+                job,
+                {
+                    "stage": "semantic_analysis",
+                    "message": "Détection des sous-sujets et rédaction des titres",
+                    "progress": 0.35,
+                },
+            )
+            result = self.semantic_analyzer.analyze(segments, job.language)
+            self._record_semantic_analysis_call(job, result.call)
+            self._wait_if_paused(job)
+            payload["parts"] = [asdict(part) for part in result.parts]
+            payload["semantic_analysis"] = {
+                "provider": result.call.provider,
+                "model": result.call.model,
+                "updated_at": utc_now().isoformat(timespec="seconds"),
+            }
+            analysis_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            updated_checksum = sha256_file(analysis_path)
+
+            self._save_progress(
+                job,
+                {
+                    "stage": "semantic_analysis",
+                    "message": "Enregistrement du nouveau chapitrage",
+                    "progress": 0.8,
+                },
+            )
+            with SessionLocal() as db:
+                artifact = db.scalar(
+                    select(Artifact)
+                    .where(
+                        Artifact.job_id == source_job_id,
+                        Artifact.user_id == job.user_id,
+                        Artifact.project_id == job.project_id,
+                        Artifact.kind == "analysis",
+                    )
+                    .with_for_update()
+                )
+                if artifact is None or artifact.storage_key != storage_key:
+                    raise ValueError("Source analysis artifact is unavailable")
+                if artifact.checksum_sha256 and artifact.checksum_sha256 != expected_checksum:
+                    raise ValueError("Source analysis changed during semantic analysis")
+                meter_media(db, artifact)
+                media_storage.upload_file(storage_key, analysis_path, "application/json")
+                artifact.size_bytes = analysis_path.stat().st_size
+                artifact.checksum_sha256 = updated_checksum
+                artifact.storage_metered_at = utc_now()
+                db.commit()
+
+            source_record = self.state.get(source_job_id)
+            if source_record and source_record.get("user_id") == job.user_id:
+                metrics = dict(source_record.get("metrics", {}))
+                metrics["parts"] = len(result.parts)
+                metrics["semantic_model"] = result.call.model
+                source_record["metrics"] = metrics
+                source_record["updated_at"] = time.time()
+                self.state.save(source_record)
+
+            job.state = "completed"
+            job.stage = "done"
+            job.message = "Chapitrage sémantique terminé"
+            job.progress = 1.0
+            job.error = None
+            job.metrics = {
+                "parts": len(result.parts),
+                "semantic_input_tokens": result.call.input_tokens,
+                "semantic_output_tokens": result.call.output_tokens,
+                "elapsed_seconds": time.monotonic() - started,
+            }
+        except AnalysisCancelled:
+            job.state = "cancelled"
+            job.message = "Réanalyse annulée"
+        except Exception as exc:
+            job.state = "failed"
+            job.stage = "failed"
+            job.message = "Échec de la réanalyse sémantique"
+            job.error = f"{type(exc).__name__}: {exc}"
+        finally:
+            heartbeat_stopped.set()
+            heartbeat.join(timeout=2)
+            job.worker_id = None
+            job.lease_expires_at = None
+            job.updated_at = time.time()
+            self.state.save(job.record())
+            storage.remove_workspace(job.workspace)
+        return True
 
     def _process_audio_selection(
         self,
@@ -759,6 +942,8 @@ class Worker:
             target=self._heartbeat, args=(job, heartbeat_stopped), daemon=True
         )
         heartbeat.start()
+        if job.tool == "semantic_reanalysis":
+            return self._process_semantic_reanalysis(job, heartbeat_stopped, heartbeat)
         if job.tool == "audio_selection":
             return self._process_audio_selection(job, heartbeat_stopped, heartbeat)
         if job.tool == "video_render":
@@ -802,6 +987,8 @@ class Worker:
 
             transcription_calls = 0
             transcription_checkpoint_hits = 0
+            semantic_input_tokens = 0
+            semantic_output_tokens = 0
 
             def record_transcription(call: TranscriptionCall) -> None:
                 nonlocal transcription_calls, transcription_checkpoint_hits
@@ -810,6 +997,12 @@ class Worker:
                     transcription_checkpoint_hits += 1
                 else:
                     transcription_calls += 1
+
+            def record_semantic_analysis(call: SemanticAnalysisCall) -> None:
+                nonlocal semantic_input_tokens, semantic_output_tokens
+                self._record_semantic_analysis_call(job, call)
+                semantic_input_tokens += call.input_tokens
+                semantic_output_tokens += call.output_tokens
 
             provider = (
                 CheckpointingTranscriptionProvider(
@@ -837,6 +1030,10 @@ class Worker:
                 transcription_chunk_max_bytes=settings.transcription_chunk_max_bytes,
                 on_transcription_usage=(
                     record_transcription if self.transcription_provider else None
+                ),
+                semantic_analyzer=self.semantic_analyzer,
+                on_semantic_usage=(
+                    record_semantic_analysis if self.semantic_analyzer else None
                 ),
             )
             self._wait_if_paused(job)
@@ -867,6 +1064,8 @@ class Worker:
                 "elapsed_seconds": result.elapsed_seconds,
                 "transcription_calls": transcription_calls,
                 "transcription_checkpoint_hits": transcription_checkpoint_hits,
+                "semantic_input_tokens": semantic_input_tokens,
+                "semantic_output_tokens": semantic_output_tokens,
             }
             job.error = None
         except AnalysisCancelled:

@@ -42,6 +42,7 @@ from backend.app.runtime import media_storage
 from backend.app.security import hash_password
 from backend.app.transcription import ProviderTranscription
 from backend.app.transcription_checkpoint import CheckpointingTranscriptionProvider
+from backend.app.semantic_analysis import SemanticAnalysisCall, SemanticAnalysisResult
 from backend.worker import Worker
 from backend.maintenance import MaintenanceService
 from drsm_core import CoursePart, TranscriptSegment
@@ -401,13 +402,21 @@ class ApiTests(unittest.TestCase):
     def test_transcription_quote_uses_the_versioned_rate(self) -> None:
         with TestClient(app) as client:
             self.login(client, "pilot-a@example.com", "mot-de-passe-a")
-            quote = client.post(
-                "/api/transcription/quote", json={"duration_seconds": 90.1}
+            cloud_settings = replace(
+                app_settings,
+                transcription_backend="openai",
+                semantic_analysis_backend="openai",
             )
+            with patch("backend.app.transcription_api.settings", cloud_settings):
+                quote = client.post(
+                    "/api/transcription/quote", json={"duration_seconds": 90.1}
+                )
             self.assertEqual(quote.status_code, 200, quote.text)
             self.assertEqual(quote.json()["model"], "whisper-1")
             self.assertEqual(quote.json()["billed_seconds"], 91)
-            self.assertEqual(quote.json()["amount"], "0.009100")
+            self.assertEqual(quote.json()["transcription_amount"], "0.009100")
+            self.assertEqual(quote.json()["semantic_analysis"]["amount"], "0.000520")
+            self.assertEqual(quote.json()["amount"], "0.009620")
 
     def test_budget_policy_requires_confirmation_and_groups_project_costs(self) -> None:
         content = b"budget-audio-placeholder"
@@ -428,9 +437,15 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(policy.status_code, 200, policy.text)
             self.assertEqual(policy.json()["monthly_budget"], "0.050000")
 
-            quote = client.post(
-                "/api/transcription/quote", json={"duration_seconds": 600}
+            paid_settings = replace(
+                app_settings,
+                transcription_backend="openai",
+                semantic_analysis_backend="openai",
             )
+            with patch("backend.app.transcription_api.settings", paid_settings):
+                quote = client.post(
+                    "/api/transcription/quote", json={"duration_seconds": 600}
+                )
             self.assertEqual(quote.status_code, 200, quote.text)
             self.assertTrue(quote.json()["requires_confirmation"])
             self.assertEqual(
@@ -454,7 +469,6 @@ class ApiTests(unittest.TestCase):
                 client.put(reservation.json()["upload"]["url"], content=content).status_code,
                 200,
             )
-            paid_settings = replace(app_settings, transcription_backend="openai")
             with (
                 patch("backend.app.uploads.settings", paid_settings),
                 patch("backend.app.uploads.manager.start"),
@@ -481,8 +495,8 @@ class ApiTests(unittest.TestCase):
             project_cost = next(
                 item for item in summary.json()["projects"] if item["project_id"] == project_id
             )
-            self.assertEqual(project_cost["estimated_cost"], "0.060000")
-            self.assertEqual(project_cost["operations"], 1)
+            self.assertEqual(project_cost["estimated_cost"], "0.060960")
+            self.assertEqual(project_cost["operations"], 3)
 
             with SessionLocal() as db:
                 owner = db.scalar(select(User).where(User.email == "pilot-b@example.com"))
@@ -1130,6 +1144,147 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(retained_impact.json()["courses_completed"], 1)
             self.assertEqual(retained_impact.json()["videos_rendered"], 1)
             self.assertEqual(client.delete(f"/api/brand/templates/{template_id}").status_code, 204)
+
+    def test_completed_course_can_be_semantically_reanalyzed_without_transcription(self) -> None:
+        class FakeSemanticAnalyzer:
+            provider = "openai"
+            model = "gpt-5.6-luna"
+
+            def analyze(self, segments, _language):
+                return SemanticAnalysisResult(
+                    parts=(
+                        CoursePart(
+                            1,
+                            segments[0].start,
+                            segments[0].end,
+                            "Définition du sujet principal",
+                            "Le premier sous-sujet est défini précisément.",
+                            segments[0].text,
+                        ),
+                        CoursePart(
+                            2,
+                            segments[1].start,
+                            segments[1].end,
+                            "Application à un cas distinct",
+                            "Le cours applique ensuite la notion à un nouveau cas.",
+                            segments[1].text,
+                        ),
+                    ),
+                    call=SemanticAnalysisCall(
+                        provider=self.provider,
+                        model=self.model,
+                        input_tokens=1_200,
+                        output_tokens=240,
+                        request_id="req_reanalysis_test",
+                    ),
+                )
+
+        with TestClient(app) as client:
+            self.login(client, "pilot-a@example.com", "mot-de-passe-a")
+            project = client.post("/api/projects", json={"title": "Réanalyse sémantique"})
+            self.assertEqual(project.status_code, 201, project.text)
+            project_id = project.json()["id"]
+            with SessionLocal() as db:
+                owner = db.scalar(select(User).where(User.email == "pilot-a@example.com"))
+                self.assertIsNotNone(owner)
+                user_id = owner.id
+
+            source_job = manager.create(
+                user_id,
+                project_id,
+                "cours.wav",
+                "whisper-1",
+                "fr",
+                1,
+                execution_backend="worker",
+                allocate_workspace=False,
+            )
+            source_job.state = "completed"
+            source_job.stage = "done"
+            source_job.progress = 1.0
+            source_job.metrics = {"segments": 2, "parts": 1, "duration_seconds": 240.0}
+            manager.state_store.save(source_job.record())
+
+            analysis_path = TEST_ROOT / f"semantic-{source_job.id}.json"
+            write_analysis(
+                analysis_path,
+                Path("cours.wav"),
+                [
+                    TranscriptSegment(0.0, 120.0, "Définition complète du sujet."),
+                    TranscriptSegment(120.0, 240.0, "Application à un autre cas."),
+                ],
+                [
+                    CoursePart(
+                        1,
+                        0.0,
+                        240.0,
+                        "Ancien titre incorrect",
+                        "Ancienne description.",
+                        "Définition complète du sujet. Application à un autre cas.",
+                    )
+                ],
+            )
+            checksum = hashlib.sha256(analysis_path.read_bytes()).hexdigest()
+            storage_key = (
+                f"users/{user_id}/projects/{project_id}/jobs/{source_job.id}/analysis.json"
+            )
+            media_storage.upload_file(storage_key, analysis_path, "application/json")
+            with SessionLocal() as db:
+                db.add(
+                    Artifact(
+                        user_id=user_id,
+                        project_id=project_id,
+                        job_id=source_job.id,
+                        kind="analysis",
+                        mime_type="application/json",
+                        size_bytes=analysis_path.stat().st_size,
+                        storage_key=storage_key,
+                        checksum_sha256=checksum,
+                        storage_metered_at=utc_now(),
+                        expires_at=utc_now() + timedelta(days=7),
+                    )
+                )
+                db.commit()
+
+            cloud_settings = replace(app_settings, semantic_analysis_backend="openai")
+            with patch("backend.app.editor.settings", cloud_settings):
+                quote = client.get(
+                    f"/api/jobs/{source_job.id}/analysis/reanalysis-quote"
+                )
+                self.assertEqual(quote.status_code, 200, quote.text)
+                created = client.post(
+                    f"/api/jobs/{source_job.id}/analysis/reanalyze",
+                    json={"checksum_sha256": checksum, "cost_confirmed": True},
+                )
+            self.assertEqual(created.status_code, 202, created.text)
+            child_id = created.json()["id"]
+            worker = Worker("semantic-worker")
+            worker.semantic_analyzer = FakeSemanticAnalyzer()
+            self.assertTrue(worker.process(child_id))
+
+            child = manager.get(user_id, child_id)
+            self.assertIsNotNone(child)
+            self.assertEqual(child.state, "completed")
+            refreshed = client.get(f"/api/jobs/{source_job.id}/analysis")
+            self.assertEqual(refreshed.status_code, 200, refreshed.text)
+            self.assertEqual(len(refreshed.json()["parts"]), 2)
+            self.assertEqual(
+                refreshed.json()["parts"][0]["title"],
+                "Définition du sujet principal",
+            )
+            with SessionLocal() as db:
+                events = db.scalars(
+                    select(UsageEvent).where(
+                        UsageEvent.job_id == child_id,
+                        UsageEvent.service == "content_analysis",
+                    )
+                ).all()
+                self.assertEqual(
+                    sorted(event.status for event in events),
+                    ["confirmed", "confirmed", "reconciled", "reconciled"],
+                )
+            self.assertEqual(client.delete(f"/api/jobs/{source_job.id}").status_code, 204)
+            self.assertEqual(client.delete(f"/api/projects/{project_id}").status_code, 204)
 
     def test_paid_transcription_checkpoint_is_reused(self) -> None:
         class FakePaidProvider:

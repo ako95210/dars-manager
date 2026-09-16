@@ -85,6 +85,14 @@ Paid transcription responses are checkpointed in temporary object storage, so
 a worker retry can continue through rendering without paying for the same
 fragment again.
 
+The worker then sends only the timestamped transcript to the configured
+semantic analyzer (`DARSM_SEMANTIC_ANALYSIS_BACKEND=openai`). The structured
+response must cover every transcript segment exactly once and is converted into
+content-based subchapters, titles and descriptions. Its token usage is quoted,
+confirmed and reconciled separately from transcription. Existing completed
+courses can be reanalyzed from their stored transcript without retranscribing
+the audio.
+
 Long inputs are converted to mono 16 kHz WAV and split into nine-minute
 fragments by default. Tune `DARSM_TRANSCRIPTION_CHUNK_SECONDS` and
 `DARSM_TRANSCRIPTION_CHUNK_MAX_BYTES` if the provider contract changes. Local

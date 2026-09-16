@@ -22,6 +22,10 @@ Objectif : mise à disposition d'une bêta privée à un client le 26 octobre 20
   - purge planifiée indépendante et suppression immédiate : terminé ;
   - mesure cumulative du stockage et écriture dans le registre : terminé.
 - Lot 3 : terminé le 14 septembre 2026.
+  - transcription horodatée et analyse éditoriale séparées : terminé ;
+  - chapitrage par changements de sous-sujet et titres générés depuis le contenu : terminé ;
+  - réanalyse d'un cours existant sans nouvelle transcription : terminé ;
+  - coût des jetons d'analyse estimé puis rapproché séparément : terminé.
 - Lot 4 : terminé le 14 septembre 2026.
   - lecteur audio et ouverture de l'analyse depuis le stockage objet : terminé ;
   - édition durable des titres, descriptions et timestamps : terminé ;
@@ -72,7 +76,7 @@ Le client pilote doit pouvoir :
 2. créer, modifier, ouvrir et supprimer un projet ;
 3. envoyer un cours audio et fermer la page sans arrêter le job ;
 4. retrouver les traitements et leurs erreurs depuis le dashboard ;
-5. transcrire et segmenter le cours dans le cloud ;
+5. transcrire puis structurer le cours en sous-chapitres sémantiques dans le cloud ;
 6. consulter les parties, modifier titres et timestamps, puis sélectionner une
    ou plusieurs parties ;
 7. écouter le résultat et produire un export audio ;
@@ -137,10 +141,18 @@ un coût calculé de 0,0601 USD. La comparaison avec le modèle local `base`
 confirme le choix de `whisper-1` pour la Beta : transcription plus cohérente et
 4,56 fois plus rapide sur le cours de référence.
 
+Le découpage temporel heuristique a ensuite été remplacé, pour la production,
+par une seconde étape d'analyse du texte transcrit. Elle impose une couverture
+continue de tous les segments, choisit les frontières selon les changements de
+sous-sujet et génère des titres et descriptions fidèles au contenu. Le mode
+heuristique reste disponible pour le développement local.
+
 - ajouter `TranscriptionProvider` et le fournisseur managé initial ;
 - calculer et afficher une estimation avant le lancement ;
 - extraire, compresser et découper les cours longs ;
 - conserver les timestamps lors de la fusion des fragments ;
+- analyser le texte pour extraire des sous-chapitres et titres spécifiques ;
+- permettre de relancer cette analyse sans retranscrire l'audio ;
 - enregistrer chaque appel facturable avec son identifiant fournisseur ;
 - rendre les tentatives et écritures idempotentes pour éviter les doubles coûts ;
 - exécuter segmentation et rendus dans les workers ;
