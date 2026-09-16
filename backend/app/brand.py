@@ -71,6 +71,7 @@ class TemplateCreate(BaseModel):
     size_bytes: int = Field(gt=0)
     usage_mode: Literal["static_frame", "animated"] = "static_frame"
     frame_seconds: float = Field(default=0, ge=0, le=24 * 60 * 60)
+    purpose: Literal["ready_image", "ai_reference"] = "ready_image"
 
     @field_validator("name", mode="before")
     @classmethod
@@ -103,6 +104,7 @@ class TemplateResponse(BaseModel):
     duration_seconds: float | None
     version: int
     frame_seconds: float
+    purpose: str
     zones: list[TemplateZone]
     preview_url: str | None
     created_at: datetime
@@ -158,6 +160,7 @@ def template_response(template: BrandTemplate, has_preview: bool) -> TemplateRes
         ),
         version=template.version,
         frame_seconds=float(template.settings.get("frame_seconds", 0)),
+        purpose=str(template.settings.get("purpose", "legacy")),
         zones=[TemplateZone.model_validate(zone) for zone in template.settings.get("zones", [])],
         preview_url=f"/api/brand/templates/{template.id}/preview" if has_preview else None,
         created_at=template.created_at,
@@ -307,7 +310,8 @@ def create_template(
         status="pending",
         settings={
             "frame_seconds": payload.frame_seconds,
-            "zones": [
+            "purpose": payload.purpose,
+            "zones": [] if payload.purpose == "ready_image" else [
                 {
                     "kind": "title",
                     "x": 0.08,

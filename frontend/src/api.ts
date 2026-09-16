@@ -40,6 +40,8 @@ export type Job = {
   content?: {
     title: string;
     part_indices: number[];
+    template_id?: string | null;
+    prompt?: string;
   } | null;
   processing_modes?: {
     transcription: "cloud" | "local";
@@ -197,6 +199,7 @@ export type BrandTemplate = {
   duration_seconds: number | null;
   version: number;
   frame_seconds: number;
+  purpose: "ready_image" | "ai_reference" | "legacy";
   zones: TemplateZone[];
   preview_url: string | null;
   created_at: string;
@@ -210,6 +213,20 @@ type TemplateUploadReservation = {
     url: string;
     fields: Record<string, string>;
   };
+};
+
+export type ImageGenerationQuote = {
+  provider: string;
+  model: string;
+  quality: string;
+  estimated_tokens: Record<string, number>;
+  currency: string;
+  amount: string;
+  requires_confirmation: boolean;
+  confirmation_reasons: ("approval_threshold" | "monthly_budget")[];
+  monthly_projected: string;
+  monthly_budget: string;
+  budget_state: "disabled" | "ok" | "warning" | "exceeded";
 };
 
 export type Payment = {
@@ -531,6 +548,7 @@ export const api = {
     file: File,
     usageMode: "static_frame" | "animated",
     frameSeconds: number,
+    purpose: "ready_image" | "ai_reference" = "ready_image",
     onStage?: (stage: "reserve" | "upload" | "validate") => void,
   ) => {
     onStage?.("reserve");
@@ -543,6 +561,7 @@ export const api = {
         size_bytes: file.size,
         usage_mode: usageMode,
         frame_seconds: frameSeconds,
+        purpose,
       }),
     });
     try {
@@ -581,6 +600,26 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ name, zones }),
     }),
+  imageGenerationQuote: (jobId: string) =>
+    request<ImageGenerationQuote>(`/api/jobs/${jobId}/images/generation-quote`),
+  createImageGeneration: (
+    jobId: string,
+    template: BrandTemplate,
+    outputFormat: "16:9" | "1:1" | "9:16",
+    title: string,
+    prompt: string,
+    costConfirmed: boolean,
+  ) => request<Job>(`/api/jobs/${jobId}/images/generate`, {
+    method: "POST",
+    body: JSON.stringify({
+      template_id: template.id,
+      template_version: template.version,
+      output_format: outputFormat,
+      title,
+      prompt,
+      cost_confirmed: costConfirmed,
+    }),
+  }),
   createVideoExport: (
     jobId: string,
     checksumSha256: string,
@@ -588,6 +627,7 @@ export const api = {
     template: BrandTemplate,
     outputFormat: "16:9" | "1:1" | "9:16",
     values: { title: string; speaker: string; date: string; episode: string },
+    imageJobId?: string,
   ) => request<Job>(`/api/jobs/${jobId}/exports/video`, {
     method: "POST",
     body: JSON.stringify({
@@ -596,6 +636,7 @@ export const api = {
       template_id: template.id,
       template_version: template.version,
       output_format: outputFormat,
+      image_job_id: imageJobId || null,
       ...values,
     }),
   }),

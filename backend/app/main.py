@@ -97,6 +97,8 @@ def artifact_filename(job: Job, artifact: str) -> str:
         values = job.options.get("values", {})
         if isinstance(values, dict):
             title = str(values.get("title", ""))
+    elif job.tool == "image_generation":
+        title = str(job.options.get("title", ""))
     elif job.tool == "archive_export":
         title = str(job.options.get("project_title", ""))
     slug = safe_filename(title).replace("_", "-").lower()[:120].strip("-")
@@ -110,6 +112,7 @@ def artifact_filename(job: Job, artifact: str) -> str:
         "analysis": "analyse.json",
         "audio": "audio-normalise.wav",
         "selection_audio": f"{prefix}{slug or 'extrait-audio'}.wav",
+        "generated_image": f"{slug or 'image-generee'}.png",
         "cover": f"{slug or 'couverture'}.png",
         "video": f"{slug or 'video'}.mp4",
         "archive": f"{slug or 'cours'}.dars",
@@ -322,6 +325,7 @@ def download_artifact(
         "analysis": "application/json",
         "audio": "audio/wav",
         "selection_audio": "audio/wav",
+        "generated_image": "image/png",
         "cover": "image/png",
         "video": "video/mp4",
         "archive": "application/vnd.dars-manager.archive",

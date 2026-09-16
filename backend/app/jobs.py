@@ -66,6 +66,13 @@ class Job:
                 ) or "Vidéo du cours",
                 "part_indices": list(self.options.get("part_indices", [])),
             }
+        elif self.tool == "image_generation":
+            content = {
+                "title": self.options.get("title") or "Image du cours",
+                "part_indices": [],
+                "template_id": self.options.get("template_id"),
+                "prompt": self.options.get("prompt", ""),
+            }
         return {
             "id": self.id,
             "project_id": self.project_id,

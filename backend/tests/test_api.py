@@ -31,6 +31,7 @@ from backend.app.config import settings as app_settings
 from backend.app.database import CURRENT_REVISION, SessionLocal, engine, init_database
 from backend.app.main import app, manager
 from backend.app.jobs import JobManager
+from backend.app.image_generation import ImageGenerationCall
 from backend.app.models import Artifact, Asset, BillingPolicy, UsageEvent, User, utc_now
 from backend.app.pipeline import (
     PipelineResult,
@@ -1089,6 +1090,53 @@ class ApiTests(unittest.TestCase):
             )
             self.assertEqual(configured_template.status_code, 200, configured_template.text)
             self.assertEqual(configured_template.json()["version"], 2)
+            image_quote = client.get(f"/api/jobs/{job.id}/images/generation-quote")
+            self.assertEqual(image_quote.status_code, 200, image_quote.text)
+            self.assertEqual(image_quote.json()["model"], app_settings.image_generation_model)
+            image_requested = client.post(
+                f"/api/jobs/{job.id}/images/generate",
+                json={
+                    "template_id": template_id,
+                    "template_version": 2,
+                    "output_format": "9:16",
+                    "title": "Titre du rendu",
+                    "prompt": "Une ambiance calme",
+                    "cost_confirmed": True,
+                },
+            )
+            self.assertEqual(image_requested.status_code, 202, image_requested.text)
+            image_job_id = image_requested.json()["id"]
+
+            class FakeImageGenerator:
+                def generate(self, reference, output, *, prompt, size):
+                    self.assert_reference = reference.read_bytes()
+                    self.assert_prompt = prompt
+                    self.assert_size = size
+                    output.write_bytes(b"generated-image")
+                    return ImageGenerationCall(
+                        provider="openai",
+                        model=app_settings.image_generation_model,
+                        request_id="req_image_api_test",
+                        input_text_tokens=30,
+                        input_image_tokens=400,
+                        output_image_tokens=700,
+                    )
+
+            fake_generator = FakeImageGenerator()
+            image_worker = Worker("image-worker")
+            image_worker.image_generator = fake_generator
+            self.assertTrue(image_worker.process(image_job_id))
+            self.assertEqual(fake_generator.assert_size, "1024x1536")
+            self.assertIn("Do not include any words", fake_generator.assert_prompt)
+            generated_image = client.get(
+                f"/api/jobs/{image_job_id}/artifacts/generated_image"
+            )
+            self.assertEqual(generated_image.status_code, 200, generated_image.text)
+            self.assertEqual(generated_image.content, b"generated-image")
+            self.assertIn(
+                "titre-du-rendu.png",
+                generated_image.headers["content-disposition"],
+            )
             video_requested = client.post(
                 f"/api/jobs/{job.id}/exports/video",
                 json={
@@ -1096,6 +1144,7 @@ class ApiTests(unittest.TestCase):
                     "part_indices": [1],
                     "template_id": template_id,
                     "template_version": 2,
+                    "image_job_id": image_job_id,
                     "output_format": "9:16",
                     "title": "Titre du rendu",
                     "speaker": "Intervenant",

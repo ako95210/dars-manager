@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, BillingSummary, CommunityAllocation, CommunityContribution, ImpactSummary, InvitationDetails, Job, JobAnalysis, Project, ProviderInvoice, TranscriptionQuote, User } from "./api";
 import { TemplateLibrary } from "./TemplateLibrary";
+import type { VisualMode } from "./TemplateLibrary";
 import { UserAdministration } from "./UserAdministration";
 import type { BrandTemplate } from "./api";
 
@@ -254,6 +255,10 @@ function CourseEditor({ job }: { job: Job }) {
   const [exporting, setExporting] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<BrandTemplate | null>(null);
+  const [visualMode, setVisualMode] = useState<VisualMode>("ready");
+  const [imagePrompt, setImagePrompt] = useState("");
+  const [imageJob, setImageJob] = useState<Job | null>(null);
+  const [generatingImage, setGeneratingImage] = useState(false);
   const [videoFormat, setVideoFormat] = useState<"16:9" | "1:1" | "9:16">("16:9");
   const [videoValues, setVideoValues] = useState({ title: "", speaker: "", date: "", episode: "" });
   const [renderingVideo, setRenderingVideo] = useState(false);
@@ -304,6 +309,7 @@ function CourseEditor({ job }: { job: Job }) {
           setSelectedParts(latestAudio.content.part_indices);
         }
         setVideoJob(jobs.find((item) => item.tool === "video_render" && item.parent_job_id === job.id) ?? null);
+        setImageJob(jobs.find((item) => item.tool === "image_generation" && item.parent_job_id === job.id) ?? null);
         setArchiveJob(jobs.find((item) => item.tool === "archive_export" && item.parent_job_id === job.id) ?? null);
         setReanalysisJob(jobs.find((item) => (
           item.tool === "semantic_reanalysis"
@@ -333,6 +339,16 @@ function CourseEditor({ job }: { job: Job }) {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [exportJob?.id, exportJob?.state]);
+
+  useEffect(() => {
+    if (!imageJob || terminalStates.has(imageJob.state)) return;
+    const timer = window.setInterval(() => {
+      api.job(imageJob.id)
+        .then(setImageJob)
+        .catch((reason) => setError(reason instanceof Error ? reason.message : "Suivi de l’image impossible."));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [imageJob?.id, imageJob?.state]);
 
   useEffect(() => {
     if (!videoJob || terminalStates.has(videoJob.state)) return;
@@ -479,11 +495,39 @@ function CourseEditor({ job }: { job: Job }) {
         selectedTemplate,
         videoFormat,
         videoValues,
+        visualMode === "ai" ? imageJob?.id : undefined,
       ));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Création de la vidéo impossible.");
     } finally {
       setRenderingVideo(false);
+    }
+  }
+
+  async function createImage() {
+    if (!selectedTemplate) return;
+    const title = videoValues.title.trim() || exportJob?.content?.title || "Cours audio";
+    setGeneratingImage(true);
+    setError("");
+    setNotice("");
+    try {
+      const quote = await api.imageGenerationQuote(job.id);
+      const confirmed = window.confirm(
+        `Générer cette image avec ${quote.model} pour un coût estimé à ${Number(quote.amount).toFixed(4)} ${quote.currency} ?`,
+      );
+      if (!confirmed) return;
+      setImageJob(await api.createImageGeneration(
+        job.id,
+        selectedTemplate,
+        videoFormat,
+        title,
+        imagePrompt,
+        true,
+      ));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Génération de l’image impossible.");
+    } finally {
+      setGeneratingImage(false);
     }
   }
 
@@ -519,6 +563,8 @@ function CourseEditor({ job }: { job: Job }) {
     }, 0);
   const exportProgress = Math.round(Math.max(0, Math.min(1, exportJob?.progress ?? 0)) * 100);
   const exportBusy = Boolean(exportJob && !terminalStates.has(exportJob.state));
+  const imageBusy = Boolean(imageJob && !terminalStates.has(imageJob.state));
+  const imageProgress = Math.round(Math.max(0, Math.min(1, imageJob?.progress ?? 0)) * 100);
   const videoBusy = Boolean(videoJob && !terminalStates.has(videoJob.state));
   const videoProgress = Math.round(Math.max(0, Math.min(1, videoJob?.progress ?? 0)) * 100);
   const archiveBusy = Boolean(archiveJob && !terminalStates.has(archiveJob.state));
@@ -526,6 +572,16 @@ function CourseEditor({ job }: { job: Job }) {
   const reanalysisBusy = Boolean(reanalysisJob && !terminalStates.has(reanalysisJob.state));
   const reanalysisProgress = Math.round(Math.max(0, Math.min(1, reanalysisJob?.progress ?? 0)) * 100);
   const audioReady = Boolean(exportJob?.state === "completed" && exportJob.artifacts.includes("selection_audio"));
+  const effectiveVideoTitle = videoValues.title.trim() || exportJob?.content?.title || "Cours audio";
+  const imageReady = Boolean(
+    imageJob?.state === "completed"
+    && imageJob.artifacts.includes("generated_image")
+    && imageJob.content?.title === effectiveVideoTitle
+    && imageJob.content?.template_id === selectedTemplate?.id
+    && (imageJob.content?.prompt || "") === imagePrompt.trim()
+    && imageJob.metrics.output_format === videoFormat
+  );
+  const visualReady = Boolean(selectedTemplate && (visualMode === "ready" || imageReady));
   const videoReady = Boolean(videoJob?.state === "completed" && videoJob.artifacts.includes("video"));
   const labs: { id: StudioLab; label: string; description: string; unlocked: boolean }[] = [
     { id: "audio-creation", label: "Création Audio", description: "Transcrire, chapitrer et sauvegarder les extraits", unlocked: true },
@@ -671,21 +727,46 @@ function CourseEditor({ job }: { job: Job }) {
 
           {activeLab === "video-creation" && audioReady && exportJob && (
             <section className="studio-lab-panel" role="tabpanel">
-              <header className="editor-heading"><div><span className="eyebrow">Création Vidéo</span><h2>Composer le support visuel</h2><p>Choisissez un template, complétez le titre et générez la vidéo depuis l’audio sauvegardé.</p></div><div className="selected-source-chip"><span>Audio</span><strong>{exportJob.content?.title || "Extrait audio"}</strong><button onClick={() => setActiveLab("audio-creation")}>Changer</button></div></header>
-              <TemplateLibrary onSelect={setSelectedTemplate} outputFormat={videoFormat} selectedId={selectedTemplate?.id || ""} />
-              <section className="video-template-choice">
-                <div><span className="eyebrow">Prochaine vidéo</span><h3>{selectedTemplate ? selectedTemplate.name : "Choisissez ou créez un template"}</h3><p>{selectedTemplate ? "Ce design sera appliqué à l’audio sélectionné." : "Importez une image ou une vidéo existante pour définir l’identité visuelle."}</p></div>
-                <div className="format-choice" aria-label="Format de sortie">{(["16:9", "1:1", "9:16"] as const).map((format) => <button className={videoFormat === format ? "active" : ""} key={format} onClick={() => setVideoFormat(format)} type="button"><span className={`ratio ratio-${format.replace(":", "-")}`} />{format}</button>)}</div>
+              <header className="editor-heading"><div><span className="eyebrow">Création Vidéo</span><h2>Associer un visuel à l’audio</h2><p>Importez une image finalisée dans Canva ou créez-en une depuis votre modèle visuel avec l’IA.</p></div><div className="selected-source-chip"><span>Audio</span><strong>{exportJob.content?.title || "Extrait audio"}</strong><button onClick={() => setActiveLab("audio-creation")}>Changer</button></div></header>
+
+              <section className="visual-mode-choice">
+                <button className={visualMode === "ready" ? "active" : ""} onClick={() => setVisualMode("ready")} type="button"><span>01</span><strong>Image prête</strong><small>Visuel finalisé dans Canva, utilisé sans modification</small></button>
+                <button className={visualMode === "ai" ? "active" : ""} onClick={() => setVisualMode("ai")} type="button"><span>02</span><strong>Génération IA</strong><small>Nouvelle image créée depuis un modèle visuel enregistré</small></button>
               </section>
-              <section className="image-source-choice"><div><strong>Image de fond</strong><p>Utilisez le template sélectionné ou importez votre propre création.</p></div><button className="button secondary" disabled title="La génération d’image sera ajoutée dans une prochaine étape" type="button">Générer une image avec l’IA</button></section>
+
+              <section className="video-basics">
+                <label>Titre du contenu<input maxLength={300} onChange={(event) => setVideoValues((current) => ({ ...current, title: event.target.value }))} placeholder={exportJob.content?.title || "Titre de l’audio"} value={videoValues.title} /></label>
+                <div><span>Format de sortie</span><div className="format-choice" aria-label="Format de sortie">{(["16:9", "1:1", "9:16"] as const).map((format) => <button className={videoFormat === format ? "active" : ""} key={format} onClick={() => setVideoFormat(format)} type="button"><span className={`ratio ratio-${format.replace(":", "-")}`} />{format}</button>)}</div></div>
+              </section>
+
+              <TemplateLibrary
+                mode={visualMode}
+                onSelect={setSelectedTemplate}
+                selectedId={selectedTemplate?.id || (visualMode === "ai" ? imageJob?.content?.template_id || "" : "")}
+              />
+
+              {visualMode === "ai" && (
+                <section className="ai-image-panel">
+                  <div className="ai-image-fields">
+                    <div><span className="eyebrow">Direction créative</span><h3>Générer le visuel du cours</h3><p>L’IA reprend le style du modèle. Le titre est ajouté ensuite par Dars Manager pour rester parfaitement lisible.</p></div>
+                    <label>Consigne complémentaire · optionnelle<textarea maxLength={1200} onChange={(event) => setImagePrompt(event.target.value)} placeholder="Exemple : ambiance nocturne, architecture islamique sobre, sans personnage…" rows={4} value={imagePrompt} /></label>
+                    <button className="button primary" disabled={!selectedTemplate || generatingImage || imageBusy || !effectiveVideoTitle} onClick={createImage} type="button">{generatingImage ? "Préparation…" : imageBusy ? "Génération en cours…" : imageReady ? "Régénérer l’image" : "Générer l’image avec l’IA"}</button>
+                  </div>
+                  {imageJob && (
+                    <div className={`generated-image-result ${imageJob.state}`}>
+                      {imageReady ? <img alt="Visuel généré pour le cours" src={api.artifactUrl(imageJob.id, "generated_image")} /> : <div><span className={`job-state ${imageJob.state}`}>{imageJob.state}</span><strong>{imageJob.error || imageJob.message}</strong>{imageBusy && <div className="export-progress"><strong>{imageProgress}%</strong><div className="progress-track"><span style={{ width: `${imageProgress}%` }} /></div></div>}</div>}
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {visualMode === "ready" && selectedTemplate?.preview_url && (
+                <section className="ready-image-preview"><img alt={`Visuel ${selectedTemplate.name}`} src={selectedTemplate.preview_url} /><div><span className="eyebrow">Aperçu</span><h3>{selectedTemplate.name}</h3><p>Cette image sera utilisée telle quelle. Le titre sert uniquement au nom du fichier et à la diffusion.</p></div></section>
+              )}
+
               <section className="video-composer">
-                <div className="video-fields">
-                  <label>Titre<input maxLength={300} onChange={(event) => setVideoValues((current) => ({ ...current, title: event.target.value }))} placeholder={exportJob.content?.title || "Titre de l’audio"} value={videoValues.title} /></label>
-                  <label>Intervenant<input maxLength={180} onChange={(event) => setVideoValues((current) => ({ ...current, speaker: event.target.value }))} value={videoValues.speaker} /></label>
-                  <label>Date<input maxLength={80} onChange={(event) => setVideoValues((current) => ({ ...current, date: event.target.value }))} value={videoValues.date} /></label>
-                  <label>Épisode<input maxLength={80} onChange={(event) => setVideoValues((current) => ({ ...current, episode: event.target.value }))} value={videoValues.episode} /></label>
-                </div>
-                <button className="button accent" disabled={!selectedTemplate || dirty || renderingVideo || videoBusy} onClick={createVideo} type="button">{renderingVideo ? "Préparation…" : videoBusy ? "Rendu en cours…" : "Générer la vidéo"}</button>
+                <div><span className="eyebrow">Dernière étape</span><strong>{visualReady ? "Le visuel et l’audio sont prêts" : visualMode === "ai" ? "Générez et validez d’abord l’image" : "Choisissez ou importez une image prête"}</strong></div>
+                <button className="button accent" disabled={!visualReady || dirty || renderingVideo || videoBusy || imageBusy} onClick={createVideo} type="button">{renderingVideo ? "Préparation…" : videoBusy ? "Rendu en cours…" : "Créer la vidéo"}</button>
               </section>
               {videoJob && (
                 <div className={`video-render-status ${videoJob.state}`}>

@@ -176,6 +176,51 @@ def seed_default_rates(db: Session) -> None:
             ),
             "details": {"published_rate": "1.20 USD/1M output tokens"},
         },
+        {
+            "provider": "openai",
+            "service": "image_generation",
+            "model": settings.image_generation_model,
+            "unit": "input_text_token",
+            "currency": "USD",
+            # USD 5.00 / 1M text input tokens.
+            "unit_amount_nanos": 5_000,
+            "effective_from": datetime(2026, 9, 16, tzinfo=timezone.utc),
+            "source_url": (
+                "https://developers.openai.com/api/docs/models/"
+                f"{settings.image_generation_model}"
+            ),
+            "details": {"published_rate": "5.00 USD/1M text input tokens"},
+        },
+        {
+            "provider": "openai",
+            "service": "image_generation",
+            "model": settings.image_generation_model,
+            "unit": "input_image_token",
+            "currency": "USD",
+            # USD 8.00 / 1M image input tokens.
+            "unit_amount_nanos": 8_000,
+            "effective_from": datetime(2026, 9, 16, tzinfo=timezone.utc),
+            "source_url": (
+                "https://developers.openai.com/api/docs/models/"
+                f"{settings.image_generation_model}"
+            ),
+            "details": {"published_rate": "8.00 USD/1M image input tokens"},
+        },
+        {
+            "provider": "openai",
+            "service": "image_generation",
+            "model": settings.image_generation_model,
+            "unit": "output_image_token",
+            "currency": "USD",
+            # USD 30.00 / 1M image output tokens.
+            "unit_amount_nanos": 30_000,
+            "effective_from": datetime(2026, 9, 16, tzinfo=timezone.utc),
+            "source_url": (
+                "https://developers.openai.com/api/docs/models/"
+                f"{settings.image_generation_model}"
+            ),
+            "details": {"published_rate": "30.00 USD/1M image output tokens"},
+        },
     ]
     for values in defaults:
         exists = db.scalar(

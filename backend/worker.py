@@ -25,6 +25,7 @@ from .app.database import SessionLocal, init_database
 from .app.job_state import DatabaseJobStateStore
 from .app.jobs import Job
 from .app.impact import record_impact
+from .app.image_generation import ImageGenerationCall, OpenAIReferenceImageGenerator
 from .app.media_lifecycle import meter_media
 from .app.models import Artifact, Asset, BrandTemplateFile, utc_now
 from .app.observability import configure_logging
@@ -65,6 +66,7 @@ class Worker:
         self.stop_requested = threading.Event()
         self.transcription_provider = None
         self.semantic_analyzer = None
+        self.image_generator = None
         if (
             settings.transcription_backend == "openai"
             or settings.semantic_analysis_backend == "openai"
@@ -81,6 +83,12 @@ class Worker:
             self.semantic_analyzer = OpenAISemanticAnalyzer(
                 api_key=settings.openai_api_key,
                 model=settings.semantic_analysis_model,
+                timeout_seconds=settings.openai_timeout_seconds,
+            )
+            self.image_generator = OpenAIReferenceImageGenerator(
+                api_key=settings.openai_api_key,
+                model=settings.image_generation_model,
+                quality=settings.image_generation_quality,
                 timeout_seconds=settings.openai_timeout_seconds,
             )
 
@@ -219,6 +227,38 @@ class Worker:
                     details={"purpose": "semantic_chapters_and_titles"},
                 )
             reconcile_job_estimates(db, job.id, "content_analysis")
+            db.commit()
+
+    def _record_image_generation_call(
+        self,
+        job: Job,
+        call: ImageGenerationCall,
+    ) -> None:
+        with SessionLocal() as db:
+            request_key = call.request_id or uuid.uuid4().hex
+            for quantity, unit in (
+                (call.input_text_tokens, "input_text_token"),
+                (call.input_image_tokens, "input_image_token"),
+                (call.output_image_tokens, "output_image_token"),
+            ):
+                if quantity <= 0:
+                    continue
+                record_usage(
+                    db,
+                    user_id=job.user_id,
+                    project_id=job.project_id,
+                    job_id=job.id,
+                    provider=call.provider,
+                    service="image_generation",
+                    model=call.model,
+                    quantity=quantity,
+                    unit=unit,
+                    status="confirmed",
+                    idempotency_key=f"image-generation:{job.id}:{request_key}:{unit}",
+                    provider_request_id=call.request_id,
+                    details={"purpose": "course_visual_from_reference"},
+                )
+            reconcile_job_estimates(db, job.id, "image_generation")
             db.commit()
 
     def _record_impact_event(
@@ -510,6 +550,124 @@ class Worker:
             storage.remove_workspace(job.workspace)
         return True
 
+    def _process_image_generation(
+        self,
+        job: Job,
+        heartbeat_stopped: threading.Event,
+        heartbeat: threading.Thread,
+    ) -> bool:
+        started = time.monotonic()
+        try:
+            if self.image_generator is None:
+                raise RuntimeError("La génération d'image OpenAI n'est pas configurée.")
+            reference_key = str(job.options.get("reference_storage_key", ""))
+            output_format = str(job.options.get("output_format", ""))
+            title = str(job.options.get("title", "")).strip()
+            instruction = str(job.options.get("prompt", "")).strip()
+            if not reference_key or output_format not in {"16:9", "1:1", "9:16"} or not title:
+                raise ValueError("Invalid image generation job")
+            self._save_progress(job, {
+                "stage": "preparing_image",
+                "message": "Préparation du modèle visuel",
+                "progress": 0.12,
+            })
+            reference_path = job.workspace / "reference.png"
+            media_storage.download_file(reference_key, reference_path)
+            reference_checksum = job.options.get("reference_checksum")
+            if reference_checksum and sha256_file(reference_path) != reference_checksum:
+                raise ValueError("Reference image checksum mismatch")
+            self._wait_if_paused(job)
+            output_path = job.workspace / "generated-image.png"
+            sizes = {
+                "16:9": "1536x1024",
+                "1:1": "1024x1024",
+                "9:16": "1024x1536",
+            }
+            prompt = (
+                "Create a new polished background image for an educational audio video. "
+                "Use the attached image strictly as the visual identity reference: preserve its "
+                "overall art direction, colors, mood and composition language, while creating a "
+                "new visual relevant to the course topic. Do not include any words, letters, "
+                "logos, captions or typography; the title will be added later by the application. "
+                f"Course topic: {title}."
+            )
+            if instruction:
+                prompt += f" Additional creative direction: {instruction}."
+            self._save_progress(job, {
+                "stage": "image_generation",
+                "message": "Génération de l'image avec l'IA",
+                "progress": 0.28,
+            })
+            call = self.image_generator.generate(
+                reference_path,
+                output_path,
+                prompt=prompt,
+                size=sizes[output_format],
+            )
+            self._record_image_generation_call(job, call)
+            self._wait_if_paused(job)
+            expiration = utc_now() + timedelta(seconds=settings.media_retention_seconds)
+            key = (
+                f"users/{job.user_id}/projects/{job.project_id}/jobs/"
+                f"{job.id}/generated-image.png"
+            )
+            media_storage.upload_file(key, output_path, "image/png")
+            row = Artifact(
+                user_id=job.user_id,
+                project_id=job.project_id,
+                job_id=job.id,
+                kind="generated_image",
+                mime_type="image/png",
+                size_bytes=output_path.stat().st_size,
+                storage_key=key,
+                checksum_sha256=sha256_file(output_path),
+                storage_metered_at=utc_now(),
+                expires_at=expiration,
+            )
+            with SessionLocal() as db:
+                previous = db.scalars(
+                    select(Artifact).where(
+                        Artifact.job_id == job.id,
+                        Artifact.kind == "generated_image",
+                    )
+                ).all()
+                for item in previous:
+                    meter_media(db, item)
+                    db.delete(item)
+                db.add(row)
+                db.commit()
+            job.artifacts = {"generated_image": key}
+            job.metrics = {
+                "elapsed_seconds": time.monotonic() - started,
+                "model": call.model,
+                "input_text_tokens": call.input_text_tokens,
+                "input_image_tokens": call.input_image_tokens,
+                "output_image_tokens": call.output_image_tokens,
+                "output_format": output_format,
+            }
+            job.state = "completed"
+            job.stage = "done"
+            job.message = "Image prête"
+            job.progress = 1.0
+            job.error = None
+        except AnalysisCancelled:
+            job.state = "cancelled"
+            job.message = "Génération de l'image annulée"
+        except Exception as exc:
+            job.state = "failed"
+            job.stage = "failed"
+            job.message = "Échec de la génération de l'image"
+            job.error = f"{type(exc).__name__}: {exc}"
+        finally:
+            heartbeat_stopped.set()
+            heartbeat.join(timeout=2)
+            job.worker_id = None
+            job.lease_expires_at = None
+            job.updated_at = time.time()
+            self.state.save(job.record())
+            storage.remove_workspace(job.workspace)
+        return True
+
     def _process_video_render(
         self,
         job: Job,
@@ -538,13 +696,23 @@ class Worker:
                         Artifact.kind == "audio",
                     )
                 )
-                template_source = db.scalar(
-                    select(BrandTemplateFile).where(
-                        BrandTemplateFile.template_id == template_id,
-                        BrandTemplateFile.user_id == job.user_id,
-                        BrandTemplateFile.kind == "source",
+                image_job_id = job.options.get("image_job_id")
+                if image_job_id:
+                    template_source = db.scalar(
+                        select(Artifact).where(
+                            Artifact.job_id == image_job_id,
+                            Artifact.user_id == job.user_id,
+                            Artifact.kind == "generated_image",
+                        )
                     )
-                )
+                else:
+                    template_source = db.scalar(
+                        select(BrandTemplateFile).where(
+                            BrandTemplateFile.template_id == template_id,
+                            BrandTemplateFile.user_id == job.user_id,
+                            BrandTemplateFile.kind == "source",
+                        )
+                    )
                 if source_audio is None or not source_audio.storage_key or template_source is None:
                     raise ValueError("Render source is unavailable")
                 audio_key = source_audio.storage_key
@@ -945,6 +1113,8 @@ class Worker:
             return self._process_semantic_reanalysis(job, heartbeat_stopped, heartbeat)
         if job.tool == "audio_selection":
             return self._process_audio_selection(job, heartbeat_stopped, heartbeat)
+        if job.tool == "image_generation":
+            return self._process_image_generation(job, heartbeat_stopped, heartbeat)
         if job.tool == "video_render":
             return self._process_video_render(job, heartbeat_stopped, heartbeat)
         if job.tool == "archive_export":

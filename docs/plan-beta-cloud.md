@@ -38,6 +38,10 @@ Objectif : mise à disposition d'une bêta privée à un client le 26 octobre 20
   - zones dynamiques titre/intervenant/date/épisode : terminé ;
   - rendus worker 16:9, 1:1 et 9:16, fixes ou animés : terminé ;
   - archive `.dars` contrôlée et réimport sans retranscription : terminé.
+  - parcours vidéo simplifié le 16 septembre : image Canva finalisée sans
+    modification, ou génération IA depuis une référence visuelle ;
+  - génération d'image exécutée par le worker, coût OpenAI rapproché par jetons
+    et titre ajouté de manière déterministe après génération : terminé.
 - Lot 5 : terminé le 14 septembre 2026.
   - ventilation mensuelle des coûts par projet : terminé ;
   - budget, seuil d'alerte et confirmation explicite des dépenses : terminé ;
@@ -171,6 +175,12 @@ templates image/vidéo versionnés, zones dynamiques et rendus multi-formats. Un
 archive `.dars` rassemble l'analyse corrigée, l'audio et les derniers rendus
 avec taille et empreinte SHA-256 par fichier. Son réimport restaure directement
 un cours éditable sans appeler le fournisseur de transcription.
+
+L'éditeur graphique interne a ensuite été retiré du parcours courant : une
+image produite dans Canva est considérée comme finale et n'est pas modifiée.
+L'alternative IA utilise une image de référence enregistrée, génère un nouveau
+fond sans texte dans le worker, puis applique le titre de façon déterministe
+avant l'encodage vidéo.
 
 - afficher et éditer les parties et timestamps ;
 - sélectionner et concaténer les passages ;

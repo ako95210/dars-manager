@@ -61,6 +61,8 @@ class Settings:
     transcription_chunk_max_bytes: int
     semantic_analysis_backend: str
     semantic_analysis_model: str
+    image_generation_model: str
+    image_generation_quality: str
     openai_api_key: str | None
     openai_timeout_seconds: float
     database_url: str
@@ -128,6 +130,13 @@ def load_settings() -> Settings:
     if semantic_analysis_backend not in {"heuristic", "openai"}:
         raise ValueError(
             "DARSM_SEMANTIC_ANALYSIS_BACKEND must be 'heuristic' or 'openai'"
+        )
+    image_generation_quality = os.environ.get(
+        "DARSM_IMAGE_GENERATION_QUALITY", "medium"
+    ).strip().lower()
+    if image_generation_quality not in {"low", "medium", "high"}:
+        raise ValueError(
+            "DARSM_IMAGE_GENERATION_QUALITY must be low, medium or high"
         )
     raw_storage_price = os.environ.get("DARSM_STORAGE_GB_MONTH_USD", "").strip()
     if media_backend == "s3" and not raw_storage_price:
@@ -221,6 +230,10 @@ def load_settings() -> Settings:
         semantic_analysis_model=os.environ.get(
             "DARSM_SEMANTIC_ANALYSIS_MODEL", "gpt-5.6-luna"
         ).strip(),
+        image_generation_model=os.environ.get(
+            "DARSM_IMAGE_GENERATION_MODEL", "gpt-image-2.5-sunburst"
+        ).strip(),
+        image_generation_quality=image_generation_quality,
         openai_api_key=secret_value("OPENAI_API_KEY") or None,
         openai_timeout_seconds=max(
             10.0, float(os.environ.get("DARSM_OPENAI_TIMEOUT_SECONDS", "900"))

@@ -71,6 +71,7 @@ class AudioExportRequest(BaseModel):
 class VideoExportRequest(AudioExportRequest):
     template_id: str = Field(min_length=32, max_length=32)
     template_version: int = Field(ge=1)
+    image_job_id: str | None = Field(default=None, min_length=32, max_length=32)
     output_format: str = Field(pattern=r"^(16:9|1:1|9:16)$")
     title: str = Field(default="", max_length=300)
     speaker: str = Field(default="", max_length=180)
@@ -80,6 +81,20 @@ class VideoExportRequest(AudioExportRequest):
     @field_validator("title", "speaker", "date", "episode", mode="before")
     @classmethod
     def strip_values(cls, value: str) -> str:
+        return value.strip()
+
+
+class ImageGenerationRequest(BaseModel):
+    template_id: str = Field(min_length=32, max_length=32)
+    template_version: int = Field(ge=1)
+    output_format: str = Field(pattern=r"^(16:9|1:1|9:16)$")
+    title: str = Field(min_length=1, max_length=300)
+    prompt: str = Field(default="", max_length=1_200)
+    cost_confirmed: bool = False
+
+    @field_validator("title", "prompt", mode="before")
+    @classmethod
+    def strip_prompt_values(cls, value: str) -> str:
         return value.strip()
 
 
@@ -285,6 +300,28 @@ def semantic_quote(db: Session, duration_seconds: float) -> tuple[int, int, int,
         input_quote.amount_nanos + output_quote.amount_nanos,
         input_quote.currency,
     )
+
+
+def image_generation_quote(db: Session) -> tuple[dict[str, int], int, str]:
+    # Conservative medium-quality estimate used for budget approval. The worker
+    # replaces it with the exact token usage returned by the provider.
+    quantities = {
+        "input_text_token": 500,
+        "input_image_token": 2_000,
+        "output_image_token": 3_000,
+    }
+    quotes = [
+        quote_usage(
+            db,
+            provider="openai",
+            service="image_generation",
+            model=settings.image_generation_model,
+            quantity=quantity,
+            unit=unit,
+        )
+        for unit, quantity in quantities.items()
+    ]
+    return quantities, sum(item.amount_nanos for item in quotes), quotes[0].currency
 
 
 @router.get("/{job_id}/analysis")
@@ -520,6 +557,169 @@ def create_semantic_reanalysis(
     return child.public()
 
 
+@router.get("/{job_id}/images/generation-quote")
+def quote_image_generation(
+    job_id: str,
+    user: User = Depends(require_client),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    source_job = owned_completed_job(user.id, job_id)
+    if source_job.tool != "audio_pipeline" or source_job.execution_backend != "worker":
+        raise HTTPException(status_code=409, detail="Ce cours ne permet pas la génération cloud.")
+    quantities, amount_nanos, currency = image_generation_quote(db)
+    control = cost_control(db, user_id=user.id, proposed_amount_nanos=amount_nanos)
+    return {
+        "provider": "openai",
+        "model": settings.image_generation_model,
+        "quality": settings.image_generation_quality,
+        "estimated_tokens": quantities,
+        "currency": currency,
+        "amount": money_string(amount_nanos),
+        "requires_confirmation": control.requires_confirmation,
+        "confirmation_reasons": list(control.confirmation_reasons),
+        "monthly_projected": money_string(control.projected_nanos),
+        "monthly_budget": money_string(control.monthly_budget_nanos),
+        "budget_state": control.state,
+    }
+
+
+@router.post("/{job_id}/images/generate", status_code=202)
+def create_image_generation(
+    job_id: str,
+    request: ImageGenerationRequest,
+    user: User = Depends(require_client),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    source_job = owned_completed_job(user.id, job_id)
+    if source_job.tool != "audio_pipeline" or source_job.execution_backend != "worker":
+        raise HTTPException(status_code=409, detail="Ce cours ne permet pas la génération cloud.")
+    template = db.scalar(
+        select(BrandTemplate).where(
+            BrandTemplate.id == request.template_id,
+            BrandTemplate.user_id == user.id,
+            BrandTemplate.status == "ready",
+        )
+    )
+    if template is None:
+        raise HTTPException(status_code=404, detail="Modèle visuel introuvable.")
+    if template.version != request.template_version:
+        raise HTTPException(status_code=409, detail="Le modèle visuel a changé. Rechargez-le.")
+    reference = db.scalar(
+        select(BrandTemplateFile).where(
+            BrandTemplateFile.template_id == template.id,
+            BrandTemplateFile.user_id == user.id,
+            BrandTemplateFile.kind == "preview",
+        )
+    )
+    if reference is None or not reference.storage_key:
+        raise HTTPException(status_code=404, detail="Image de référence introuvable.")
+
+    signature = {
+        "source_job_id": source_job.id,
+        "template_id": template.id,
+        "template_version": template.version,
+        "output_format": request.output_format,
+        "title": request.title,
+        "prompt": request.prompt,
+    }
+    previous = [
+        item
+        for item in manager.list_for_user(user.id, source_job.project_id)
+        if item.tool == "image_generation"
+        and item.options.get("source_job_id") == source_job.id
+    ]
+    identical = next(
+        (
+            item
+            for item in previous
+            if all(item.options.get(key) == value for key, value in signature.items())
+            and item.state not in {"completed", "failed", "cancelled", "expired"}
+        ),
+        None,
+    )
+    if identical is not None:
+        return identical.public()
+    if any(item.state not in {"completed", "failed", "cancelled", "expired"} for item in previous):
+        raise HTTPException(status_code=409, detail="Une image est déjà en cours de génération.")
+
+    quantities, amount_nanos, _currency = image_generation_quote(db)
+    control = cost_control(
+        db,
+        user_id=user.id,
+        proposed_amount_nanos=amount_nanos,
+        lock_policy=True,
+    )
+    if control.requires_confirmation and not request.cost_confirmed:
+        raise HTTPException(
+            status_code=409,
+            detail="Cette génération dépasse un seuil financier et doit être confirmée.",
+        )
+    title_zones = [
+        zone
+        for zone in template.settings.get("zones", [])
+        if isinstance(zone, dict) and zone.get("kind") == "title"
+    ]
+    if not title_zones:
+        title_zones = [{
+            "kind": "title",
+            "x": 0.08,
+            "y": 0.64,
+            "width": 0.84,
+            "height": 0.22,
+            "font_scale": 0.06,
+            "color": "#ffffff",
+            "align": "left",
+        }]
+    child = manager.create(
+        user.id,
+        source_job.project_id,
+        "image-generee.png",
+        settings.image_generation_model,
+        source_job.language,
+        settings.whisper_cpu_threads,
+        execution_backend="worker",
+        allocate_workspace=False,
+        tool="image_generation",
+        options={
+            **signature,
+            "reference_storage_key": reference.storage_key,
+            "reference_checksum": reference.checksum_sha256,
+            "quality": settings.image_generation_quality,
+            "template_zones": title_zones,
+        },
+    )
+    try:
+        for unit, quantity in quantities.items():
+            record_usage(
+                db,
+                user_id=user.id,
+                project_id=source_job.project_id,
+                job_id=child.id,
+                provider="openai",
+                service="image_generation",
+                model=settings.image_generation_model,
+                quantity=quantity,
+                unit=unit,
+                status="estimated",
+                idempotency_key=f"image-generation:{child.id}:estimate:{unit}",
+                details={
+                    "source": "reference_image_medium_quality",
+                    "source_job_id": source_job.id,
+                    "cost_confirmed": request.cost_confirmed,
+                },
+            )
+        db.commit()
+    except Exception:
+        db.rollback()
+        manager.delete(child)
+        raise
+    try:
+        job_queue.enqueue(child.id)
+    except Exception:
+        pass
+    return child.public()
+
+
 @router.post("/{job_id}/exports/audio", status_code=202)
 def create_audio_export(
     job_id: str,
@@ -661,6 +861,24 @@ def create_video_export(
             BrandTemplateFile.kind == "source",
         )
     )
+    generated_image = None
+    generated_job = None
+    if request.image_job_id:
+        generated_job = owned_completed_job(user.id, request.image_job_id)
+        if (
+            generated_job.tool != "image_generation"
+            or generated_job.project_id != source_job.project_id
+            or generated_job.options.get("source_job_id") != source_job.id
+            or generated_job.options.get("template_id") != template.id
+        ):
+            raise HTTPException(status_code=422, detail="L'image générée ne correspond pas à ce cours.")
+        generated_image = db.scalar(
+            select(Artifact).where(
+                Artifact.job_id == generated_job.id,
+                Artifact.user_id == user.id,
+                Artifact.kind == "generated_image",
+            )
+        )
     audio = db.scalar(
         select(Artifact).where(
             Artifact.job_id == source_job.id,
@@ -668,7 +886,12 @@ def create_video_export(
             Artifact.kind == "audio",
         )
     )
-    if template_source is None or audio is None or not audio.storage_key:
+    if (
+        template_source is None
+        or audio is None
+        or not audio.storage_key
+        or (request.image_job_id and (generated_image is None or not generated_image.storage_key))
+    ):
         raise HTTPException(status_code=404, detail="Un média nécessaire au rendu est introuvable.")
 
     analysis = analysis_artifact(db, source_job, user.id, for_update=True)
@@ -710,6 +933,7 @@ def create_video_export(
         "part_indices": canonical_indices,
         "template_id": template.id,
         "template_version": template.version,
+        "image_job_id": request.image_job_id,
         "output_format": request.output_format,
         "values": values,
     }
@@ -745,12 +969,20 @@ def create_video_export(
         options={
             **signature,
             "ranges": ranges,
-            "template_source_key": template_source.storage_key,
-            "template_source_checksum": template_source.checksum_sha256,
-            "template_source_kind": template.source_kind,
-            "template_usage_mode": template.usage_mode,
+            "template_source_key": (
+                generated_image.storage_key if generated_image else template_source.storage_key
+            ),
+            "template_source_checksum": (
+                generated_image.checksum_sha256 if generated_image else template_source.checksum_sha256
+            ),
+            "template_source_kind": "image" if generated_image else template.source_kind,
+            "template_usage_mode": "static_frame" if generated_image else template.usage_mode,
             "template_frame_seconds": float(template.settings.get("frame_seconds", 0)),
-            "template_zones": list(template.settings.get("zones", [])),
+            "template_zones": (
+                list(generated_job.options.get("template_zones", []))
+                if generated_job
+                else []
+            ),
         },
     )
     try:
