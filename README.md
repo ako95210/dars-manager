@@ -10,6 +10,10 @@ changements réels de sous-sujet et produit des sous-chapitres avec des titres
 fidèles au contenu. Un cours existant peut aussi être rechapitré sans relancer
 ni repayer sa transcription.
 
+Chaque nouveau traitement permet de choisir séparément la transcription cloud
+ou locale et le chapitrage IA ou local. Le devis reflète la combinaison choisie
+avant l'envoi ; les étapes locales n'engendrent aucun appel fournisseur.
+
 - exploitation et déploiement : `docs/exploitation-beta.md` ;
 - accueil du client pilote : `docs/guide-client-pilote.md` ;
 - décision de livraison : `docs/go-no-go-beta.md` ;

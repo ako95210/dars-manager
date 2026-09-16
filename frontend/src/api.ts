@@ -37,6 +37,10 @@ export type Job = {
   project_id: string;
   tool: "audio_pipeline" | "audio_selection" | string;
   parent_job_id?: string | null;
+  processing_modes?: {
+    transcription: "cloud" | "local";
+    chaptering: "ai" | "local";
+  } | null;
   source_asset_id?: string | null;
   source_expires_at?: string | null;
   state: "queued" | "running" | "paused" | "cancelling" | "completed" | "cancelled" | "failed" | "expired";
@@ -54,6 +58,8 @@ export type Job = {
     elapsed_seconds?: number;
     semantic_input_tokens?: number;
     semantic_output_tokens?: number;
+    transcription_mode?: "cloud" | "local";
+    chaptering_mode?: "ai" | "local";
     selected_parts?: number;
     template_id?: string;
     template_version?: number;
@@ -104,6 +110,8 @@ export type UsageEvent = {
 export type TranscriptionQuote = {
   provider: string;
   model: string;
+  transcription_mode: "cloud" | "local";
+  chaptering_mode: "ai" | "local";
   duration_seconds: number;
   billed_seconds: number;
   currency: string;
@@ -412,6 +420,8 @@ export const api = {
     file: File,
     language: string,
     estimatedDurationSeconds: number,
+    transcriptionMode: "cloud" | "local",
+    chapteringMode: "ai" | "local",
     costConfirmed = false,
     onStage?: (stage: "reserve" | "upload" | "validate" | "start") => void,
   ) => {
@@ -459,14 +469,24 @@ export const api = {
         asset_id: reservation.asset.id,
         language,
         estimated_duration_seconds: estimatedDurationSeconds,
+        transcription_mode: transcriptionMode,
+        chaptering_mode: chapteringMode,
         cost_confirmed: costConfirmed,
       }),
     });
   },
-  quoteTranscription: (durationSeconds: number) =>
+  quoteTranscription: (
+    durationSeconds: number,
+    transcriptionMode: "cloud" | "local",
+    chapteringMode: "ai" | "local",
+  ) =>
     request<TranscriptionQuote>("/api/transcription/quote", {
       method: "POST",
-      body: JSON.stringify({ duration_seconds: durationSeconds }),
+      body: JSON.stringify({
+        duration_seconds: durationSeconds,
+        transcription_mode: transcriptionMode,
+        chaptering_mode: chapteringMode,
+      }),
     }),
   job: (jobId: string) => request<Job>(`/api/jobs/${jobId}`),
   jobs: (projectId?: string) =>

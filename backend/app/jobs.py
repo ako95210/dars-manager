@@ -57,6 +57,18 @@ class Job:
             "project_id": self.project_id,
             "tool": self.tool,
             "parent_job_id": self.options.get("source_job_id"),
+            "processing_modes": (
+                {
+                    "transcription": self.options.get("transcription_mode"),
+                    "chaptering": self.options.get("chaptering_mode"),
+                }
+                if self.tool == "audio_pipeline"
+                and (
+                    self.options.get("transcription_mode")
+                    or self.options.get("chaptering_mode")
+                )
+                else None
+            ),
             "source_asset_id": self.source_asset_id,
             "source_expires_at": self.source_expires_at,
             "execution_backend": self.execution_backend,

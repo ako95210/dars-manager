@@ -418,6 +418,87 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(quote.json()["semantic_analysis"]["amount"], "0.000520")
             self.assertEqual(quote.json()["amount"], "0.009620")
 
+    def test_processing_modes_change_the_quote_independently(self) -> None:
+        with TestClient(app) as client:
+            self.login(client, "pilot-a@example.com", "mot-de-passe-a")
+            quotes = {}
+            for transcription_mode, chaptering_mode in (
+                ("cloud", "ai"),
+                ("cloud", "local"),
+                ("local", "ai"),
+                ("local", "local"),
+            ):
+                response = client.post(
+                    "/api/transcription/quote",
+                    json={
+                        "duration_seconds": 90.1,
+                        "transcription_mode": transcription_mode,
+                        "chaptering_mode": chaptering_mode,
+                    },
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                quotes[(transcription_mode, chaptering_mode)] = response.json()
+
+            self.assertEqual(quotes[("cloud", "ai")]["amount"], "0.009620")
+            self.assertEqual(quotes[("cloud", "local")]["amount"], "0.009100")
+            self.assertEqual(quotes[("local", "ai")]["amount"], "0.000520")
+            self.assertEqual(quotes[("local", "local")]["amount"], "0.000000")
+            self.assertEqual(quotes[("local", "local")]["model"], "base")
+
+    def test_local_modes_are_saved_on_the_job_without_cloud_usage(self) -> None:
+        content = b"local-processing-placeholder"
+        with TestClient(app) as client:
+            self.login(client, "pilot-a@example.com", "mot-de-passe-a")
+            project = client.post("/api/projects", json={"title": "Traitement local"})
+            self.assertEqual(project.status_code, 201, project.text)
+            project_id = project.json()["id"]
+            reservation = client.post(
+                "/api/uploads",
+                json={
+                    "project_id": project_id,
+                    "filename": "local.wav",
+                    "content_type": "audio/wav",
+                    "size_bytes": len(content),
+                },
+            )
+            self.assertEqual(reservation.status_code, 201, reservation.text)
+            asset_id = reservation.json()["asset"]["id"]
+            self.assertEqual(
+                client.put(reservation.json()["upload"]["url"], content=content).status_code,
+                200,
+            )
+            with patch("backend.app.uploads.manager.start"):
+                launched = client.post(
+                    "/api/jobs/from-asset",
+                    json={
+                        "asset_id": asset_id,
+                        "estimated_duration_seconds": 90,
+                        "transcription_mode": "local",
+                        "chaptering_mode": "local",
+                    },
+                )
+            self.assertEqual(launched.status_code, 202, launched.text)
+            job_id = launched.json()["id"]
+            self.assertEqual(
+                launched.json()["processing_modes"],
+                {"transcription": "local", "chaptering": "local"},
+            )
+            with SessionLocal() as db:
+                owner = db.scalar(select(User).where(User.email == "pilot-a@example.com"))
+                events = db.scalars(
+                    select(UsageEvent).where(UsageEvent.job_id == job_id)
+                ).all()
+                self.assertEqual(events, [])
+                owner_id = owner.id
+            saved = manager.get(owner_id, job_id)
+            self.assertIsNotNone(saved)
+            self.assertEqual(saved.model_name, "base")
+            self.assertEqual(saved.options["transcription_mode"], "local")
+            self.assertEqual(saved.options["chaptering_mode"], "local")
+            manager.delete(saved)
+            self.assertEqual(client.delete(f"/api/uploads/{asset_id}").status_code, 204)
+            self.assertEqual(client.delete(f"/api/projects/{project_id}").status_code, 204)
+
     def test_budget_policy_requires_confirmation_and_groups_project_costs(self) -> None:
         content = b"budget-audio-placeholder"
         with TestClient(app) as client:

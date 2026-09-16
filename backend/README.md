@@ -99,6 +99,13 @@ fragments by default. Tune `DARSM_TRANSCRIPTION_CHUNK_SECONDS` and
 development keeps `DARSM_TRANSCRIPTION_BACKEND=local` and can select
 `DARSM_LOCAL_WHISPER_MODEL=base` without an API key.
 
+The server defaults remain configurable, but a newly created audio job can
+override them independently with `transcription_mode` (`cloud` or `local`) and
+`chaptering_mode` (`ai` or `local`). Local transcription uses `faster-whisper`
+on the worker CPU; local chaptering uses deterministic lexical-cohesion topic
+boundaries and content keywords. Only selected cloud stages create provider
+usage entries.
+
 ## Run the API
 
 ```bash

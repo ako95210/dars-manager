@@ -26,6 +26,8 @@ Objectif : mise à disposition d'une bêta privée à un client le 26 octobre 20
   - chapitrage par changements de sous-sujet et titres générés depuis le contenu : terminé ;
   - réanalyse d'un cours existant sans nouvelle transcription : terminé ;
   - coût des jetons d'analyse estimé puis rapproché séparément : terminé.
+  - choix par traitement entre transcription cloud/locale et chapitrage IA/local : terminé ;
+  - devis adapté aux quatre combinaisons et explications dans l'interface : terminé.
 - Lot 4 : terminé le 14 septembre 2026.
   - lecteur audio et ouverture de l'analyse depuis le stockage objet : terminé ;
   - édition durable des titres, descriptions et timestamps : terminé ;

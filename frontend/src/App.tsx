@@ -1287,6 +1287,8 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
   const [actionPending, setActionPending] = useState(false);
   const [error, setError] = useState("");
   const [costConfirmed, setCostConfirmed] = useState(false);
+  const [transcriptionMode, setTranscriptionMode] = useState<"cloud" | "local">("cloud");
+  const [chapteringMode, setChapteringMode] = useState<"ai" | "local">("ai");
   const fileIsArchive = Boolean(file?.name.toLowerCase().endsWith(".dars"));
 
   useEffect(() => {
@@ -1302,14 +1304,14 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
     setQuoteLoading(true);
     setError("");
     inspectAudioDuration(file)
-      .then((duration) => api.quoteTranscription(duration))
+      .then((duration) => api.quoteTranscription(duration, transcriptionMode, chapteringMode))
       .then((value) => { if (active) setQuote(value); })
       .catch((reason) => {
         if (active) setError(reason instanceof Error ? reason.message : "Estimation impossible.");
       })
       .finally(() => { if (active) setQuoteLoading(false); });
     return () => { active = false; };
-  }, [file]);
+  }, [file, transcriptionMode, chapteringMode]);
 
   useEffect(() => {
     let active = true;
@@ -1350,6 +1352,8 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
           file,
           "fr",
           quote!.duration_seconds,
+          transcriptionMode,
+          chapteringMode,
           costConfirmed,
           setUploadStage,
         ));
@@ -1423,9 +1427,39 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
             <strong>{file ? file.name : "Sélectionner un audio ou une archive .dars"}</strong>
             <small>{file ? `${(file.size / 1024 / 1024).toFixed(1)} Mo` : "Audio ou .dars · 500 Mo maximum"}</small>
           </label>
+          {!fileIsArchive && (
+            <div className="processing-modes">
+              <fieldset className="mode-group">
+                <legend>Mode de transcription</legend>
+                <div className="mode-options">
+                  <label className={transcriptionMode === "cloud" ? "mode-option active" : "mode-option"}>
+                    <input checked={transcriptionMode === "cloud"} name="transcription-mode" onChange={() => setTranscriptionMode("cloud")} type="radio" />
+                    <span><strong>Cloud — recommandé</strong><small><b>Avantages :</b> meilleure précision, plus rapide, particulièrement sur les noms et les passages multilingues.</small><small><b>Inconvénient :</b> facturation selon la durée de l’audio.</small></span>
+                  </label>
+                  <label className={transcriptionMode === "local" ? "mode-option active" : "mode-option"}>
+                    <input checked={transcriptionMode === "local"} name="transcription-mode" onChange={() => setTranscriptionMode("local")} type="radio" />
+                    <span><strong>Serveur local — économique</strong><small><b>Avantages :</b> aucun appel de transcription facturé, traitement sur le serveur Dars Manager.</small><small><b>Inconvénients :</b> plus lent, qualité plus variable et attente possible dans la file.</small></span>
+                  </label>
+                </div>
+              </fieldset>
+              <fieldset className="mode-group">
+                <legend>Mode de chapitrage</legend>
+                <div className="mode-options">
+                  <label className={chapteringMode === "ai" ? "mode-option active" : "mode-option"}>
+                    <input checked={chapteringMode === "ai"} name="chaptering-mode" onChange={() => setChapteringMode("ai")} type="radio" />
+                    <span><strong>IA — recommandé</strong><small><b>Avantages :</b> meilleure compréhension des sous-sujets, titres et résumés plus éloquents.</small><small><b>Inconvénient :</b> faible coût supplémentaire calculé selon le texte.</small></span>
+                  </label>
+                  <label className={chapteringMode === "local" ? "mode-option active" : "mode-option"}>
+                    <input checked={chapteringMode === "local"} name="chaptering-mode" onChange={() => setChapteringMode("local")} type="radio" />
+                    <span><strong>Script local — sans coût IA</strong><small><b>Avantages :</b> aucun appel facturé, résultat déterministe fondé sur les ruptures de vocabulaire.</small><small><b>Inconvénient :</b> titres plus simples et changements de sujet moins finement compris.</small></span>
+                  </label>
+                </div>
+              </fieldset>
+            </div>
+          )}
           <div className="upload-options">
             <div className="transcription-quote">
-              <span>{fileIsArchive ? "Restauration du cours" : "Estimation traitement IA cloud"}</span>
+              <span>{fileIsArchive ? "Restauration du cours" : "Estimation du traitement choisi"}</span>
               {fileIsArchive ? (
                 <>
                   <strong>0 coût de transcription</strong>
@@ -1436,12 +1470,10 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
               ) : quote ? (
                 <>
                   <strong>≈ {Number(quote.amount).toFixed(4)} {quote.currency}</strong>
-                  <small>{formatDuration(quote.duration_seconds)} · {quote.model} · coût réel rapproché après traitement</small>
+                  <small>{formatDuration(quote.duration_seconds)} · transcription {quote.transcription_mode === "cloud" ? "cloud" : `locale (${quote.model})`} · chapitrage {quote.chaptering_mode === "ai" ? "IA" : "local"}</small>
                   <small>
                     Transcription {Number(quote.transcription_amount).toFixed(4)} {quote.currency}
-                    {Number(quote.semantic_analysis.amount) > 0
-                      ? ` · chapitrage ${Number(quote.semantic_analysis.amount).toFixed(4)} ${quote.currency}`
-                      : ""}
+                    {` · chapitrage ${Number(quote.semantic_analysis.amount).toFixed(4)} ${quote.currency}`}
                   </small>
                   {quote.budget_state !== "disabled" && (
                     <small>Projection mensuelle : {formatCurrency(quote.monthly_projected, quote.currency)} / {formatCurrency(quote.monthly_budget, quote.currency)}</small>
@@ -1474,6 +1506,12 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
               <span className={`job-state ${job.state}`}>{job.state}</span>
               <h2>{job.state === "completed" ? "Contenus prêts" : "Traitement en cours"}</h2>
               <p>{job.error || job.message}</p>
+              {job.processing_modes && (
+                <small>
+                  Transcription {job.processing_modes.transcription === "cloud" ? "cloud" : "locale"}
+                  {" · "}chapitrage {job.processing_modes.chaptering === "ai" ? "IA" : "local"}
+                </small>
+              )}
             </div>
             <strong className="progress-value">{progress}%</strong>
           </div>

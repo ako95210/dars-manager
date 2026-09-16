@@ -6,6 +6,7 @@ import hashlib
 import importlib.metadata
 import importlib.util
 import json
+import math
 import os
 import re
 import time
@@ -76,44 +77,9 @@ STOPWORDS = {
     "le", "du", "de", "un", "en", "et", "ou", "au", "aux", "ce", "ça",
     "sa", "se", "ses", "son", "sur", "pas", "ne", "ni", "que", "qui",
     "il", "ils", "on", "allah", "azawajel", "salam", "professeur",
-    "prophète", "prophete", "taib", "naam",
+    "prophète", "prophete", "taib", "naam", "permet", "permettre",
+    "utilise", "utiliser", "produit", "produire", "pendant",
 }
-
-TITLE_RULES = [
-    (("gouverneur", "gouverneurs", "emir", "imam", "obeir", "obeissance", "ecoute"), "Obéissance au gouverneur", 1.0),
-    (("preuve", "preuves", "verset", "hadith", "authentique", "comprehension", "salaf"), "Méthodologie des preuves", 1.4),
-    (("hudhayfa", "hudaifa", "khalifa", "muslim", "mousselim", "imams", "suivront", "conformeront", "fouette", "argent", "injustice"), "Hadith sur les gouverneurs injustes", 2.4),
-    (("egypte", "moubarak", "morsi", "freres", "musulmans", "manifestation"), "Exemple politique contemporain", 2.3),
-    (("peines", "legales", "butin", "zakat", "autorite", "mandate"), "Autorité publique et peines légales", 2.2),
-    (("savants", "reseaux", "youtube", "twitter", "facebook", "fitna", "troubles"), "Parler des troubles et revenir aux savants", 2.0),
-    (("vendredi", "priere", "imam", "mosquee", "raka", "innovation"), "Prière derrière l’imam", 2.1),
-    (("bidat", "innovation", "innovateur", "islam", "contraint", "annule"), "Prier derrière un innovateur", 2.0),
-]
-
-SUBTITLE_RULES = [
-    (("desobeissance", "createur", "interdit", "ordonne", "obeissance"), "limites de l’obéissance", 2.0),
-    (("fitna", "troubles", "reseaux", "huile", "feu", "rebeller"), "éviter l’agitation publique", 2.1),
-    (("pieux", "pervers", "pervert", "difference"), "pieux ou pervers", 2.2),
-    (("satisfaire", "gouverneurs", "ambiguite", "accusation", "preuve"), "réponse à l’accusation de complaisance", 2.2),
-    (("preuve", "preuves", "verset", "hadith", "comprehension", "salaf"), "comment utiliser les preuves", 2.0),
-    (("innovateur", "innovateurs", "melange", "vrai", "faux", "sectes"), "mélange du vrai et du faux", 2.1),
-    (("hudhayfa", "hudaifa", "khalifa", "muslim", "mousselim", "imams", "sunnah", "compagnons", "suivront", "conformeront"), "hadith de Hudhayfa", 2.3),
-    (("fouette", "argent", "injustice", "injuste", "fouetter"), "obéir malgré l’injustice", 3.2),
-    (("habach", "esclave", "raisin", "lointain", "tribu", "statut"), "statut social du gouverneur", 3.5),
-    (("egypte", "moubarak", "morsi", "manifestations", "revolte"), "Égypte: Moubarak et Morsi", 2.5),
-    (("constitution", "lois", "charia", "chia", "contradiction"), "contradictions politiques", 2.2),
-    (("batailles", "campagnes", "militaires", "butin", "zakat"), "butin, zakat et campagnes", 2.3),
-    (("peines", "legales", "voleur", "voler", "main", "appliquer"), "application des peines par l’autorité", 2.3),
-    (("hierarchie", "famille", "mari", "femme", "enfants", "organisation"), "hiérarchie et ordre religieux", 2.2),
-    (("savants", "jeunes", "sang", "guerres", "communaute", "questionner"), "affaires graves et grands savants", 2.3),
-    (("youtube", "twitter", "facebook", "journalistes", "reseaux", "vues"), "réseaux sociaux et prises de parole", 2.4),
-    (("palestine", "haine", "insulter", "medisance", "denigrer"), "dénigrement des gouverneurs", 2.5),
-    (("vendredi", "jumu", "raka", "complete", "refait", "innovation"), "validité de la prière du vendredi", 2.4),
-    (("annule", "annuler", "fatiha", "tachahoud", "refais", "recommences"), "innovation qui annule la prière", 2.7),
-    (("moucaffer", "sortir", "islam", "hulul", "sacrifie", "contraint"), "innovation hors de la prière", 2.4),
-    (("mosquee", "rang", "grossis", "recitation", "quartier", "salafides"), "choisir la mosquée à fréquenter", 2.4),
-]
-
 
 def strip_accents(text: str) -> str:
     normalized = unicodedata.normalize("NFKD", text)
@@ -157,35 +123,21 @@ def words_for(text: str) -> list[str]:
     return [word for word in normalize(text).split() if len(word) > 3 and word not in STOPWORDS]
 
 
-def score_rule(counts: Counter[str], keywords: tuple[str, ...], weight: float) -> float:
-    return sum(counts[normalize(keyword)] for keyword in keywords) * weight
-
-
-def best_subtitle(counts: Counter[str]) -> str:
-    best_score = 0.0
-    best_name = ""
-    for keywords, subtitle, weight in SUBTITLE_RULES:
-        score = score_rule(counts, keywords, weight)
-        if score > best_score:
-            best_score = score
-            best_name = subtitle
-    return best_name if best_score >= 2 else ""
-
-
 def best_title(text: str, index: int) -> str:
     counts = Counter(words_for(text))
-    best_score = 0.0
-    best_name = ""
-    for keywords, title, weight in TITLE_RULES:
-        score = score_rule(counts, keywords, weight)
-        if score > best_score:
-            best_score = score
-            best_name = title
-    if best_name:
-        subtitle = best_subtitle(counts)
-        return f"{best_name} - {subtitle}" if subtitle else best_name
-    top = [word for word, _ in counts.most_common(3)]
-    return f"Partie {index} - {', '.join(top)}" if top else f"Partie {index}"
+    surfaces: dict[str, str] = {}
+    for word in re.findall(r"[^\W\d_][^\W_'-]{2,}", text, re.UNICODE):
+        normalized = normalize(word)
+        if normalized and normalized not in surfaces:
+            surfaces[normalized] = word
+    top = [surfaces.get(word, word) for word, _ in counts.most_common(3)]
+    if len(top) >= 3:
+        return f"{top[0].capitalize()}, {top[1]} et {top[2]}"
+    if len(top) == 2:
+        return f"{top[0].capitalize()} et {top[1]}"
+    if top:
+        return top[0].capitalize()
+    return f"Partie {index}"
 
 
 def split_sentences(text: str) -> list[str]:
@@ -246,42 +198,89 @@ def refine_repeated_titles(parts: list[CoursePart]) -> list[CoursePart]:
     return parts
 
 
+def lexical_similarity(left: list[TranscriptSegment], right: list[TranscriptSegment]) -> float:
+    left_counts = Counter(words_for(" ".join(segment.text for segment in left)))
+    right_counts = Counter(words_for(" ".join(segment.text for segment in right)))
+    if not left_counts or not right_counts:
+        return 1.0
+    shared = set(left_counts) & set(right_counts)
+    numerator = sum(left_counts[word] * right_counts[word] for word in shared)
+    left_norm = math.sqrt(sum(value * value for value in left_counts.values()))
+    right_norm = math.sqrt(sum(value * value for value in right_counts.values()))
+    return numerator / (left_norm * right_norm) if left_norm and right_norm else 1.0
+
+
+def topic_boundary_scores(segments: list[TranscriptSegment]) -> list[float]:
+    """Score every inter-segment boundary using local lexical cohesion."""
+    scores = [0.0] * len(segments)
+    for boundary in range(1, len(segments)):
+        left_start = boundary - 1
+        while (
+            left_start > 0
+            and segments[boundary - 1].end - segments[left_start - 1].start <= 120
+        ):
+            left_start -= 1
+        right_end = boundary
+        while (
+            right_end + 1 < len(segments)
+            and segments[right_end + 1].end - segments[boundary].start <= 120
+        ):
+            right_end += 1
+        similarity = lexical_similarity(
+            segments[left_start:boundary],
+            segments[boundary : right_end + 1],
+        )
+        transition_bonus = 0.18 if TRANSITION_RE.search(normalize(segments[boundary].text)) else 0.0
+        scores[boundary] = min(1.0, 1.0 - similarity + transition_bonus)
+    return scores
+
+
 def segment_course(segments: list[TranscriptSegment]) -> list[CoursePart]:
     if not segments:
         return []
-    parts: list[CoursePart] = []
-    current: list[TranscriptSegment] = []
-    for segment in segments:
-        if current:
-            current_duration = current[-1].end - current[0].start
-            gap = segment.start - current[-1].end
-            is_transition = bool(TRANSITION_RE.search(normalize(segment.text)))
-            should_split = (
-                (is_transition and current_duration >= MIN_PART_SECONDS)
-                or current_duration >= MAX_PART_SECONDS
-                or (gap >= 8 and current_duration >= 90)
-            )
-            if should_split:
-                parts.append(make_part(len(parts) + 1, current))
-                current = []
-        current.append(segment)
-    if current:
-        parts.append(make_part(len(parts) + 1, current))
-
-    merged: list[CoursePart] = []
-    buffer: list[TranscriptSegment] = []
-    for part in parts:
-        part_segments = [TranscriptSegment(part.start, part.end, part.transcript)]
-        if not buffer:
-            buffer = part_segments
-        elif part.end - part.start < 75:
-            buffer.extend(part_segments)
+    scores = topic_boundary_scores(segments)
+    boundaries = [0]
+    start = 0
+    while start < len(segments) - 1:
+        minimum_time = segments[start].start + MIN_PART_SECONDS
+        maximum_time = segments[start].start + MAX_PART_SECONDS
+        candidates = [
+            index
+            for index in range(start + 1, len(segments))
+            if segments[index].start >= minimum_time
+            and segments[index].start <= maximum_time
+        ]
+        natural = [
+            index
+            for index in candidates
+            if scores[index] >= 0.72
+        ]
+        if natural:
+            cut = natural[0]
+        elif segments[-1].end <= maximum_time:
+            break
+        elif candidates:
+            cut = max(candidates, key=lambda index: scores[index])
         else:
-            merged.append(make_part(len(merged) + 1, buffer))
-            buffer = part_segments
-    if buffer:
-        merged.append(make_part(len(merged) + 1, buffer))
-    return refine_repeated_titles(merged)
+            cut = next(
+                (
+                    index
+                    for index in range(start + 1, len(segments))
+                    if segments[index].start >= maximum_time
+                ),
+                len(segments),
+            )
+        if cut >= len(segments):
+            break
+        boundaries.append(cut)
+        start = cut
+    boundaries.append(len(segments))
+    parts = [
+        make_part(index, segments[start:end])
+        for index, (start, end) in enumerate(zip(boundaries, boundaries[1:]), start=1)
+        if start < end
+    ]
+    return refine_repeated_titles(parts)
 
 
 def dependency_status() -> list[dict[str, str]]:

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import hashlib
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
@@ -69,6 +69,8 @@ class JobFromAsset(BaseModel):
     language: str = Field(default="fr", min_length=2, max_length=20)
     estimated_duration_seconds: float | None = Field(default=None, gt=0, le=24 * 60 * 60)
     cost_confirmed: bool = False
+    transcription_mode: Literal["cloud", "local"] | None = None
+    chaptering_mode: Literal["ai", "local"] | None = None
 
 
 class AssetResponse(BaseModel):
@@ -243,7 +245,13 @@ def create_job_from_asset(
     user: User = Depends(require_client),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    if settings.transcription_backend == "openai":
+    transcription_mode = payload.transcription_mode or (
+        "cloud" if settings.transcription_backend == "openai" else "local"
+    )
+    chaptering_mode = payload.chaptering_mode or (
+        "ai" if settings.semantic_analysis_backend == "openai" else "local"
+    )
+    if transcription_mode == "cloud":
         model = payload.model or settings.transcription_model
         if model != settings.transcription_model:
             raise HTTPException(status_code=422, detail="Unsupported transcription model")
@@ -257,7 +265,11 @@ def create_job_from_asset(
     if asset.status != "ready" or not asset.storage_key:
         raise HTTPException(status_code=409, detail="Asset upload is not complete")
     cost_decision = None
-    if settings.transcription_backend == "openai":
+    transcription_amount_nanos = 0
+    analysis_input_tokens = 0
+    analysis_output_tokens = 0
+    analysis_amount_nanos = 0
+    if transcription_mode == "cloud":
         transcription_quote = quote_usage(
             db,
             provider="openai",
@@ -266,32 +278,33 @@ def create_job_from_asset(
             quantity=math.ceil(payload.estimated_duration_seconds or 0),
             unit="audio_second",
         )
-        analysis_input_tokens = 0
-        analysis_output_tokens = 0
-        analysis_amount_nanos = 0
-        if settings.semantic_analysis_backend == "openai":
-            analysis_input_tokens, analysis_output_tokens = estimate_semantic_tokens(
-                payload.estimated_duration_seconds or 0
+        transcription_amount_nanos = transcription_quote.amount_nanos
+    if chaptering_mode == "ai":
+        if payload.estimated_duration_seconds is None:
+            raise HTTPException(status_code=422, detail="Audio duration estimate is required")
+        analysis_input_tokens, analysis_output_tokens = estimate_semantic_tokens(
+            payload.estimated_duration_seconds
+        )
+        analysis_amount_nanos = sum(
+            quote_usage(
+                db,
+                provider="openai",
+                service="content_analysis",
+                model=settings.semantic_analysis_model,
+                quantity=quantity,
+                unit=unit,
+            ).amount_nanos
+            for quantity, unit in (
+                (analysis_input_tokens, "input_token"),
+                (analysis_output_tokens, "output_token"),
             )
-            analysis_amount_nanos = sum(
-                quote_usage(
-                    db,
-                    provider="openai",
-                    service="content_analysis",
-                    model=settings.semantic_analysis_model,
-                    quantity=quantity,
-                    unit=unit,
-                ).amount_nanos
-                for quantity, unit in (
-                    (analysis_input_tokens, "input_token"),
-                    (analysis_output_tokens, "output_token"),
-                )
-            )
+        )
+    if transcription_amount_nanos or analysis_amount_nanos:
         cost_decision = cost_control(
             db,
             user_id=user.id,
             proposed_amount_nanos=(
-                transcription_quote.amount_nanos + analysis_amount_nanos
+                transcription_amount_nanos + analysis_amount_nanos
             ),
             lock_policy=True,
         )
@@ -312,32 +325,37 @@ def create_job_from_asset(
             source_expires_at=asset.expires_at.isoformat(),
             execution_backend=settings.execution_backend,
             allocate_workspace=settings.execution_backend == "inline",
+            options={
+                "transcription_mode": transcription_mode,
+                "chaptering_mode": chaptering_mode,
+            },
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if settings.transcription_backend == "openai":
+    if transcription_mode == "cloud" or chaptering_mode == "ai":
         try:
-            record_usage(
-                db,
-                user_id=user.id,
-                project_id=asset.project_id,
-                job_id=job.id,
-                provider="openai",
-                service="transcription",
-                model=settings.transcription_model,
-                quantity=math.ceil(payload.estimated_duration_seconds or 0),
-                unit="audio_second",
-                status="estimated",
-                idempotency_key=f"transcription:{job.id}:estimate",
-                details={
-                    "source": "browser_audio_metadata",
-                    "cost_confirmed": payload.cost_confirmed,
-                    "confirmation_reasons": (
-                        list(cost_decision.confirmation_reasons) if cost_decision else []
-                    ),
-                },
-            )
-            if settings.semantic_analysis_backend == "openai":
+            if transcription_mode == "cloud":
+                record_usage(
+                    db,
+                    user_id=user.id,
+                    project_id=asset.project_id,
+                    job_id=job.id,
+                    provider="openai",
+                    service="transcription",
+                    model=settings.transcription_model,
+                    quantity=math.ceil(payload.estimated_duration_seconds or 0),
+                    unit="audio_second",
+                    status="estimated",
+                    idempotency_key=f"transcription:{job.id}:estimate",
+                    details={
+                        "source": "browser_audio_metadata",
+                        "cost_confirmed": payload.cost_confirmed,
+                        "confirmation_reasons": (
+                            list(cost_decision.confirmation_reasons) if cost_decision else []
+                        ),
+                    },
+                )
+            if chaptering_mode == "ai":
                 for quantity, unit in (
                     (analysis_input_tokens, "input_token"),
                     (analysis_output_tokens, "output_token"),

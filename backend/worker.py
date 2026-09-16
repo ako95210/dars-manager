@@ -72,13 +72,12 @@ class Worker:
             raise RuntimeError(
                 "OPENAI_API_KEY or OPENAI_API_KEY_FILE is required by the worker"
             )
-        if settings.transcription_backend == "openai":
+        if settings.openai_api_key:
             self.transcription_provider = OpenAIWhisperProvider(
                 api_key=settings.openai_api_key,
                 model=settings.transcription_model,
                 timeout_seconds=settings.openai_timeout_seconds,
             )
-        if settings.semantic_analysis_backend == "openai":
             self.semantic_analyzer = OpenAISemanticAnalyzer(
                 api_key=settings.openai_api_key,
                 model=settings.semantic_analysis_model,
@@ -1004,6 +1003,26 @@ class Worker:
                 semantic_input_tokens += call.input_tokens
                 semantic_output_tokens += call.output_tokens
 
+            transcription_mode = str(
+                job.options.get("transcription_mode", settings.transcription_backend)
+            )
+            chaptering_mode = str(
+                job.options.get(
+                    "chaptering_mode",
+                    "ai" if settings.semantic_analysis_backend == "openai" else "local",
+                )
+            )
+            if transcription_mode not in {"cloud", "local", "openai"}:
+                raise ValueError("Unsupported transcription mode")
+            if chaptering_mode not in {"ai", "local", "openai", "heuristic"}:
+                raise ValueError("Unsupported chaptering mode")
+            use_cloud_transcription = transcription_mode in {"cloud", "openai"}
+            use_ai_chaptering = chaptering_mode in {"ai", "openai"}
+            if use_cloud_transcription and self.transcription_provider is None:
+                raise ValueError("Cloud transcription provider is unavailable")
+            if use_ai_chaptering and self.semantic_analyzer is None:
+                raise ValueError("AI chaptering provider is unavailable")
+
             provider = (
                 CheckpointingTranscriptionProvider(
                     self.transcription_provider,
@@ -1012,9 +1031,10 @@ class Worker:
                     session_factory=SessionLocal,
                     retention_seconds=settings.media_retention_seconds,
                 )
-                if self.transcription_provider
+                if use_cloud_transcription and self.transcription_provider
                 else None
             )
+            semantic_analyzer = self.semantic_analyzer if use_ai_chaptering else None
             result = run_pipeline(
                 job.input_path,
                 job.workspace,
@@ -1029,11 +1049,11 @@ class Worker:
                 transcription_chunk_seconds=settings.transcription_chunk_seconds,
                 transcription_chunk_max_bytes=settings.transcription_chunk_max_bytes,
                 on_transcription_usage=(
-                    record_transcription if self.transcription_provider else None
+                    record_transcription if provider else None
                 ),
-                semantic_analyzer=self.semantic_analyzer,
+                semantic_analyzer=semantic_analyzer,
                 on_semantic_usage=(
-                    record_semantic_analysis if self.semantic_analyzer else None
+                    record_semantic_analysis if semantic_analyzer else None
                 ),
             )
             self._wait_if_paused(job)
@@ -1066,6 +1086,8 @@ class Worker:
                 "transcription_checkpoint_hits": transcription_checkpoint_hits,
                 "semantic_input_tokens": semantic_input_tokens,
                 "semantic_output_tokens": semantic_output_tokens,
+                "transcription_mode": "cloud" if use_cloud_transcription else "local",
+                "chaptering_mode": "ai" if use_ai_chaptering else "local",
             }
             job.error = None
         except AnalysisCancelled:
