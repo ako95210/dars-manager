@@ -183,15 +183,6 @@ function InvitationAcceptance({ token }: { token: string }) {
 }
 
 const terminalStates = new Set(["completed", "cancelled", "failed", "expired"]);
-const artifactLabels: Record<string, string> = {
-  analysis: "Analyse JSON",
-  audio: "Audio normalisé",
-  selection_audio: "Sélection audio",
-  cover: "Image de couverture",
-  video: "Vidéo prête à publier",
-  archive: "Archive portable .dars",
-};
-
 function formatDuration(seconds?: number) {
   if (seconds === undefined) return "—";
   const rounded = Math.round(seconds);
@@ -235,6 +226,8 @@ type PartDraft = {
   transcript: string;
 };
 
+type StudioLab = "audio-creation" | "audio-adjustment" | "video-creation" | "distribution";
+
 function analysisDrafts(analysis: JobAnalysis): PartDraft[] {
   return analysis.parts.map((part) => ({
     ...part,
@@ -244,6 +237,7 @@ function analysisDrafts(analysis: JobAnalysis): PartDraft[] {
 }
 
 function CourseEditor({ job }: { job: Job }) {
+  const [activeLab, setActiveLab] = useState<StudioLab>("audio-creation");
   const [analysis, setAnalysis] = useState<JobAnalysis | null>(null);
   const [parts, setParts] = useState<PartDraft[]>([]);
   const [loading, setLoading] = useState(true);
@@ -252,6 +246,7 @@ function CourseEditor({ job }: { job: Job }) {
   const [notice, setNotice] = useState("");
   const [selectedParts, setSelectedParts] = useState<number[]>([]);
   const [exportJob, setExportJob] = useState<Job | null>(null);
+  const [audioExports, setAudioExports] = useState<Job[]>([]);
   const [videoJob, setVideoJob] = useState<Job | null>(null);
   const [archiveJob, setArchiveJob] = useState<Job | null>(null);
   const [reanalysisJob, setReanalysisJob] = useState<Job | null>(null);
@@ -301,7 +296,13 @@ function CourseEditor({ job }: { job: Job }) {
     api.jobs(job.project_id)
       .then((jobs) => {
         if (!active) return;
-        setExportJob(jobs.find((item) => item.tool === "audio_selection" && item.parent_job_id === job.id) ?? null);
+        const savedAudio = jobs.filter((item) => item.tool === "audio_selection" && item.parent_job_id === job.id);
+        const latestAudio = savedAudio[0] ?? null;
+        setAudioExports(savedAudio);
+        setExportJob(latestAudio);
+        if (latestAudio?.content?.part_indices.length) {
+          setSelectedParts(latestAudio.content.part_indices);
+        }
         setVideoJob(jobs.find((item) => item.tool === "video_render" && item.parent_job_id === job.id) ?? null);
         setArchiveJob(jobs.find((item) => item.tool === "archive_export" && item.parent_job_id === job.id) ?? null);
         setReanalysisJob(jobs.find((item) => (
@@ -319,7 +320,15 @@ function CourseEditor({ job }: { job: Job }) {
     if (!exportJob || terminalStates.has(exportJob.state)) return;
     const timer = window.setInterval(() => {
       api.job(exportJob.id)
-        .then(setExportJob)
+        .then((updated) => {
+          setExportJob(updated);
+          setAudioExports((current) => {
+            const found = current.some((item) => item.id === updated.id);
+            return found
+              ? current.map((item) => item.id === updated.id ? updated : item)
+              : [updated, ...current];
+          });
+        })
         .catch((reason) => setError(reason instanceof Error ? reason.message : "Suivi de l’export impossible."));
     }, 1000);
     return () => window.clearInterval(timer);
@@ -443,7 +452,9 @@ function CourseEditor({ job }: { job: Job }) {
     setError("");
     setNotice("");
     try {
-      setExportJob(await api.createAudioExport(job.id, analysis.checksum_sha256, selectedParts));
+      const created = await api.createAudioExport(job.id, analysis.checksum_sha256, selectedParts);
+      setExportJob(created);
+      setAudioExports((current) => [created, ...current.filter((item) => item.id !== created.id)]);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Création de l’export impossible.");
     } finally {
@@ -514,45 +525,34 @@ function CourseEditor({ job }: { job: Job }) {
   const archiveProgress = Math.round(Math.max(0, Math.min(1, archiveJob?.progress ?? 0)) * 100);
   const reanalysisBusy = Boolean(reanalysisJob && !terminalStates.has(reanalysisJob.state));
   const reanalysisProgress = Math.round(Math.max(0, Math.min(1, reanalysisJob?.progress ?? 0)) * 100);
+  const audioReady = Boolean(exportJob?.state === "completed" && exportJob.artifacts.includes("selection_audio"));
+  const videoReady = Boolean(videoJob?.state === "completed" && videoJob.artifacts.includes("video"));
+  const labs: { id: StudioLab; label: string; description: string; unlocked: boolean }[] = [
+    { id: "audio-creation", label: "Création Audio", description: "Transcrire, chapitrer et sauvegarder les extraits", unlocked: true },
+    { id: "audio-adjustment", label: "Ajustement Audio", description: "Étape optionnelle de montage et d’enrichissement", unlocked: audioReady },
+    { id: "video-creation", label: "Création Vidéo", description: "Composer le support visuel à partir d’un audio", unlocked: audioReady },
+    { id: "distribution", label: "Diffusion", description: "Télécharger ou publier sur YouTube et Telegram", unlocked: videoReady },
+  ];
 
   return (
     <section className="course-editor">
-      <header className="editor-heading">
-        <div>
-          <span className="eyebrow">Atelier éditorial</span>
-          <h2>Relire et structurer le cours</h2>
-          <p>Écoutez le rendu puis ajustez les titres, descriptions et limites de chaque partie.</p>
-        </div>
-        <div className="project-header-actions">
-          <button className="button secondary compact" disabled={loading || !analysis || reanalysisBusy} onClick={reanalyze}>
-            {reanalysisBusy ? "Analyse des sous-sujets…" : "Recréer les chapitres avec l’IA"}
+      <nav aria-label="Étapes du studio" className="studio-tabs" role="tablist">
+        {labs.map((lab, index) => (
+          <button
+            aria-disabled={!lab.unlocked}
+            aria-selected={activeLab === lab.id}
+            className={`${activeLab === lab.id ? "active" : ""} ${lab.unlocked ? "" : "locked"}`}
+            key={lab.id}
+            onClick={() => lab.unlocked && setActiveLab(lab.id)}
+            role="tab"
+            type="button"
+          >
+            <span>{lab.unlocked ? String(index + 1).padStart(2, "0") : "🔒"}</span>
+            <strong>{lab.label}</strong>
+            <small>{lab.description}</small>
           </button>
-          <button className="button primary compact" disabled={loading || saving || !analysis || reanalysisBusy} onClick={save}>
-            {saving ? "Enregistrement…" : "Enregistrer les corrections"}
-          </button>
-        </div>
-      </header>
-
-      {reanalysisJob && (
-        <div className={`export-status ${reanalysisJob.state}`}>
-          <div>
-            <span className={`job-state ${reanalysisJob.state}`}>{reanalysisJob.state}</span>
-            <strong>Analyse éditoriale des sous-sujets</strong>
-            <small>{reanalysisJob.error || reanalysisJob.message}</small>
-          </div>
-          {reanalysisBusy && (
-            <div className="export-progress"><strong>{reanalysisProgress}%</strong><div className="progress-track"><span style={{ width: `${reanalysisProgress}%` }} /></div></div>
-          )}
-        </div>
-      )}
-
-      {job.artifacts.includes("audio") && (
-        <div className="audio-review">
-          <span aria-hidden="true">▶</span>
-          <div><strong>{analysis?.audio_name || "Audio du cours"}</strong><small>{formatDuration(analysis?.duration_seconds)} · audio normalisé</small></div>
-          <audio controls preload="metadata" src={api.artifactUrl(job.id, "audio")} />
-        </div>
-      )}
+        ))}
+      </nav>
 
       {error && (
         <div className="editor-feedback error">
@@ -566,122 +566,147 @@ function CourseEditor({ job }: { job: Job }) {
         <div className="editor-loading"><span className="loader" /><p>Ouverture de l’analyse…</p></div>
       ) : analysis && (
         <>
-          <div className="selection-toolbar">
-            <div>
-              <span className="eyebrow">Sélection audio</span>
-              <strong>{selectedParts.length} partie{selectedParts.length > 1 ? "s" : ""} · {formatDuration(selectedDuration)}</strong>
-            </div>
-            <div>
-              <button className="button secondary" onClick={() => setSelectedParts(
-                selectedParts.length === parts.length ? [] : parts.map((part) => part.index)
-              )}>{selectedParts.length === parts.length ? "Tout désélectionner" : "Tout sélectionner"}</button>
-              <button className="button accent" disabled={selectedParts.length === 0 || exporting || dirty || exportBusy} onClick={createExport}>
-                {exporting ? "Préparation…" : exportBusy ? "Export en cours…" : "Générer l’audio sélectionné"}
-              </button>
-            </div>
-          </div>
+          {activeLab === "audio-creation" && (
+            <section className="studio-lab-panel" role="tabpanel">
+              <header className="editor-heading">
+                <div>
+                  <span className="eyebrow">Création Audio</span>
+                  <h2>Créer des extraits structurés et réutilisables</h2>
+                  <p>Relisez le chapitrage, corrigez les titres puis sauvegardez les parties utiles sous forme d’audios courts.</p>
+                </div>
+                <div className="project-header-actions">
+                  <button className="button secondary compact" disabled={!analysis || reanalysisBusy} onClick={reanalyze}>
+                    {reanalysisBusy ? "Analyse des sous-sujets…" : "Recréer les chapitres avec l’IA"}
+                  </button>
+                  <button className="button primary compact" disabled={saving || reanalysisBusy} onClick={save}>
+                    {saving ? "Enregistrement…" : "Enregistrer les corrections"}
+                  </button>
+                </div>
+              </header>
 
-          {!exportLoading && exportJob && (
-            <div className={`export-status ${exportJob.state}`}>
+              {reanalysisJob && (
+                <div className={`export-status ${reanalysisJob.state}`}>
+                  <div><span className={`job-state ${reanalysisJob.state}`}>{reanalysisJob.state}</span><strong>Analyse des sous-sujets</strong><small>{reanalysisJob.error || reanalysisJob.message}</small></div>
+                  {reanalysisBusy && <div className="export-progress"><strong>{reanalysisProgress}%</strong><div className="progress-track"><span style={{ width: `${reanalysisProgress}%` }} /></div></div>}
+                </div>
+              )}
+
+              {job.artifacts.includes("audio") && (
+                <div className="audio-review">
+                  <span aria-hidden="true">▶</span>
+                  <div><strong>{analysis.audio_name || "Audio du cours"}</strong><small>{formatDuration(analysis.duration_seconds)} · source de travail</small></div>
+                  <audio controls preload="metadata" src={api.artifactUrl(job.id, "audio")} />
+                </div>
+              )}
+
+              <div className="selection-toolbar">
+                <div><span className="eyebrow">Sélection audio</span><strong>{selectedParts.length} partie{selectedParts.length > 1 ? "s" : ""} · {formatDuration(selectedDuration)}</strong></div>
+                <div>
+                  <button className="button secondary" onClick={() => setSelectedParts(selectedParts.length === parts.length ? [] : parts.map((part) => part.index))}>{selectedParts.length === parts.length ? "Tout désélectionner" : "Tout sélectionner"}</button>
+                  <button className="button accent" disabled={selectedParts.length === 0 || exporting || dirty || exportBusy} onClick={createExport}>{exporting ? "Préparation…" : exportBusy ? "Sauvegarde en cours…" : "Sauvegarder l’audio sélectionné"}</button>
+                </div>
+              </div>
+
+              {!exportLoading && exportJob && exportJob.state !== "completed" && (
+                <div className={`export-status ${exportJob.state}`}>
+                  <div><span className={`job-state ${exportJob.state}`}>{exportJob.state}</span><strong>Sauvegarde de l’extrait audio</strong><small>{exportJob.error || exportJob.message}</small></div>
+                  {!terminalStates.has(exportJob.state) && <div className="export-progress"><strong>{exportProgress}%</strong><div className="progress-track"><span style={{ width: `${exportProgress}%` }} /></div></div>}
+                </div>
+              )}
+
+              {audioExports.some((item) => item.state === "completed") && (
+                <section className="saved-audio-library">
+                  <header><div><span className="eyebrow">Audios sauvegardés</span><h3>Choisissez l’audio à utiliser dans les étapes suivantes</h3></div><span>{audioExports.filter((item) => item.state === "completed").length} audio(s)</span></header>
+                  <div>
+                    {audioExports.filter((item) => item.state === "completed").map((item) => (
+                      <article className={exportJob?.id === item.id ? "selected" : ""} key={item.id}>
+                        <button onClick={() => { setExportJob(item); setSelectedParts(item.content?.part_indices || []); }} type="button">
+                          <span>♪</span><strong>{item.content?.title || "Extrait audio"}</strong><small>{formatDuration(item.metrics.duration_seconds)}</small>
+                        </button>
+                        <audio controls preload="metadata" src={api.artifactUrl(item.id, "selection_audio")} />
+                        <a className="button secondary" download href={api.artifactUrl(item.id, "selection_audio")}>Télécharger</a>
+                      </article>
+                    ))}
+                  </div>
+                  <footer>
+                    <button className="button secondary" onClick={() => setActiveLab("audio-adjustment")}>Ajuster cet audio</button>
+                    <button className="button accent" onClick={() => setActiveLab("video-creation")}>Créer directement la vidéo</button>
+                  </footer>
+                </section>
+              )}
+
+              <div className="course-parts">
+                {parts.map((part, position) => (
+                  <article className={`course-part ${selectedParts.includes(part.index) ? "selected" : ""}`} key={part.index}>
+                    <div className="part-number"><label className="part-selector"><input checked={selectedParts.includes(part.index)} onChange={() => togglePart(part.index)} type="checkbox" /><span>Sélectionner</span></label><span>Partie</span><strong>{String(position + 1).padStart(2, "0")}</strong></div>
+                    <div className="part-fields">
+                      <label className="part-title">Titre<input maxLength={180} onChange={(event) => changePart(position, "title", event.target.value)} value={part.title} /></label>
+                      <div className="time-fields"><label>Début<input aria-label={`Début de la partie ${position + 1}`} inputMode="decimal" onChange={(event) => changePart(position, "start", event.target.value)} value={part.start} /></label><span>→</span><label>Fin<input aria-label={`Fin de la partie ${position + 1}`} inputMode="decimal" onChange={(event) => changePart(position, "end", event.target.value)} value={part.end} /></label></div>
+                      <label className="part-description">Description<textarea maxLength={4000} onChange={(event) => changePart(position, "description", event.target.value)} rows={3} value={part.description} /></label>
+                      <details className="transcript-preview"><summary>Voir la transcription de cette partie</summary><p>{part.transcript || "Aucun texte dans cet intervalle."}</p></details>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {activeLab === "audio-adjustment" && audioReady && exportJob && (
+            <section className="studio-lab-panel audio-adjustment-lab" role="tabpanel">
               <div>
-                <span className={`job-state ${exportJob.state}`}>{exportJob.state}</span>
-                <strong>{exportJob.state === "completed" ? "Sélection audio prête" : "Export de la sélection"}</strong>
-                <small>{exportJob.error || exportJob.message}</small>
+                <span className="eyebrow">Ajustement Audio · optionnel</span>
+                <h2>Affiner l’audio avant la création vidéo</h2>
+                <p>Vous pouvez ignorer cette étape et conserver exactement l’extrait produit dans Création Audio.</p>
               </div>
-              {exportJob.state === "completed" && exportJob.artifacts.includes("selection_audio") ? (
-                <div className="export-result">
-                  <audio controls preload="metadata" src={api.artifactUrl(exportJob.id, "selection_audio")} />
-                  <a className="button secondary" download href={api.artifactUrl(exportJob.id, "selection_audio")}>Télécharger</a>
-                </div>
-              ) : !terminalStates.has(exportJob.state) ? (
-                <div className="export-progress"><strong>{exportProgress}%</strong><div className="progress-track"><span style={{ width: `${exportProgress}%` }} /></div></div>
-              ) : null}
-            </div>
+              <div className="adjustment-source"><div><span>Audio sélectionné</span><strong>{exportJob.content?.title || "Extrait audio"}</strong><small>{formatDuration(exportJob.metrics.duration_seconds)}</small></div><audio controls preload="metadata" src={api.artifactUrl(exportJob.id, "selection_audio")} /></div>
+              <div className="adjustment-tools-preview">
+                <article><span>↔</span><strong>Durée et silences</strong><p>Raccourcir l’extrait ou préparer des respirations entre les séquences.</p></article>
+                <article><span>◉</span><strong>Volume et transitions</strong><p>Uniformiser le niveau sonore et adoucir les entrées et sorties.</p></article>
+                <article><span>＋</span><strong>Ajout de voix</strong><p>Importer un complément vocal sans modifier l’original sauvegardé.</p></article>
+              </div>
+              <p className="lab-roadmap-note">Les outils de montage non destructif seront activés dans la prochaine étape de développement. L’audio original reste disponible.</p>
+              <div className="lab-next-actions"><button className="button secondary" onClick={() => setActiveLab("audio-creation")}>Retour à Création Audio</button><button className="button accent" onClick={() => setActiveLab("video-creation")}>Passer sans ajustement</button></div>
+            </section>
           )}
 
-          <div className="course-parts">
-          {parts.map((part, position) => (
-            <article className={`course-part ${selectedParts.includes(part.index) ? "selected" : ""}`} key={part.index}>
-              <div className="part-number">
-                <label className="part-selector"><input checked={selectedParts.includes(part.index)} onChange={() => togglePart(part.index)} type="checkbox" /><span>Sélectionner</span></label>
-                <span>Partie</span><strong>{String(position + 1).padStart(2, "0")}</strong>
-              </div>
-              <div className="part-fields">
-                <label className="part-title">Titre<input maxLength={180} onChange={(event) => changePart(position, "title", event.target.value)} value={part.title} /></label>
-                <div className="time-fields">
-                  <label>Début<input aria-label={`Début de la partie ${position + 1}`} inputMode="decimal" onChange={(event) => changePart(position, "start", event.target.value)} value={part.start} /></label>
-                  <span>→</span>
-                  <label>Fin<input aria-label={`Fin de la partie ${position + 1}`} inputMode="decimal" onChange={(event) => changePart(position, "end", event.target.value)} value={part.end} /></label>
+          {activeLab === "video-creation" && audioReady && exportJob && (
+            <section className="studio-lab-panel" role="tabpanel">
+              <header className="editor-heading"><div><span className="eyebrow">Création Vidéo</span><h2>Composer le support visuel</h2><p>Choisissez un template, complétez le titre et générez la vidéo depuis l’audio sauvegardé.</p></div><div className="selected-source-chip"><span>Audio</span><strong>{exportJob.content?.title || "Extrait audio"}</strong><button onClick={() => setActiveLab("audio-creation")}>Changer</button></div></header>
+              <TemplateLibrary onSelect={setSelectedTemplate} outputFormat={videoFormat} selectedId={selectedTemplate?.id || ""} />
+              <section className="video-template-choice">
+                <div><span className="eyebrow">Prochaine vidéo</span><h3>{selectedTemplate ? selectedTemplate.name : "Choisissez ou créez un template"}</h3><p>{selectedTemplate ? "Ce design sera appliqué à l’audio sélectionné." : "Importez une image ou une vidéo existante pour définir l’identité visuelle."}</p></div>
+                <div className="format-choice" aria-label="Format de sortie">{(["16:9", "1:1", "9:16"] as const).map((format) => <button className={videoFormat === format ? "active" : ""} key={format} onClick={() => setVideoFormat(format)} type="button"><span className={`ratio ratio-${format.replace(":", "-")}`} />{format}</button>)}</div>
+              </section>
+              <section className="image-source-choice"><div><strong>Image de fond</strong><p>Utilisez le template sélectionné ou importez votre propre création.</p></div><button className="button secondary" disabled title="La génération d’image sera ajoutée dans une prochaine étape" type="button">Générer une image avec l’IA</button></section>
+              <section className="video-composer">
+                <div className="video-fields">
+                  <label>Titre<input maxLength={300} onChange={(event) => setVideoValues((current) => ({ ...current, title: event.target.value }))} placeholder={exportJob.content?.title || "Titre de l’audio"} value={videoValues.title} /></label>
+                  <label>Intervenant<input maxLength={180} onChange={(event) => setVideoValues((current) => ({ ...current, speaker: event.target.value }))} value={videoValues.speaker} /></label>
+                  <label>Date<input maxLength={80} onChange={(event) => setVideoValues((current) => ({ ...current, date: event.target.value }))} value={videoValues.date} /></label>
+                  <label>Épisode<input maxLength={80} onChange={(event) => setVideoValues((current) => ({ ...current, episode: event.target.value }))} value={videoValues.episode} /></label>
                 </div>
-                <label className="part-description">Description<textarea maxLength={4000} onChange={(event) => changePart(position, "description", event.target.value)} rows={3} value={part.description} /></label>
-                <details className="transcript-preview"><summary>Voir la transcription de cette partie</summary><p>{part.transcript || "Aucun texte dans cet intervalle."}</p></details>
-              </div>
-            </article>
-          ))}
-          </div>
-
-          <TemplateLibrary
-            onSelect={setSelectedTemplate}
-            outputFormat={videoFormat}
-            selectedId={selectedTemplate?.id || ""}
-          />
-          <section className="video-template-choice">
-            <div>
-              <span className="eyebrow">Prochaine vidéo</span>
-              <h3>{selectedTemplate ? selectedTemplate.name : "Choisissez un template"}</h3>
-              <p>{selectedTemplate ? "Ce design sera proposé au moment de générer la vidéo." : "Importez ou sélectionnez une identité visuelle ci-dessus."}</p>
-            </div>
-            <div className="format-choice" aria-label="Format de sortie">
-              {(["16:9", "1:1", "9:16"] as const).map((format) => (
-                <button className={videoFormat === format ? "active" : ""} key={format} onClick={() => setVideoFormat(format)} type="button">
-                  <span className={`ratio ratio-${format.replace(":", "-")}`} />
-                  {format}
-                </button>
-              ))}
-            </div>
-          </section>
-          <section className="video-composer">
-            <div className="video-fields">
-              <label>Titre<input maxLength={300} onChange={(event) => setVideoValues((current) => ({ ...current, title: event.target.value }))} placeholder="Par défaut : titres des parties" value={videoValues.title} /></label>
-              <label>Intervenant<input maxLength={180} onChange={(event) => setVideoValues((current) => ({ ...current, speaker: event.target.value }))} value={videoValues.speaker} /></label>
-              <label>Date<input maxLength={80} onChange={(event) => setVideoValues((current) => ({ ...current, date: event.target.value }))} value={videoValues.date} /></label>
-              <label>Épisode<input maxLength={80} onChange={(event) => setVideoValues((current) => ({ ...current, episode: event.target.value }))} value={videoValues.episode} /></label>
-            </div>
-            <button className="button accent" disabled={!selectedTemplate || selectedParts.length === 0 || dirty || renderingVideo || videoBusy} onClick={createVideo} type="button">
-              {renderingVideo ? "Préparation…" : videoBusy ? "Rendu en cours…" : "Générer la couverture et la vidéo"}
-            </button>
-          </section>
-          {videoJob && (
-            <div className={`video-render-status ${videoJob.state}`}>
-              <div><span className={`job-state ${videoJob.state}`}>{videoJob.state}</span><strong>{videoJob.state === "completed" ? "Vidéo prête à diffuser" : "Rendu vidéo"}</strong><small>{videoJob.error || videoJob.message}</small></div>
-              {videoJob.state === "completed" ? (
-                <div className="video-artifacts">
-                  {(["cover", "video", "selection_audio"] as const).filter((kind) => videoJob.artifacts.includes(kind)).map((kind) => <a className="button secondary" download href={api.artifactUrl(videoJob.id, kind)} key={kind}>{kind === "cover" ? "Couverture" : kind === "video" ? "Vidéo" : "Audio"}</a>)}
+                <button className="button accent" disabled={!selectedTemplate || dirty || renderingVideo || videoBusy} onClick={createVideo} type="button">{renderingVideo ? "Préparation…" : videoBusy ? "Rendu en cours…" : "Générer la vidéo"}</button>
+              </section>
+              {videoJob && (
+                <div className={`video-render-status ${videoJob.state}`}>
+                  <div><span className={`job-state ${videoJob.state}`}>{videoJob.state}</span><strong>{videoJob.state === "completed" ? "Vidéo prête à diffuser" : "Rendu vidéo"}</strong><small>{videoJob.error || videoJob.message}</small></div>
+                  {videoJob.state === "completed" ? <div className="video-ready-actions"><video controls preload="metadata" src={api.artifactUrl(videoJob.id, "video")} /><button className="button accent" onClick={() => setActiveLab("distribution")}>Continuer vers Diffusion</button></div> : !terminalStates.has(videoJob.state) ? <div className="export-progress"><strong>{videoProgress}%</strong><div className="progress-track"><span style={{ width: `${videoProgress}%` }} /></div></div> : null}
                 </div>
-              ) : !terminalStates.has(videoJob.state) ? (
-                <div className="export-progress"><strong>{videoProgress}%</strong><div className="progress-track"><span style={{ width: `${videoProgress}%` }} /></div></div>
-              ) : null}
-            </div>
+              )}
+            </section>
           )}
-          <section className="archive-panel">
-            <div>
-              <span className="eyebrow">Sauvegarde locale</span>
-              <h3>Conserver ce cours sur votre machine</h3>
-              <p>L'archive .dars réunit l'analyse corrigée, l'audio et le dernier rendu vidéo disponible. Elle pourra être réimportée sans transcription ni coût IA.</p>
-            </div>
-            <button className="button primary compact" disabled={dirty || archiving || archiveBusy} onClick={createArchive} type="button">
-              {archiving ? "Préparation…" : archiveBusy ? "Archivage en cours…" : "Créer l'archive .dars"}
-            </button>
-          </section>
-          {archiveJob && (
-            <div className={`archive-status ${archiveJob.state}`}>
-              <div><span className={`job-state ${archiveJob.state}`}>{archiveJob.state}</span><strong>{archiveJob.state === "completed" ? "Archive prête à conserver" : "Création de l'archive"}</strong><small>{archiveJob.error || archiveJob.message}</small></div>
-              {archiveJob.state === "completed" && archiveJob.artifacts.includes("archive") ? (
-                <a className="button accent" download href={api.artifactUrl(archiveJob.id, "archive")}>Télécharger le .dars</a>
-              ) : !terminalStates.has(archiveJob.state) ? (
-                <div className="export-progress"><strong>{archiveProgress}%</strong><div className="progress-track"><span style={{ width: `${archiveProgress}%` }} /></div></div>
-              ) : null}
-            </div>
+
+          {activeLab === "distribution" && videoReady && videoJob && (
+            <section className="studio-lab-panel distribution-lab" role="tabpanel">
+              <header className="editor-heading"><div><span className="eyebrow">Diffusion</span><h2>Publier ou récupérer le contenu final</h2><p>Téléchargez la vidéo immédiatement. Les connexions YouTube et Telegram seront configurées ici.</p></div></header>
+              <section className="final-content-card"><video controls preload="metadata" src={api.artifactUrl(videoJob.id, "video")} /><div><span>Contenu prêt</span><h3>{videoJob.content?.title || "Vidéo du cours"}</h3><p>Conservez le fichier ou préparez sa publication sur un canal connecté.</p><div>{videoJob.artifacts.includes("video") && <a className="button accent" download href={api.artifactUrl(videoJob.id, "video")}>Télécharger la vidéo</a>}{videoJob.artifacts.includes("cover") && <a className="button secondary" download href={api.artifactUrl(videoJob.id, "cover")}>Télécharger l’image</a>}</div></div></section>
+              <div className="distribution-connectors">
+                <article><span className="connector-mark youtube">▶</span><div><strong>YouTube</strong><p>Connecter une chaîne, choisir la visibilité et publier la vidéo.</p></div><button className="button secondary" disabled>À configurer</button></article>
+                <article><span className="connector-mark telegram">➤</span><div><strong>Telegram</strong><p>Connecter un bot administrateur et publier dans une chaîne.</p></div><button className="button secondary" disabled>À configurer</button></article>
+              </div>
+              <section className="archive-panel"><div><span className="eyebrow">Sauvegarde complète</span><h3>Conserver le projet sur votre machine</h3><p>L’archive .dars réunit l’analyse corrigée, l’audio et le dernier rendu vidéo. Elle pourra être réimportée sans transcription.</p></div><button className="button primary compact" disabled={dirty || archiving || archiveBusy} onClick={createArchive} type="button">{archiving ? "Préparation…" : archiveBusy ? "Archivage en cours…" : "Créer l’archive .dars"}</button></section>
+              {archiveJob && <div className={`archive-status ${archiveJob.state}`}><div><span className={`job-state ${archiveJob.state}`}>{archiveJob.state}</span><strong>{archiveJob.state === "completed" ? "Archive prête" : "Création de l’archive"}</strong><small>{archiveJob.error || archiveJob.message}</small></div>{archiveJob.state === "completed" && archiveJob.artifacts.includes("archive") ? <a className="button accent" download href={api.artifactUrl(archiveJob.id, "archive")}>Télécharger le .dars</a> : !terminalStates.has(archiveJob.state) ? <div className="export-progress"><strong>{archiveProgress}%</strong><div className="progress-track"><span style={{ width: `${archiveProgress}%` }} /></div></div> : null}</div>}
+            </section>
           )}
         </>
       )}
@@ -1531,16 +1556,6 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
               <div><strong>{job.metrics.parts ?? "—"}</strong><span>parties</span></div>
               <div><strong>{formatDuration(job.metrics.duration_seconds)}</strong><span>audio</span></div>
               <div><strong>{formatDuration(job.metrics.elapsed_seconds)}</strong><span>traitement</span></div>
-            </div>
-          )}
-
-          {job.artifacts.length > 0 && (
-            <div className="artifact-grid">
-              {job.artifacts.map((artifact) => (
-                <a href={api.artifactUrl(job.id, artifact)} key={artifact} download>
-                  <span>↓</span><strong>{artifactLabels[artifact] || artifact}</strong><small>Télécharger</small>
-                </a>
-              ))}
             </div>
           )}
 

@@ -37,6 +37,10 @@ export type Job = {
   project_id: string;
   tool: "audio_pipeline" | "audio_selection" | string;
   parent_job_id?: string | null;
+  content?: {
+    title: string;
+    part_indices: number[];
+  } | null;
   processing_modes?: {
     transcription: "cloud" | "local";
     chaptering: "ai" | "local";

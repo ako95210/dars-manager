@@ -1008,6 +1008,10 @@ class ApiTests(unittest.TestCase):
             export_id = export_requested.json()["id"]
             self.assertEqual(export_requested.json()["tool"], "audio_selection")
             self.assertEqual(export_requested.json()["parent_job_id"], job.id)
+            self.assertEqual(
+                export_requested.json()["content"],
+                {"title": "Titre corrigé", "part_indices": [1]},
+            )
             duplicate = client.post(
                 f"/api/jobs/{job.id}/exports/audio",
                 json={
@@ -1035,6 +1039,10 @@ class ApiTests(unittest.TestCase):
             )
             self.assertEqual(selection.status_code, 200, selection.text)
             self.assertEqual(selection.content, b"selected-audio")
+            self.assertIn(
+                "01-titre-corrige.wav",
+                selection.headers["content-disposition"],
+            )
 
             template_buffer = BytesIO()
             Image.new("RGB", (640, 360), "#17362c").save(template_buffer, format="PNG")
@@ -1097,6 +1105,10 @@ class ApiTests(unittest.TestCase):
             )
             self.assertEqual(video_requested.status_code, 202, video_requested.text)
             video_job_id = video_requested.json()["id"]
+            self.assertEqual(
+                video_requested.json()["content"],
+                {"title": "Titre du rendu", "part_indices": [1]},
+            )
 
             def fake_cover(_source, output, **kwargs) -> None:
                 self.assertEqual(kwargs["output_format"], "9:16")
@@ -1119,6 +1131,10 @@ class ApiTests(unittest.TestCase):
             rendered_video = client.get(f"/api/jobs/{video_job_id}/artifacts/video")
             self.assertEqual(rendered_video.status_code, 200, rendered_video.text)
             self.assertEqual(rendered_video.content, b"rendered-video")
+            self.assertIn(
+                "titre-du-rendu.mp4",
+                rendered_video.headers["content-disposition"],
+            )
 
             archive_requested = client.post(
                 f"/api/jobs/{job.id}/exports/archive",

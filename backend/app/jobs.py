@@ -52,11 +52,26 @@ class Job:
     cancel_event: Any = field(default=None, repr=False)
 
     def public(self) -> dict[str, Any]:
+        content = None
+        if self.tool == "audio_selection":
+            content = {
+                "title": self.options.get("title") or "Extrait audio",
+                "part_indices": list(self.options.get("part_indices", [])),
+            }
+        elif self.tool == "video_render":
+            values = self.options.get("values", {})
+            content = {
+                "title": (
+                    values.get("title", "") if isinstance(values, dict) else ""
+                ) or "Vidéo du cours",
+                "part_indices": list(self.options.get("part_indices", [])),
+            }
         return {
             "id": self.id,
             "project_id": self.project_id,
             "tool": self.tool,
             "parent_job_id": self.options.get("source_job_id"),
+            "content": content,
             "processing_modes": (
                 {
                     "transcription": self.options.get("transcription_mode"),

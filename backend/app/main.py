@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from drsm_core import safe_filename
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -86,6 +87,34 @@ app.include_router(transcription_router)
 app.include_router(editor_router)
 app.include_router(brand_router)
 app.include_router(archives_router)
+
+
+def artifact_filename(job: Job, artifact: str) -> str:
+    title = ""
+    if job.tool == "audio_selection":
+        title = str(job.options.get("title", ""))
+    elif job.tool == "video_render":
+        values = job.options.get("values", {})
+        if isinstance(values, dict):
+            title = str(values.get("title", ""))
+    elif job.tool == "archive_export":
+        title = str(job.options.get("project_title", ""))
+    slug = safe_filename(title).replace("_", "-").lower()[:120].strip("-")
+    part_indices = job.options.get("part_indices", [])
+    prefix = (
+        f"{int(part_indices[0]):02d}-"
+        if isinstance(part_indices, list) and len(part_indices) == 1
+        else ""
+    )
+    defaults = {
+        "analysis": "analyse.json",
+        "audio": "audio-normalise.wav",
+        "selection_audio": f"{prefix}{slug or 'extrait-audio'}.wav",
+        "cover": f"{slug or 'couverture'}.png",
+        "video": f"{slug or 'video'}.mp4",
+        "archive": f"{slug or 'cours'}.dars",
+    }
+    return defaults.get(artifact, safe_filename(artifact))
 
 
 def owned_job(user_id: str, job_id: str) -> Job:
@@ -273,15 +302,7 @@ def download_artifact(
         )
         if row is None or not row.storage_key:
             raise HTTPException(status_code=404, detail="Artifact not found")
-        filenames = {
-            "analysis": "analysis.json",
-            "audio": "audio-export.wav",
-            "selection_audio": "selection-audio.wav",
-            "cover": "cover.png",
-            "video": "video.mp4",
-            "archive": "cours.dars",
-        }
-        filename = filenames.get(artifact, artifact)
+        filename = artifact_filename(job, artifact)
         if isinstance(media_storage, LocalMediaStorage):
             path = media_storage.path_for(row.storage_key)
             if not path.is_file():
@@ -305,7 +326,11 @@ def download_artifact(
         "video": "video/mp4",
         "archive": "application/vnd.dars-manager.archive",
     }
-    return FileResponse(path, filename=path.name, media_type=media_types.get(artifact))
+    return FileResponse(
+        path,
+        filename=artifact_filename(job, artifact),
+        media_type=media_types.get(artifact),
+    )
 
 
 @app.delete("/api/jobs/{job_id}/source")
