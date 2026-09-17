@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
@@ -75,6 +75,20 @@ def user_response(user: User) -> UserResponse:
     )
 
 
+def session_ttl_for_role(role: str) -> int:
+    if role == "admin":
+        return settings.admin_session_ttl_seconds
+    return settings.client_session_ttl_seconds
+
+
+def session_is_expired(auth_session: AuthSession, role: str) -> bool:
+    created_at = auth_session.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    role_deadline = created_at + timedelta(seconds=session_ttl_for_role(role))
+    return is_expired(auth_session.expires_at) or is_expired(role_deadline)
+
+
 def require_user(
     token: Annotated[str | None, Cookie(alias=settings.session_cookie)] = None,
     db: Session = Depends(get_db),
@@ -84,12 +98,13 @@ def require_user(
     auth_session = db.scalar(
         select(AuthSession).where(AuthSession.token_hash == hash_session_token(token))
     )
-    if auth_session is None or is_expired(auth_session.expires_at):
-        if auth_session is not None:
-            db.delete(auth_session)
-            db.commit()
+    if auth_session is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
     user = db.get(User, auth_session.user_id)
+    if user is not None and session_is_expired(auth_session, user.role):
+        db.delete(auth_session)
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
     if user is None or not user.is_active or user.email_verified_at is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive account")
     return user
@@ -148,18 +163,19 @@ def login(
     address_login_throttle.clear(address_key)
 
     token = new_session_token()
+    session_ttl_seconds = session_ttl_for_role(user.role)
     db.add(
         AuthSession(
             user_id=user.id,
             token_hash=hash_session_token(token),
-            expires_at=session_expiration(settings.session_ttl_seconds),
+            expires_at=session_expiration(session_ttl_seconds),
         )
     )
     db.commit()
     response.set_cookie(
         key=settings.session_cookie,
         value=token,
-        max_age=settings.session_ttl_seconds,
+        max_age=session_ttl_seconds,
         httponly=True,
         secure=settings.cookie_secure,
         samesite="lax",

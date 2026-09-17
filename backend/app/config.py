@@ -68,7 +68,8 @@ class Settings:
     database_url: str
     redis_url: str | None
     session_cookie: str
-    session_ttl_seconds: int
+    client_session_ttl_seconds: int
+    admin_session_ttl_seconds: int
     cookie_secure: bool
     frontend_origin: str
     allowed_hosts: tuple[str, ...]
@@ -241,7 +242,12 @@ def load_settings() -> Settings:
         database_url=database_url,
         redis_url=os.environ.get("DARSM_REDIS_URL", "").strip() or None,
         session_cookie=os.environ.get("DARSM_SESSION_COOKIE", "dars_session"),
-        session_ttl_seconds=int(os.environ.get("DARSM_SESSION_TTL_SECONDS", str(7 * 86400))),
+        client_session_ttl_seconds=max(
+            60, int(os.environ.get("DARSM_CLIENT_SESSION_TTL_SECONDS", str(24 * 3600)))
+        ),
+        admin_session_ttl_seconds=max(
+            60, int(os.environ.get("DARSM_ADMIN_SESSION_TTL_SECONDS", str(4 * 3600)))
+        ),
         cookie_secure=os.environ.get("DARSM_COOKIE_SECURE", "true").strip().lower()
         in {"1", "true", "yes", "on"},
         frontend_origin=frontend_origin,

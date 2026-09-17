@@ -32,7 +32,7 @@ from backend.app.database import CURRENT_REVISION, SessionLocal, engine, init_da
 from backend.app.main import app, manager
 from backend.app.jobs import JobManager
 from backend.app.image_generation import ImageGenerationCall
-from backend.app.models import Artifact, Asset, BillingPolicy, UsageEvent, User, utc_now
+from backend.app.models import AuthSession, Artifact, Asset, BillingPolicy, UsageEvent, User, utc_now
 from backend.app.pipeline import (
     PipelineResult,
     generate_cover,
@@ -40,7 +40,7 @@ from backend.app.pipeline import (
     write_analysis,
 )
 from backend.app.runtime import media_storage
-from backend.app.security import hash_password
+from backend.app.security import hash_password, hash_session_token
 from backend.app.transcription import ProviderTranscription
 from backend.app.transcription_checkpoint import CheckpointingTranscriptionProvider
 from backend.app.semantic_analysis import SemanticAnalysisCall, SemanticAnalysisResult
@@ -86,9 +86,10 @@ class ApiTests(unittest.TestCase):
             TEST_DATABASE.unlink()
         shutil.rmtree(TEST_ROOT, ignore_errors=True)
 
-    def login(self, client: TestClient, email: str, password: str) -> None:
+    def login(self, client: TestClient, email: str, password: str):
         response = client.post("/api/auth/login", json={"email": email, "password": password})
         self.assertEqual(response.status_code, 200, response.text)
+        return response
 
     def test_database_is_migrated(self) -> None:
         with SessionLocal() as db:
@@ -117,10 +118,44 @@ class ApiTests(unittest.TestCase):
                 ).status_code,
                 401,
             )
-            self.login(client, "pilot-a@example.com", "mot-de-passe-a")
+            login_response = self.login(client, "pilot-a@example.com", "mot-de-passe-a")
+            self.assertIn("Max-Age=86400", login_response.headers["set-cookie"])
             self.assertEqual(client.get("/api/auth/me").json()["display_name"], "Pilote A")
             self.assertEqual(client.post("/api/auth/logout").status_code, 204)
             self.assertEqual(client.get("/api/auth/me").status_code, 401)
+
+    def test_session_duration_depends_on_role_and_applies_to_existing_sessions(self) -> None:
+        with TestClient(app) as client:
+            admin_login = self.login(client, "admin@example.com", "mot-de-passe-admin")
+            self.assertIn("Max-Age=14400", admin_login.headers["set-cookie"])
+            self.assertEqual(client.post("/api/auth/logout").status_code, 204)
+
+        legacy_token = f"legacy-admin-session-{TEST_ID}"
+        with SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.email == "admin@example.com"))
+            self.assertIsNotNone(admin)
+            db.add(
+                AuthSession(
+                    user_id=admin.id,
+                    token_hash=hash_session_token(legacy_token),
+                    created_at=utc_now() - timedelta(hours=5),
+                    expires_at=utc_now() + timedelta(days=7),
+                )
+            )
+            db.commit()
+
+        with TestClient(app) as client:
+            client.cookies.set(app_settings.session_cookie, legacy_token)
+            self.assertEqual(client.get("/api/auth/me").status_code, 401)
+
+        with SessionLocal() as db:
+            self.assertIsNone(
+                db.scalar(
+                    select(AuthSession).where(
+                        AuthSession.token_hash == hash_session_token(legacy_token)
+                    )
+                )
+            )
 
     def test_admin_can_manage_user_accounts_and_revoke_sessions(self) -> None:
         email = f"managed-{TEST_ID}@example.com"
