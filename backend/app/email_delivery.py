@@ -18,7 +18,7 @@ def email_delivery_configured() -> bool:
     return not settings.smtp_username or bool(settings.smtp_password)
 
 
-def send_account_invitation(email: str, display_name: str, token: str) -> None:
+def send_account_invitation(email: str, token: str) -> None:
     if not email_delivery_configured():
         raise EmailDeliveryError("Le service d’envoi d’e-mails n’est pas configuré.")
 
@@ -28,19 +28,19 @@ def send_account_invitation(email: str, display_name: str, token: str) -> None:
     message["From"] = settings.email_from
     message["To"] = email
     message.set_content(
-        f"Bonjour {display_name},\n\n"
+        "Bonjour,\n\n"
         "Un compte Dars Manager a été créé pour vous. "
-        f"Activez-le dans les {settings.invitation_ttl_seconds // 3600} heures "
-        "et choisissez votre mot de passe :\n\n"
+        f"Activez-le dans les {settings.invitation_ttl_seconds // 3600} heures, "
+        "puis choisissez votre nom affiché et votre mot de passe :\n\n"
         f"{invitation_url}\n\n"
         "Si vous n’attendiez pas cette invitation, ignorez ce message."
     )
-    safe_name = html.escape(display_name)
     safe_url = html.escape(invitation_url, quote=True)
     message.add_alternative(
         "<html><body>"
-        f"<p>Bonjour {safe_name},</p>"
+        "<p>Bonjour,</p>"
         "<p>Un compte Dars Manager a été créé pour vous.</p>"
+        "<p>Vous choisirez votre nom affiché et votre mot de passe lors de l’activation.</p>"
         f'<p><a href="{safe_url}">Activer mon compte</a></p>'
         f"<p>Ce lien expire dans {settings.invitation_ttl_seconds // 3600} heures.</p>"
         "<p>Si vous n’attendiez pas cette invitation, ignorez ce message.</p>"

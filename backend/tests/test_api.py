@@ -137,22 +137,18 @@ class ApiTests(unittest.TestCase):
             self.login(admin, "admin@example.com", "mot-de-passe-admin")
             created = admin.post(
                 "/api/admin/users",
-                json={
-                    "email": email.upper(),
-                    "display_name": "  Compte Piloté  ",
-                    "role": "client",
-                },
+                json={"email": email.upper()},
             )
             self.assertEqual(created.status_code, 201, created.text)
             account = created.json()
             self.assertEqual(account["email"], email)
-            self.assertEqual(account["display_name"], "Compte Piloté")
+            self.assertEqual(account["display_name"], "Nom à définir")
             self.assertFalse(account["is_active"])
             self.assertIsNone(account["email_verified_at"])
             self.assertIsNotNone(account["invitation_sent_at"])
             self.assertNotIn("password", account)
             account_id = account["id"]
-            first_token = delivery.call_args.args[2]
+            first_token = delivery.call_args.args[1]
             self.assertEqual(
                 managed.post(
                     "/api/auth/login",
@@ -166,7 +162,7 @@ class ApiTests(unittest.TestCase):
 
             resent = admin.post(f"/api/admin/users/{account_id}/invitation")
             self.assertEqual(resent.status_code, 200, resent.text)
-            second_token = delivery.call_args.args[2]
+            second_token = delivery.call_args.args[1]
             self.assertNotEqual(first_token, second_token)
             self.assertEqual(
                 managed.post("/api/auth/invitation", json={"token": first_token}).status_code,
@@ -176,6 +172,7 @@ class ApiTests(unittest.TestCase):
                 "/api/auth/invitation/accept",
                 json={
                     "token": second_token,
+                    "display_name": "  Nom choisi  ",
                     "new_password": "mot-de-passe-temporaire",
                 },
             )
@@ -185,22 +182,15 @@ class ApiTests(unittest.TestCase):
                 410,
             )
 
-            duplicate = admin.post(
-                "/api/admin/users",
-                json={
-                    "email": email,
-                    "display_name": "Doublon",
-                    "role": "client",
-                },
-            )
+            duplicate = admin.post("/api/admin/users", json={"email": email})
             self.assertEqual(duplicate.status_code, 409, duplicate.text)
             self.login(managed, email, "mot-de-passe-temporaire")
+            self.assertEqual(managed.get("/api/auth/me").json()["display_name"], "Nom choisi")
 
             deactivated = admin.put(
                 f"/api/admin/users/{account_id}",
                 json={
                     "email": email,
-                    "display_name": "Compte mis à jour",
                     "role": "client",
                     "is_active": False,
                 },
@@ -213,7 +203,6 @@ class ApiTests(unittest.TestCase):
                 f"/api/admin/users/{account_id}",
                 json={
                     "email": email,
-                    "display_name": "Compte mis à jour",
                     "role": "client",
                     "is_active": True,
                 },
@@ -225,7 +214,6 @@ class ApiTests(unittest.TestCase):
                 f"/api/admin/users/{account_id}",
                 json={
                     "email": updated_email,
-                    "display_name": "Compte vérifié à nouveau",
                     "role": "client",
                     "is_active": True,
                 },
@@ -234,11 +222,12 @@ class ApiTests(unittest.TestCase):
             self.assertFalse(changed_email.json()["is_active"])
             self.assertIsNone(changed_email.json()["email_verified_at"])
             self.assertEqual(managed.get("/api/auth/me").status_code, 401)
-            email_change_token = delivery.call_args.args[2]
+            email_change_token = delivery.call_args.args[1]
             accepted_change = managed.post(
                 "/api/auth/invitation/accept",
                 json={
                     "token": email_change_token,
+                    "display_name": "Nom choisi à nouveau",
                     "new_password": "mot-de-passe-temporaire",
                 },
             )
@@ -264,7 +253,6 @@ class ApiTests(unittest.TestCase):
                 f"/api/admin/users/{current['id']}",
                 json={
                     "email": current["email"],
-                    "display_name": current["display_name"],
                     "role": "client",
                     "is_active": True,
                 },
@@ -286,7 +274,6 @@ class ApiTests(unittest.TestCase):
                     f"/api/admin/users/{account_id}",
                     json={
                         "email": updated_email,
-                        "display_name": "Réactivation interdite",
                         "role": "client",
                         "is_active": True,
                     },
@@ -310,11 +297,7 @@ class ApiTests(unittest.TestCase):
             self.assertFalse(status_response.json()["configured"])
             refused = admin.post(
                 "/api/admin/users",
-                json={
-                    "email": f"no-delivery-{TEST_ID}@example.com",
-                    "display_name": "Sans envoi",
-                    "role": "client",
-                },
+                json={"email": f"no-delivery-{TEST_ID}@example.com"},
             )
             self.assertEqual(refused.status_code, 503, refused.text)
 

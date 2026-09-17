@@ -3,7 +3,6 @@ import { AdminUser, api, EmailDeliveryStatus, User } from "./api";
 
 type AccountDraft = {
   email: string;
-  display_name: string;
   role: "client" | "admin";
   is_active: boolean;
   password: string;
@@ -12,7 +11,6 @@ type AccountDraft = {
 
 const emptyDraft: AccountDraft = {
   email: "",
-  display_name: "",
   role: "client",
   is_active: false,
   password: "",
@@ -38,7 +36,6 @@ function AccountEditor({
 }) {
   const [draft, setDraft] = useState<AccountDraft>(account ? {
     email: account.email,
-    display_name: account.display_name,
     role: account.role,
     is_active: account.is_active,
     password: "",
@@ -66,14 +63,11 @@ function AccountEditor({
       const saved = account
         ? await api.updateAdminUser(account.id, {
           email: draft.email,
-          display_name: draft.display_name,
           role: draft.role,
           is_active: draft.is_active,
         })
         : await api.createAdminUser({
           email: draft.email,
-          display_name: draft.display_name,
-          role: draft.role,
         });
       onSaved(saved);
       onClose();
@@ -134,14 +128,14 @@ function AccountEditor({
         </header>
         <form onSubmit={submit}>
           <div className="account-form-grid">
-            <label>Nom affiché<input maxLength={120} required value={draft.display_name} onChange={(event) => update("display_name", event.target.value)} /></label>
+            {account && <label>Nom affiché<input disabled value={account.display_name} /></label>}
             <label>Adresse e-mail<input autoComplete="email" maxLength={320} required type="email" value={draft.email} onChange={(event) => update("email", event.target.value)} /></label>
-            <label>Rôle<select disabled={isCurrentUser} value={draft.role} onChange={(event) => update("role", event.target.value as AccountDraft["role"])}><option value="client">Client</option><option value="admin">Administrateur</option></select></label>
+            {account && <label>Rôle<select disabled={isCurrentUser} value={draft.role} onChange={(event) => update("role", event.target.value as AccountDraft["role"])}><option value="client">Client</option><option value="admin">Administrateur</option></select></label>}
             {account && <label className="account-active-choice"><span>Accès au compte</span><span><input checked={draft.is_active} disabled={isCurrentUser || !account.email_verified_at} type="checkbox" onChange={(event) => update("is_active", event.target.checked)} /> {account.email_verified_at ? "Compte actif" : "En attente de vérification"}</span></label>}
           </div>
           {!account && (
             <div className="initial-password-fields">
-              <p>Une invitation personnelle sera envoyée à cette adresse. Le compte restera inaccessible tant que son destinataire n’aura pas ouvert le lien et choisi son mot de passe.</p>
+              <p>Une invitation personnelle sera envoyée à cette adresse. Son destinataire choisira lui-même son nom affiché et son mot de passe avant d’accéder à son compte client.</p>
             </div>
           )}
           {error && <p className="form-error notice">{error}</p>}

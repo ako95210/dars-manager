@@ -34,7 +34,6 @@ class SecurityTests(unittest.TestCase):
             self.assertTrue(email_delivery_configured())
             send_account_invitation(
                 "client@example.com",
-                "Client Test",
                 "secure-invitation-token",
             )
 
@@ -46,6 +45,7 @@ class SecurityTests(unittest.TestCase):
         self.assertEqual(message["To"], "client@example.com")
         plain_body = message.get_body(preferencelist=("plain",)).get_content()
         self.assertIn("#invitation=secure-invitation-token", plain_body)
+        self.assertIn("nom affiché", plain_body)
 
     def test_login_throttle_expires_and_clears_failures(self) -> None:
         throttle = LoginThrottle(max_failures=2, window_seconds=60)

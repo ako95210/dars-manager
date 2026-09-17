@@ -118,6 +118,7 @@ function invitationTokenFromHash() {
 
 function InvitationAcceptance({ token }: { token: string }) {
   const [details, setDetails] = useState<InvitationDetails | null>(null);
+  const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [loading, setLoading] = useState(true);
@@ -141,7 +142,7 @@ function InvitationAcceptance({ token }: { token: string }) {
     }
     setSaving(true);
     try {
-      await api.acceptInvitation(token, password);
+      await api.acceptInvitation(token, displayName, password);
       setAccepted(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Activation impossible.");
@@ -163,8 +164,9 @@ function InvitationAcceptance({ token }: { token: string }) {
         </> : details ? <>
           <span className="eyebrow">Invitation sécurisée</span>
           <h1>Activez votre compte</h1>
-          <p>Bonjour {details.display_name}. Confirmez l’accès à <strong>{details.email}</strong> en choisissant votre mot de passe.</p>
+          <p>Confirmez l’accès à <strong>{details.email}</strong> en choisissant le nom qui sera affiché dans Dars Manager et votre mot de passe.</p>
           <form onSubmit={submit}>
+            <label>Nom affiché<input autoComplete="name" maxLength={120} required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
             <label>Mot de passe<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
             <label>Confirmation<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
             {error && <p className="form-error notice">{error}</p>}
@@ -1829,7 +1831,7 @@ function Dashboard({ user, onLogout, onUserUpdated }: { user: User; onLogout: ()
         </nav>
         <div className="sidebar-user">
           <span className="avatar">{user.display_name.charAt(0).toUpperCase()}</span>
-          <span><strong>{user.display_name}</strong><small>{user.email}</small></span>
+          <span><strong title={user.display_name}>{user.display_name}</strong><small title={user.email}>{user.email}</small></span>
           <button aria-label="Se déconnecter" onClick={onLogout}>↗</button>
         </div>
       </aside>

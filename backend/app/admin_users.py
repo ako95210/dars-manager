@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -44,25 +44,12 @@ class AdminUserResponse(BaseModel):
 
 class AdminUserCreateRequest(BaseModel):
     email: EmailStr
-    display_name: str = Field(min_length=1, max_length=120)
-    role: Literal["client", "admin"] = "client"
-
-    @field_validator("display_name", mode="before")
-    @classmethod
-    def clean_display_name(cls, value: str) -> str:
-        return value.strip()
 
 
 class AdminUserUpdateRequest(BaseModel):
     email: EmailStr
-    display_name: str = Field(min_length=1, max_length=120)
     role: Literal["client", "admin"]
     is_active: bool
-
-    @field_validator("display_name", mode="before")
-    @classmethod
-    def clean_display_name(cls, value: str) -> str:
-        return value.strip()
 
 
 class AdminPasswordResetRequest(BaseModel):
@@ -132,7 +119,7 @@ def issue_invitation(db: Session, user: User, admin_id: str) -> None:
     user.invitation_sent_at = None
     db.commit()
     try:
-        send_account_invitation(user.email, user.display_name, token)
+        send_account_invitation(user.email, token)
     except EmailDeliveryError:
         raise
     user.invitation_sent_at = utc_now()
@@ -165,9 +152,9 @@ def create_user(
     require_email_delivery()
     user = User(
         email=normalize_email(str(payload.email)),
-        display_name=payload.display_name,
+        display_name="Nom à définir",
         password_hash=hash_password(secrets.token_urlsafe(32)),
-        role=payload.role,
+        role="client",
         is_active=False,
         email_verified_at=None,
     )
@@ -218,7 +205,6 @@ def update_user(
     requested_active = False if email_changed else payload.is_active
     ensure_an_active_admin_remains(db, user, payload.role, requested_active)
     user.email = normalized_email
-    user.display_name = payload.display_name
     user.role = payload.role
     user.is_active = requested_active
     if email_changed:

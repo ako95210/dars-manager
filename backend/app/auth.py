@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
@@ -52,12 +52,17 @@ class InvitationTokenRequest(BaseModel):
 
 
 class InvitationAcceptRequest(InvitationTokenRequest):
+    display_name: str = Field(min_length=1, max_length=120)
     new_password: str = Field(min_length=10, max_length=256)
+
+    @field_validator("display_name", mode="before")
+    @classmethod
+    def clean_display_name(cls, value: str) -> str:
+        return value.strip()
 
 
 class InvitationResponse(BaseModel):
     email: EmailStr
-    display_name: str
     expires_at: datetime
 
 
@@ -197,7 +202,6 @@ def invitation_details(
     invitation, user = valid_invitation(db, payload.token)
     return InvitationResponse(
         email=user.email,
-        display_name=user.display_name,
         expires_at=invitation.expires_at,
     )
 
@@ -209,6 +213,7 @@ def accept_invitation(
 ) -> None:
     invitation, user = valid_invitation(db, payload.token, for_update=True)
     now = utc_now()
+    user.display_name = payload.display_name
     user.password_hash = hash_password(payload.new_password)
     user.email_verified_at = now
     user.is_active = True

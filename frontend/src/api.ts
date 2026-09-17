@@ -20,7 +20,6 @@ export type EmailDeliveryStatus = {
 
 export type InvitationDetails = {
   email: string;
-  display_name: string;
   expires_at: string;
 };
 
@@ -390,24 +389,21 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ token }),
     }),
-  acceptInvitation: (token: string, newPassword: string) =>
+  acceptInvitation: (token: string, displayName: string, newPassword: string) =>
     request<void>("/api/auth/invitation/accept", {
       method: "POST",
-      body: JSON.stringify({ token, new_password: newPassword }),
+      body: JSON.stringify({ token, display_name: displayName, new_password: newPassword }),
     }),
   adminUsers: () => request<AdminUser[]>("/api/admin/users"),
   emailDeliveryStatus: () => request<EmailDeliveryStatus>("/api/admin/users/email-status"),
   createAdminUser: (values: {
     email: string;
-    display_name: string;
-    role: "client" | "admin";
   }) => request<AdminUser>("/api/admin/users", {
     method: "POST",
     body: JSON.stringify(values),
   }),
   updateAdminUser: (userId: string, values: {
     email: string;
-    display_name: string;
     role: "client" | "admin";
     is_active: boolean;
   }) => request<AdminUser>(`/api/admin/users/${userId}`, {

@@ -71,7 +71,8 @@ input:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .1
 .sidebar nav a span { width: 20px; text-align: center; font-size: 18px; }
 .sidebar nav a:hover, .sidebar nav a.active { color: white; background: var(--navy-soft); }
 .sidebar nav a.active::after { width: 5px; height: 5px; margin-left: auto; content: ""; border-radius: 50%; background: var(--green); }
-.sidebar-user { display: grid; grid-template-columns: 36px 1fr 28px; gap: 10px; align-items: center; margin-top: auto; padding: 16px 8px 0; border-top: 1px solid #263248; }
+.sidebar-user { width: 100%; min-width: 0; display: grid; grid-template-columns: 36px minmax(0, 1fr) 28px; gap: 10px; align-items: center; margin-top: auto; padding: 16px 8px 0; border-top: 1px solid #263248; }
+.sidebar-user > span:nth-child(2) { min-width: 0; }
 .avatar { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; color: #062c24; background: var(--green); font-weight: 700; }
 .sidebar-user strong, .sidebar-user small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-user strong { font-size: 12px; }
