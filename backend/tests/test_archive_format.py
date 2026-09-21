@@ -6,10 +6,19 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from backend.app.archive_format import InvalidArchive, build_archive, extract_archive, sha256_file
+from backend.app.archive_format import InvalidArchive, build_archive, extract_archive, sha256_file, validate_analysis_duration
 
 
 class ArchiveFormatTests(unittest.TestCase):
+    def test_analysis_must_fit_archived_full_audio(self) -> None:
+        payload = {
+            "segments": [{"start": 0.0, "end": 1865.18}],
+            "parts": [{"start": 657.72, "end": 952.22}],
+        }
+        with self.assertRaisesRegex(InvalidArchive, "dépasse la durée"):
+            validate_analysis_duration(payload, 430.126)
+        validate_analysis_duration(payload, 1865.97)
+
     def test_archive_round_trip_preserves_declared_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

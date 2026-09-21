@@ -262,10 +262,9 @@ def queue_auto_archive(db: Session, source_job: Job, *, audio_job_id: str | None
     references = {"analysis": archive_reference(snapshot), "audio": archive_reference(audio)}
     if audio_job_id or video_job_id:
         child_id = video_job_id or audio_job_id
-        kind = "video_render" if video_job_id else "audio_selection"
         selected = db.scalar(select(Artifact).where(Artifact.job_id == child_id, Artifact.kind == "selection_audio"))
         if selected:
-            references["audio"] = archive_reference(selected)
+            references["selection_audio"] = archive_reference(selected)
         if video_job_id:
             for artifact_kind in ("cover", "video"):
                 item = db.scalar(select(Artifact).where(Artifact.job_id == child_id, Artifact.kind == artifact_kind))
@@ -298,6 +297,17 @@ def duration_for(job: Job, payload: dict[str, Any]) -> float:
     ends = [segment.get("end") for segment in payload["segments"] if isinstance(segment, dict)]
     numeric_ends = [float(value) for value in ends if isinstance(value, (int, float))]
     return max(numeric_ends, default=0.0)
+
+
+def validate_export_ranges(job: Job, payload: dict[str, Any], ranges: list[list[float]]) -> None:
+    duration = duration_for(job, payload)
+    if any(start < 0 or end <= start for start, end in ranges):
+        raise HTTPException(status_code=422, detail="Les timestamps sélectionnés sont invalides.")
+    if duration > 0 and any(end > duration + 1.0 for _, end in ranges):
+        raise HTTPException(
+            status_code=422,
+            detail="Une partie sélectionnée dépasse la durée de l'audio source. Vérifiez l'archive ou corrigez le chapitrage.",
+        )
 
 
 def response_payload(
@@ -984,8 +994,7 @@ def create_audio_export(
     )
     canonical_indices = [int(part["index"]) for part in selected]
     ranges = [[float(part["start"]), float(part["end"])] for part in selected]
-    if any(end <= start or start < 0 for start, end in ranges):
-        raise HTTPException(status_code=422, detail="Les timestamps sélectionnés sont invalides.")
+    validate_export_ranges(source_job, payload, ranges)
 
     previous_exports = [
         job
@@ -1124,6 +1133,7 @@ def create_video_export(
     )
     canonical_indices = [int(part["index"]) for part in selected]
     ranges = [[float(part["start"]), float(part["end"])] for part in selected]
+    validate_export_ranges(source_job, analysis_payload, ranges)
     values = {
         "title": request.title or " · ".join(str(part.get("title", "")) for part in selected),
         "speaker": request.speaker,
@@ -1255,7 +1265,7 @@ def create_archive_export(
             "audio_selection",
             "selection_audio",
         )
-        references["audio"] = archive_reference(selected_audio)
+        references["selection_audio"] = archive_reference(selected_audio)
 
     if request.video_job_id:
         video_job, video = child_artifact(
@@ -1273,7 +1283,7 @@ def create_archive_export(
             "selection_audio",
         )
         references.update({
-            "audio": archive_reference(rendered_audio),
+            "selection_audio": archive_reference(rendered_audio),
             "cover": archive_reference(cover),
             "video": archive_reference(video),
         })

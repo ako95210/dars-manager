@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -24,6 +25,33 @@ ALLOWED_FILES = {
 
 class InvalidArchive(ValueError):
     pass
+
+
+def validate_analysis_duration(payload: dict[str, Any], audio_seconds: float) -> None:
+    """Reject archives whose transcript or chapters refer to missing source audio."""
+    if not math.isfinite(audio_seconds) or audio_seconds <= 0:
+        raise InvalidArchive("L'audio archivé est vide ou illisible.")
+    for kind in ("segments", "parts"):
+        entries = payload.get(kind)
+        if not isinstance(entries, list):
+            raise InvalidArchive("Le format de l'analyse archivée est invalide.")
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise InvalidArchive("Le format de l'analyse archivée est invalide.")
+            start, end = entry.get("start"), entry.get("end")
+            if (
+                isinstance(start, bool) or isinstance(end, bool)
+                or not isinstance(start, (int, float))
+                or not isinstance(end, (int, float))
+                or not math.isfinite(start) or not math.isfinite(end)
+                or start < 0 or end <= start
+            ):
+                raise InvalidArchive("Les timestamps de l'analyse archivée sont invalides.")
+            if end > audio_seconds + 1.0:
+                raise InvalidArchive(
+                    "La transcription ou le chapitrage dépasse la durée de l'audio archivé. "
+                    "Cette archive contient probablement un extrait à la place de l'audio complet."
+                )
 
 
 def sha256_file(path: Path) -> str:

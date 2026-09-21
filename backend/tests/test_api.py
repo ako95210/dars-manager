@@ -6,6 +6,7 @@ import shutil
 import unittest
 import uuid
 import wave
+import zipfile
 from dataclasses import replace
 from datetime import timedelta
 from io import BytesIO
@@ -1093,6 +1094,15 @@ class ApiTests(unittest.TestCase):
             exported = manager.get(user_id, export_id)
             self.assertIsNotNone(exported)
             self.assertEqual(exported.state, "completed")
+            automatic = [
+                item for item in manager.list_for_user(user_id, project_id)
+                if item.tool == "archive_export"
+                and item.options.get("automatic")
+                and item.options.get("archive_files", {}).get("selection_audio")
+                and item.options["archive_files"]["selection_audio"]["job_id"] == export_id
+            ]
+            self.assertTrue(automatic)
+            self.assertEqual(automatic[0].options["archive_files"]["audio"]["job_id"], job.id)
             self.assertEqual(exported.tool, "audio_selection")
             self.assertEqual(exported.metrics["selected_parts"], 1)
             selection = client.get(
@@ -1261,10 +1271,13 @@ class ApiTests(unittest.TestCase):
             archived = manager.get(user_id, archive_job_id)
             self.assertIsNotNone(archived)
             self.assertEqual(archived.state, "completed")
-            self.assertEqual(archived.metrics["archive_files"], 4)
+            self.assertEqual(archived.metrics["archive_files"], 5)
             archive_download = client.get(f"/api/jobs/{archive_job_id}/artifacts/archive")
             self.assertEqual(archive_download.status_code, 200, archive_download.text)
             self.assertGreater(len(archive_download.content), 100)
+            with zipfile.ZipFile(BytesIO(archive_download.content)) as content:
+                self.assertEqual(content.read("audio.wav"), b"audio")
+                self.assertEqual(content.read("selection-audio.wav"), b"selected-audio")
 
             restored_project = client.post(
                 "/api/projects", json={"title": "Cours restauré"}
@@ -1304,11 +1317,24 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(restored_job.metrics["transcription_calls"], 0)
             self.assertTrue(restored_job.metrics["imported_archive"])
             self.assertEqual(
-                set(restored_job.artifacts), {"analysis", "audio", "cover", "video"}
+                set(restored_job.artifacts), {"analysis", "audio", "selection_audio", "cover", "video"}
             )
             restored_analysis = client.get(f"/api/jobs/{restored_job_id}/analysis")
             self.assertEqual(restored_analysis.status_code, 200, restored_analysis.text)
             self.assertEqual(restored_analysis.json()["parts"][0]["title"], "Titre corrigé")
+            restored_job.metrics["duration_seconds"] = 10.0
+            manager.state_store.save(restored_job.record())
+            out_of_bounds = client.post(
+                f"/api/jobs/{restored_job_id}/exports/audio",
+                json={
+                    "checksum_sha256": restored_analysis.json()["checksum_sha256"],
+                    "part_indices": [1],
+                },
+            )
+            self.assertEqual(out_of_bounds.status_code, 422, out_of_bounds.text)
+            self.assertIn("dépasse la durée", out_of_bounds.json()["detail"])
+            restored_job.metrics["duration_seconds"] = 29.5
+            manager.state_store.save(restored_job.record())
             impact = client.get("/api/billing/impact")
             self.assertEqual(impact.status_code, 200, impact.text)
             self.assertEqual(impact.json()["courses_completed"], 1)

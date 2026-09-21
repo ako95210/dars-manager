@@ -18,7 +18,7 @@ from sqlalchemy import select
 
 from drsm_core import AnalysisCancelled, TranscriptSegment, audio_duration, export_clips
 
-from .app.archive_format import ALLOWED_FILES, InvalidArchive, build_archive, extract_archive
+from .app.archive_format import ALLOWED_FILES, InvalidArchive, build_archive, extract_archive, validate_analysis_duration
 from .app.config import settings
 from .app.costs import reconcile_job_estimates, record_usage, seed_default_rates
 from .app.editor import queue_auto_archive
@@ -1076,8 +1076,7 @@ class Worker:
             if manifest.get("analysis_checksum_sha256") != sha256_file(analysis_path):
                 raise InvalidArchive("L'analyse ne correspond pas au manifeste.")
             duration = audio_duration(extracted["audio"])
-            if duration <= 0:
-                raise InvalidArchive("L'audio archivé est vide ou illisible.")
+            validate_analysis_duration(payload, duration)
 
             self._save_progress(job, {
                 "stage": "archive_restore",
