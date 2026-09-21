@@ -386,6 +386,9 @@ def delete_job(
             for candidate in manager.list_for_user(user.id, job.project_id)
             if candidate.options.get("source_job_id") == job.id
         ]
+        for child in children:
+            if child.tool == "archive_export" and child.options.get("automatic") and child.state == "queued":
+                manager.cancel(child)
         if any(child.state not in TERMINAL_STATES for child in children):
             raise HTTPException(
                 status_code=409,

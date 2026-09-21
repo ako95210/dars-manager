@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .database import get_db
-from .models import AccountInvitation, AuthSession, User, utc_now
+from .email_delivery import EmailDeliveryError, email_delivery_configured, send_password_reset
+from .models import AccountInvitation, AuthSession, PasswordReset, User, utc_now
 from .security import (
     DUMMY_PASSWORD_HASH,
     LoginThrottle,
@@ -18,6 +19,7 @@ from .security import (
     hash_invitation_token,
     hash_session_token,
     is_expired,
+    new_invitation_token,
     new_session_token,
     normalize_email,
     session_expiration,
@@ -28,6 +30,7 @@ from .security import (
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 account_login_throttle = LoginThrottle(max_failures=5)
 address_login_throttle = LoginThrottle(max_failures=20)
+reset_request_throttle = LoginThrottle(max_failures=3, window_seconds=3600)
 
 
 class LoginRequest(BaseModel):
@@ -44,6 +47,15 @@ class UserResponse(BaseModel):
 
 class PasswordChangeRequest(BaseModel):
     current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=10, max_length=256)
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=256)
     new_password: str = Field(min_length=10, max_length=256)
 
 
@@ -187,6 +199,69 @@ def login(
 @router.get("/me", response_model=UserResponse)
 def me(user: User = Depends(require_user)) -> UserResponse:
     return user_response(user)
+
+
+@router.post("/password/reset-request", status_code=202)
+def request_password_reset(
+    payload: PasswordResetRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    message = {"message": "Si ce compte existe, un lien de réinitialisation a été envoyé."}
+    email = normalize_email(str(payload.email))
+    host = request.client.host if request.client else "unknown"
+    key = f"reset:{host}:{email}"
+    if reset_request_throttle.retry_after(key):
+        return message
+    reset_request_throttle.failure(key)
+    user = db.scalar(select(User).where(User.email == email))
+    if not user or not user.is_active or user.email_verified_at is None or not email_delivery_configured():
+        return message
+    token = new_invitation_token()
+    now = utc_now()
+    db.execute(
+        update(PasswordReset)
+        .where(PasswordReset.user_id == user.id, PasswordReset.used_at.is_(None))
+        .values(used_at=now)
+    )
+    reset = PasswordReset(
+        user_id=user.id,
+        token_hash=hash_invitation_token(token),
+        expires_at=now + timedelta(hours=1),
+    )
+    db.add(reset)
+    db.commit()
+    try:
+        send_password_reset(user.email, token)
+    except EmailDeliveryError:
+        db.delete(reset)
+        db.commit()
+    return message
+
+
+@router.post("/password/reset-confirm", status_code=204)
+def confirm_password_reset(
+    payload: PasswordResetConfirmRequest,
+    db: Session = Depends(get_db),
+) -> None:
+    reset = db.scalar(
+        select(PasswordReset)
+        .where(PasswordReset.token_hash == hash_invitation_token(payload.token))
+        .with_for_update()
+    )
+    if reset is None or reset.used_at is not None or is_expired(reset.expires_at):
+        raise HTTPException(status_code=410, detail="Ce lien est invalide ou a expiré.")
+    user = db.get(User, reset.user_id)
+    if user is None or not user.is_active or user.email_verified_at is None:
+        raise HTTPException(status_code=410, detail="Ce lien est invalide ou a expiré.")
+    user.password_hash = hash_password(payload.new_password)
+    db.execute(delete(AuthSession).where(AuthSession.user_id == user.id))
+    db.execute(
+        update(PasswordReset)
+        .where(PasswordReset.user_id == user.id, PasswordReset.used_at.is_(None))
+        .values(used_at=utc_now())
+    )
+    db.commit()
 
 
 def valid_invitation(db: Session, token: str, *, for_update: bool = False) -> tuple[AccountInvitation, User]:

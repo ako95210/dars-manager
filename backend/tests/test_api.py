@@ -124,6 +124,47 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(client.post("/api/auth/logout").status_code, 204)
             self.assertEqual(client.get("/api/auth/me").status_code, 401)
 
+    def test_password_reset_is_private_single_use_and_revokes_sessions(self) -> None:
+        with TestClient(app) as first, TestClient(app) as second, patch(
+            "backend.app.auth.email_delivery_configured", return_value=True
+        ), patch("backend.app.auth.send_password_reset") as delivery:
+            unknown = first.post(
+                "/api/auth/password/reset-request", json={"email": "unknown@example.com"}
+            )
+            requested = first.post(
+                "/api/auth/password/reset-request", json={"email": "pilot-a@example.com"}
+            )
+            self.assertEqual(unknown.status_code, 202)
+            self.assertEqual(unknown.json(), requested.json())
+            self.assertEqual(delivery.call_count, 1)
+            token = delivery.call_args.args[1]
+            self.login(first, "pilot-a@example.com", "mot-de-passe-a")
+            self.login(second, "pilot-a@example.com", "mot-de-passe-a")
+            invalid = first.post(
+                "/api/auth/password/reset-confirm",
+                json={"token": "x" * 40, "new_password": "nouveau-mot-de-passe"},
+            )
+            self.assertEqual(invalid.status_code, 410)
+            changed = first.post(
+                "/api/auth/password/reset-confirm",
+                json={"token": token, "new_password": "nouveau-mot-de-passe"},
+            )
+            self.assertEqual(changed.status_code, 204, changed.text)
+            self.assertEqual(second.get("/api/auth/me").status_code, 401)
+            self.assertEqual(first.post(
+                "/api/auth/password/reset-confirm",
+                json={"token": token, "new_password": "autre-mot-de-passe"},
+            ).status_code, 410)
+            self.assertEqual(first.post(
+                "/api/auth/login",
+                json={"email": "pilot-a@example.com", "password": "mot-de-passe-a"},
+            ).status_code, 401)
+            self.login(first, "pilot-a@example.com", "nouveau-mot-de-passe")
+            with SessionLocal() as db:
+                user = db.scalar(select(User).where(User.email == "pilot-a@example.com"))
+                user.password_hash = hash_password("mot-de-passe-a")
+                db.commit()
+
     def test_session_duration_depends_on_role_and_applies_to_existing_sessions(self) -> None:
         with TestClient(app) as client:
             admin_login = self.login(client, "admin@example.com", "mot-de-passe-admin")
@@ -628,7 +669,7 @@ class ApiTests(unittest.TestCase):
             )
             self.assertEqual(created.status_code, 201, created.text)
             project_id = created.json()["id"]
-            self.assertEqual(len(client_a.get("/api/projects").json()), 1)
+            self.assertIn(project_id, {item["id"] for item in client_a.get("/api/projects").json()})
 
         with TestClient(app) as client_b:
             self.login(client_b, "pilot-b@example.com", "mot-de-passe-b")
@@ -748,7 +789,7 @@ class ApiTests(unittest.TestCase):
             self.assertGreater(video_template["duration_seconds"], 0)
             templates = client.get("/api/brand/templates")
             self.assertEqual(templates.status_code, 200, templates.text)
-            self.assertEqual(len(templates.json()), 2)
+            self.assertTrue({image_template["id"], video_template["id"]}.issubset({item["id"] for item in templates.json()}))
             preview = client.get(image_template["preview_url"])
             self.assertEqual(preview.status_code, 200, preview.text)
             self.assertEqual(preview.headers["content-type"], "image/png")
@@ -957,7 +998,8 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(set(completed.artifacts), {"analysis", "audio", "cover", "video"})
             with SessionLocal() as db:
                 artifacts = db.scalars(select(Artifact).where(Artifact.job_id == job.id)).all()
-                self.assertEqual(len(artifacts), 4)
+                self.assertTrue({"analysis", "audio", "cover", "video"}.issubset({item.kind for item in artifacts}))
+                self.assertTrue(any(item.kind.startswith("analysis_snapshot_") for item in artifacts))
                 self.assertTrue(all(item.checksum_sha256 for item in artifacts))
             downloaded = client.get(f"/api/jobs/{job.id}/artifacts/cover")
             self.assertEqual(downloaded.status_code, 200, downloaded.text)
@@ -1182,7 +1224,8 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual(kwargs["values"]["title"], "Titre du rendu")
                 output.write_bytes(b"rendered-cover")
 
-            def fake_video(_cover, _audio, output) -> None:
+            def fake_video(_cover, _audio, output, **kwargs) -> None:
+                self.assertIsNone(kwargs.get("subtitles"))
                 output.write_bytes(b"rendered-video")
 
             with (

@@ -32,6 +32,7 @@ export type Project = {
 };
 
 export type Job = {
+  automatic?: boolean;
   id: string;
   project_id: string;
   tool: "audio_pipeline" | "audio_selection" | string;
@@ -44,7 +45,7 @@ export type Job = {
   } | null;
   processing_modes?: {
     transcription: "cloud" | "local";
-    chaptering: "ai" | "local";
+    chaptering: "ai" | "local" | "none";
   } | null;
   source_asset_id?: string | null;
   source_expires_at?: string | null;
@@ -64,7 +65,7 @@ export type Job = {
     semantic_input_tokens?: number;
     semantic_output_tokens?: number;
     transcription_mode?: "cloud" | "local";
-    chaptering_mode?: "ai" | "local";
+    chaptering_mode?: "ai" | "local" | "none";
     selected_parts?: number;
     template_id?: string;
     template_version?: number;
@@ -116,7 +117,7 @@ export type TranscriptionQuote = {
   provider: string;
   model: string;
   transcription_mode: "cloud" | "local";
-  chaptering_mode: "ai" | "local";
+  chaptering_mode: "ai" | "local" | "none";
   duration_seconds: number;
   billed_seconds: number;
   currency: string;
@@ -173,6 +174,12 @@ export type JobAnalysis = {
   checksum_sha256: string;
   segments: AnalysisSegment[];
   parts: CoursePart[];
+  subtitles: {
+    language: string;
+    font: "sans" | "serif" | "mono";
+    color: string;
+    cues: AnalysisSegment[];
+  };
 };
 
 export type TemplateZone = {
@@ -376,6 +383,14 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),
+  requestPasswordReset: (email: string) =>
+    request<{ message: string }>("/api/auth/password/reset-request", {
+      method: "POST", body: JSON.stringify({ email }),
+    }),
+  confirmPasswordReset: (token: string, newPassword: string) =>
+    request<void>("/api/auth/password/reset-confirm", {
+      method: "POST", body: JSON.stringify({ token, new_password: newPassword }),
+    }),
   changePassword: (currentPassword: string, newPassword: string) =>
     request<void>("/api/auth/password", {
       method: "PUT",
@@ -438,7 +453,8 @@ export const api = {
     language: string,
     estimatedDurationSeconds: number,
     transcriptionMode: "cloud" | "local",
-    chapteringMode: "ai" | "local",
+    chapteringMode: "ai" | "local" | "none",
+    courseTitle: string,
     costConfirmed = false,
     onStage?: (stage: "reserve" | "upload" | "validate" | "start") => void,
   ) => {
@@ -488,6 +504,7 @@ export const api = {
         estimated_duration_seconds: estimatedDurationSeconds,
         transcription_mode: transcriptionMode,
         chaptering_mode: chapteringMode,
+        course_title: chapteringMode === "none" ? courseTitle : undefined,
         cost_confirmed: costConfirmed,
       }),
     });
@@ -495,7 +512,7 @@ export const api = {
   quoteTranscription: (
     durationSeconds: number,
     transcriptionMode: "cloud" | "local",
-    chapteringMode: "ai" | "local",
+    chapteringMode: "ai" | "local" | "none",
   ) =>
     request<TranscriptionQuote>("/api/transcription/quote", {
       method: "POST",
@@ -517,6 +534,14 @@ export const api = {
     method: "PUT",
     body: JSON.stringify({ checksum_sha256: checksumSha256, parts }),
   }),
+  updateSubtitles: (jobId: string, checksumSha256: string, subtitles: JobAnalysis["subtitles"]) =>
+    request<JobAnalysis>(`/api/jobs/${jobId}/analysis/subtitles`, {
+      method: "PUT",
+      body: JSON.stringify({ checksum_sha256: checksumSha256, ...subtitles }),
+    }),
+  subtitleProofreadQuote: (jobId: string) => request<{ model: string; amount: string; currency: string }>(`/api/jobs/${jobId}/analysis/subtitles/proofread-quote`),
+  createSubtitleProofread: (jobId: string, checksumSha256: string) => request<Job>(`/api/jobs/${jobId}/analysis/subtitles/proofread`, { method: "POST", body: JSON.stringify({ checksum_sha256: checksumSha256, cost_confirmed: true }) }),
+  subtitleSuggestions: (jobId: string, childId: string) => request<{ analysis_checksum: string; cues: AnalysisSegment[] }>(`/api/jobs/${jobId}/analysis/subtitles/proofread/${childId}`),
   semanticReanalysisQuote: (jobId: string) =>
     request<SemanticReanalysisQuote>(`/api/jobs/${jobId}/analysis/reanalysis-quote`),
   createSemanticReanalysis: (
@@ -624,6 +649,7 @@ export const api = {
     outputFormat: "16:9" | "1:1" | "9:16",
     values: { title: string; speaker: string; date: string; episode: string },
     imageJobId?: string,
+    includeSubtitles = false,
   ) => request<Job>(`/api/jobs/${jobId}/exports/video`, {
     method: "POST",
     body: JSON.stringify({
@@ -633,6 +659,7 @@ export const api = {
       template_version: template.version,
       output_format: outputFormat,
       image_job_id: imageJobId || null,
+      include_subtitles: includeSubtitles,
       ...values,
     }),
   }),
@@ -649,6 +676,7 @@ export const api = {
       audio_export_job_id: audioExportJobId || null,
     }),
   }),
+  recoveryArchive: (jobId: string) => request<Job | null>(`/api/jobs/${jobId}/exports/recovery`),
   importArchive: async (
     projectId: string,
     file: File,

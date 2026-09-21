@@ -3,6 +3,7 @@ import { api, BillingSummary, CommunityAllocation, CommunityContribution, Impact
 import { TemplateLibrary } from "./TemplateLibrary";
 import type { VisualMode } from "./TemplateLibrary";
 import { UserAdministration } from "./UserAdministration";
+import { PasswordField } from "./PasswordField";
 import type { BrandTemplate } from "./api";
 
 function inspectAudioDuration(file: File): Promise<number> {
@@ -86,16 +87,8 @@ function Login({ onAuthenticated }: { onAuthenticated: (user: User) => void }) {
               required
             />
           </label>
-          <label>
-            Mot de passe
-            <input
-              autoComplete="current-password"
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-            />
-          </label>
+          <PasswordField autoComplete="current-password" label="Mot de passe" onChange={setPassword} value={password} />
+          <a className="forgot-link" href="#forgot-password">Mot de passe oublié ?</a>
           {error && <p className="form-error">{error}</p>}
           <button className="button primary" disabled={loading} type="submit">
             {loading ? "Connexion…" : "Se connecter"}
@@ -114,6 +107,52 @@ function invitationTokenFromHash() {
   } catch {
     return null;
   }
+}
+
+function resetTokenFromHash() {
+  const match = window.location.hash.match(/^#reset-password=([^&]+)$/);
+  if (!match) return null;
+  try { return decodeURIComponent(match[1]); } catch { return null; }
+}
+
+function PasswordRecovery({ token }: { token: string | null }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    if (token && password !== confirmation) {
+      setError("Les deux mots de passe ne correspondent pas.");
+      return;
+    }
+    setSaving(true);
+    try {
+      if (token) await api.confirmPasswordReset(token, password);
+      else await api.requestPasswordReset(email);
+      setDone(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Opération impossible.");
+    } finally { setSaving(false); }
+  }
+
+  return <main className="invitation-shell"><Brand /><section className="invitation-card">
+    <span className="eyebrow">Accès sécurisé</span>
+    <h1>{token ? "Nouveau mot de passe" : "Mot de passe oublié"}</h1>
+    {done ? <p>{token ? "Votre mot de passe a été changé. Toutes les autres sessions ont été fermées." : "Si cette adresse correspond à un compte actif, un lien de réinitialisation vient d’être envoyé. Vérifiez aussi vos courriers indésirables."}</p> : <>
+      <p>{token ? "Choisissez votre nouveau mot de passe." : "Indiquez l’adresse e-mail de votre compte pour recevoir un lien valable une heure."}</p>
+      <form onSubmit={submit}>
+        {token ? <><PasswordField label="Nouveau mot de passe" minLength={10} onChange={setPassword} value={password} /><PasswordField label="Confirmation" minLength={10} onChange={setConfirmation} value={confirmation} /></> : <label>Adresse e-mail<input autoComplete="email" required type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>}
+        {error && <p className="form-error notice">{error}</p>}
+        <button className="button primary" disabled={saving} type="submit">{saving ? "Envoi…" : token ? "Changer le mot de passe" : "Recevoir le lien"}</button>
+      </form>
+    </>}
+    <a className="button secondary invitation-login" href="/">Retour à la connexion</a>
+  </section></main>;
 }
 
 function InvitationAcceptance({ token }: { token: string }) {
@@ -167,8 +206,8 @@ function InvitationAcceptance({ token }: { token: string }) {
           <p>Confirmez l’accès à <strong>{details.email}</strong> en choisissant le nom qui sera affiché dans Dars Manager et votre mot de passe.</p>
           <form onSubmit={submit}>
             <label>Nom affiché<input autoComplete="name" maxLength={120} required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
-            <label>Mot de passe<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-            <label>Confirmation<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
+            <PasswordField label="Mot de passe" minLength={10} onChange={setPassword} value={password} />
+            <PasswordField label="Confirmation" minLength={10} onChange={setConfirmation} value={confirmation} />
             {error && <p className="form-error notice">{error}</p>}
             <button className="button primary" disabled={saving} type="submit">{saving ? "Activation…" : "Activer mon compte"}</button>
           </form>
@@ -229,7 +268,8 @@ type PartDraft = {
   transcript: string;
 };
 
-type StudioLab = "audio-creation" | "audio-adjustment" | "video-creation" | "distribution";
+type StudioLab = "audio-creation" | "subtitles" | "audio-adjustment" | "video-creation" | "distribution";
+const pageOpenedAt = Date.now() / 1000;
 
 function analysisDrafts(analysis: JobAnalysis): PartDraft[] {
   return analysis.parts.map((part) => ({
@@ -240,8 +280,14 @@ function analysisDrafts(analysis: JobAnalysis): PartDraft[] {
 }
 
 function CourseEditor({ job }: { job: Job }) {
+  const [returningToCourse] = useState(() => window.sessionStorage.getItem(`dars-course-visited:${job.id}`) === "1");
   const [activeLab, setActiveLab] = useState<StudioLab>("audio-creation");
   const [analysis, setAnalysis] = useState<JobAnalysis | null>(null);
+  const [subtitleDraft, setSubtitleDraft] = useState<JobAnalysis["subtitles"] | null>(null);
+  const [subtitleDirty, setSubtitleDirty] = useState(false);
+  const [subtitleSaving, setSubtitleSaving] = useState(false);
+  const [proofreadJob, setProofreadJob] = useState<Job | null>(null);
+  const [includeSubtitles, setIncludeSubtitles] = useState(false);
   const [parts, setParts] = useState<PartDraft[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -252,6 +298,7 @@ function CourseEditor({ job }: { job: Job }) {
   const [audioExports, setAudioExports] = useState<Job[]>([]);
   const [videoJob, setVideoJob] = useState<Job | null>(null);
   const [archiveJob, setArchiveJob] = useState<Job | null>(null);
+  const [recoveryArchive, setRecoveryArchive] = useState<Job | null>(null);
   const [reanalysisJob, setReanalysisJob] = useState<Job | null>(null);
   const [exportLoading, setExportLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
@@ -266,6 +313,8 @@ function CourseEditor({ job }: { job: Job }) {
   const [renderingVideo, setRenderingVideo] = useState(false);
   const [archiving, setArchiving] = useState(false);
 
+  useEffect(() => { window.sessionStorage.setItem(`dars-course-visited:${job.id}`, "1"); }, [job.id]);
+
   function load() {
     setLoading(true);
     setError("");
@@ -273,7 +322,10 @@ function CourseEditor({ job }: { job: Job }) {
     return api.jobAnalysis(job.id)
       .then((value) => {
         setAnalysis(value);
+        setSubtitleDraft(value.subtitles);
+        setSubtitleDirty(false);
         setParts(analysisDrafts(value));
+        setSelectedParts((current) => current.length ? current : value.parts.map((part) => part.index));
         setDirty(false);
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Analyse indisponible."))
@@ -287,7 +339,10 @@ function CourseEditor({ job }: { job: Job }) {
       .then((value) => {
         if (!active) return;
         setAnalysis(value);
+        setSubtitleDraft(value.subtitles);
+        setSubtitleDirty(false);
         setParts(analysisDrafts(value));
+        setSelectedParts((current) => current.length ? current : value.parts.map((part) => part.index));
         setDirty(false);
       })
       .catch((reason) => {
@@ -318,11 +373,23 @@ function CourseEditor({ job }: { job: Job }) {
           && item.parent_job_id === job.id
           && !terminalStates.has(item.state)
         )) ?? null);
+        setProofreadJob(jobs.find((item) => item.tool === "subtitle_proofread" && item.parent_job_id === job.id && !terminalStates.has(item.state)) ?? null);
       })
       .catch(() => { if (active) setExportJob(null); })
       .finally(() => { if (active) setExportLoading(false); });
     return () => { active = false; };
   }, [job.id, job.project_id]);
+
+  useEffect(() => {
+    function checkRecovery() {
+      api.recoveryArchive(job.id).then((latest) => {
+        if (latest && (returningToCourse || latest.created_at < pageOpenedAt) && window.localStorage.getItem(`dars-archive-seen:${job.id}`) !== latest.id && window.sessionStorage.getItem(`dars-archive-deferred:${job.id}`) !== latest.id) setRecoveryArchive(latest);
+      }).catch(() => {});
+    }
+    checkRecovery();
+    const timer = window.setInterval(checkRecovery, 15000);
+    return () => window.clearInterval(timer);
+  }, [job.id, job.project_id, returningToCourse]);
 
   useEffect(() => {
     if (!exportJob || terminalStates.has(exportJob.state)) return;
@@ -390,6 +457,26 @@ function CourseEditor({ job }: { job: Job }) {
     return () => window.clearInterval(timer);
   }, [reanalysisJob?.id, reanalysisJob?.state]);
 
+  useEffect(() => {
+    if (!proofreadJob) return;
+    if (proofreadJob.state === "completed") {
+      api.subtitleSuggestions(job.id, proofreadJob.id).then((result) => {
+        if (result.analysis_checksum !== analysis?.checksum_sha256 || subtitleDirty) {
+          setError("Le texte a changé depuis la correction. Enregistrez ou rechargez avant de relancer.");
+        } else if (subtitleDraft && result.cues.length === subtitleDraft.cues.length) {
+          setSubtitleDraft({ ...subtitleDraft, cues: result.cues });
+          setSubtitleDirty(true);
+          setNotice("Corrections proposées. Relisez-les puis enregistrez-les.");
+        }
+        setProofreadJob(null);
+      }).catch((reason) => { setError(reason instanceof Error ? reason.message : "Suggestions indisponibles."); setProofreadJob(null); });
+      return;
+    }
+    if (terminalStates.has(proofreadJob.state)) return;
+    const timer = window.setInterval(() => api.job(proofreadJob.id).then(setProofreadJob).catch(() => {}), 1500);
+    return () => window.clearInterval(timer);
+  }, [proofreadJob?.id, proofreadJob?.state, analysis?.checksum_sha256, subtitleDirty]);
+
   function changePart(index: number, field: keyof PartDraft, value: string) {
     setParts((current) => current.map((part, position) => (
       position === index ? { ...part, [field]: value } : part
@@ -399,7 +486,7 @@ function CourseEditor({ job }: { job: Job }) {
   }
 
   async function save() {
-    if (!analysis) return;
+    if (!analysis) return false;
     const parsed = parts.map((part) => ({
       index: part.index,
       start: parseEditorTime(part.start),
@@ -409,11 +496,11 @@ function CourseEditor({ job }: { job: Job }) {
     }));
     if (parsed.some((part) => !Number.isFinite(part.start) || !Number.isFinite(part.end))) {
       setError("Utilisez le format minutes:secondes, par exemple 12:35.");
-      return;
+      return false;
     }
     if (parsed.some((part) => !part.title)) {
       setError("Chaque partie doit avoir un titre.");
-      return;
+      return false;
     }
     setSaving(true);
     setError("");
@@ -421,14 +508,56 @@ function CourseEditor({ job }: { job: Job }) {
     try {
       const updated = await api.updateJobAnalysis(job.id, analysis.checksum_sha256, parsed);
       setAnalysis(updated);
+      setSubtitleDraft(updated.subtitles);
       setParts(analysisDrafts(updated));
       setDirty(false);
       setNotice("Corrections enregistrées sans nouvelle transcription ni coût IA.");
+      return updated;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Sauvegarde impossible.");
+      return false;
     } finally {
       setSaving(false);
     }
+  }
+
+  async function saveSubtitles(checksumOverride?: string) {
+    if (!analysis || !subtitleDraft) return false;
+    setSubtitleSaving(true);
+    setError("");
+    try {
+      const updated = await api.updateSubtitles(job.id, checksumOverride || analysis.checksum_sha256, subtitleDraft);
+      setAnalysis(updated);
+      setSubtitleDraft(updated.subtitles);
+      setSubtitleDirty(false);
+      setNotice("Sous-titres enregistrés sur le serveur.");
+      return updated;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Enregistrement des sous-titres impossible.");
+      return false;
+    } finally {
+      setSubtitleSaving(false);
+    }
+  }
+
+  async function changeLab(next: StudioLab) {
+    if (saving || subtitleSaving) return;
+    const savedAnalysis = dirty ? await save() : analysis;
+    if (!savedAnalysis) return;
+    if (subtitleDirty && !(await saveSubtitles(savedAnalysis.checksum_sha256))) return;
+    setActiveLab(next);
+  }
+
+  async function proofreadSubtitles() {
+    if (!analysis) return;
+    const saved = subtitleDirty ? await saveSubtitles() : analysis;
+    if (!saved) return;
+    setError("");
+    try {
+      const quote = await api.subtitleProofreadQuote(job.id);
+      if (!window.confirm(`Corriger l’orthographe et la grammaire avec ${quote.model} pour environ ${Number(quote.amount).toFixed(4)} ${quote.currency} ?`)) return;
+      setProofreadJob(await api.createSubtitleProofread(job.id, saved.checksum_sha256));
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Correction impossible."); }
   }
 
   async function reanalyze() {
@@ -482,7 +611,7 @@ function CourseEditor({ job }: { job: Job }) {
 
   async function createVideo() {
     if (!analysis || !selectedTemplate || selectedParts.length === 0) return;
-    if (dirty) {
+    if (dirty || (includeSubtitles && subtitleDirty)) {
       setError("Enregistrez d’abord vos corrections avant de générer la vidéo.");
       return;
     }
@@ -498,6 +627,7 @@ function CourseEditor({ job }: { job: Job }) {
         videoFormat,
         videoValues,
         visualMode === "ai" ? imageJob?.id : undefined,
+        includeSubtitles,
       ));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Création de la vidéo impossible.");
@@ -508,7 +638,7 @@ function CourseEditor({ job }: { job: Job }) {
 
   async function createImage() {
     if (!selectedTemplate) return;
-    const title = videoValues.title.trim() || exportJob?.content?.title || "Cours audio";
+    const title = videoValues.title.trim() || exportJob?.content?.title || analysis?.parts[0]?.title || "Cours audio";
     setGeneratingImage(true);
     setError("");
     setNotice("");
@@ -572,9 +702,10 @@ function CourseEditor({ job }: { job: Job }) {
   const archiveBusy = Boolean(archiveJob && !terminalStates.has(archiveJob.state));
   const archiveProgress = Math.round(Math.max(0, Math.min(1, archiveJob?.progress ?? 0)) * 100);
   const reanalysisBusy = Boolean(reanalysisJob && !terminalStates.has(reanalysisJob.state));
+  const proofreadBusy = Boolean(proofreadJob && !terminalStates.has(proofreadJob.state));
   const reanalysisProgress = Math.round(Math.max(0, Math.min(1, reanalysisJob?.progress ?? 0)) * 100);
-  const audioReady = Boolean(exportJob?.state === "completed" && exportJob.artifacts.includes("selection_audio"));
-  const effectiveVideoTitle = videoValues.title.trim() || exportJob?.content?.title || "Cours audio";
+  const audioReady = Boolean(analysis && job.artifacts.includes("audio"));
+  const effectiveVideoTitle = videoValues.title.trim() || exportJob?.content?.title || analysis?.parts[0]?.title || "Cours audio";
   const imageReady = Boolean(
     imageJob?.state === "completed"
     && imageJob.artifacts.includes("generated_image")
@@ -587,13 +718,15 @@ function CourseEditor({ job }: { job: Job }) {
   const videoReady = Boolean(videoJob?.state === "completed" && videoJob.artifacts.includes("video"));
   const labs: { id: StudioLab; label: string; description: string; unlocked: boolean }[] = [
     { id: "audio-creation", label: "Création Audio", description: "Transcrire, chapitrer et sauvegarder les extraits", unlocked: true },
-    { id: "audio-adjustment", label: "Ajustement Audio", description: "Étape optionnelle de montage et d’enrichissement", unlocked: audioReady },
+    { id: "subtitles", label: "Sous-titres", description: "Corriger et synchroniser le texte", unlocked: audioReady },
+    { id: "audio-adjustment", label: "Ajustement Audio", description: "Étape optionnelle de montage et d’enrichissement", unlocked: Boolean(exportJob?.state === "completed") },
     { id: "video-creation", label: "Création Vidéo", description: "Composer le support visuel à partir d’un audio", unlocked: audioReady },
     { id: "distribution", label: "Diffusion", description: "Télécharger ou publier sur YouTube et Telegram", unlocked: videoReady },
   ];
 
   return (
     <section className="course-editor">
+      {recoveryArchive && <div className="recovery-overlay" role="dialog" aria-modal="true" aria-label="Sauvegarde récupérable"><div className="recovery-card"><h2>Votre travail est récupérable</h2><p>Une sauvegarde temporaire .dars de ce cours est disponible sur le serveur. Téléchargez-la pour conserver une copie sur votre machine.</p><div><a className="button accent" download href={api.artifactUrl(recoveryArchive.id, "archive")} onClick={() => { window.localStorage.setItem(`dars-archive-seen:${job.id}`, recoveryArchive.id); setRecoveryArchive(null); }}>Télécharger la sauvegarde</a><button className="button secondary" onClick={() => { window.sessionStorage.setItem(`dars-archive-deferred:${job.id}`, recoveryArchive.id); setRecoveryArchive(null); }}>Plus tard</button></div></div></div>}
       <nav aria-label="Étapes du studio" className="studio-tabs" role="tablist">
         {labs.map((lab, index) => (
           <button
@@ -601,7 +734,7 @@ function CourseEditor({ job }: { job: Job }) {
             aria-selected={activeLab === lab.id}
             className={`${activeLab === lab.id ? "active" : ""} ${lab.unlocked ? "" : "locked"}`}
             key={lab.id}
-            onClick={() => lab.unlocked && setActiveLab(lab.id)}
+            onClick={() => lab.unlocked && void changeLab(lab.id)}
             role="tab"
             type="button"
           >
@@ -709,6 +842,20 @@ function CourseEditor({ job }: { job: Job }) {
             </section>
           )}
 
+          {activeLab === "subtitles" && subtitleDraft && (
+            <section className="studio-lab-panel subtitle-lab" role="tabpanel">
+              <header className="editor-heading"><div><span className="eyebrow">Sous-titres · optionnels</span><h2>Préparer le texte affiché dans la vidéo</h2><p>Relisez chaque phrase et son horaire. La transcription d’origine reste intacte.</p></div><div className="project-header-actions"><button className="button secondary compact" disabled={Boolean(proofreadJob && !terminalStates.has(proofreadJob.state)) || subtitleSaving} onClick={proofreadSubtitles}>{proofreadJob && !terminalStates.has(proofreadJob.state) ? "Correction en cours…" : "Corriger / traduire avec l’IA"}</button><button className="button primary compact" disabled={!subtitleDirty || subtitleSaving} onClick={() => void saveSubtitles()}>{subtitleSaving ? "Enregistrement…" : "Enregistrer les sous-titres"}</button></div></header>
+              {proofreadJob && <p className="editor-feedback">{proofreadJob.error || proofreadJob.message}</p>}
+              <div className="subtitle-options">
+                <label>Langue<input maxLength={20} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, language: event.target.value }); setSubtitleDirty(true); }} value={subtitleDraft.language} /></label>
+                <label>Police<select onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, font: event.target.value as JobAnalysis["subtitles"]["font"] }); setSubtitleDirty(true); }} value={subtitleDraft.font}><option value="sans">Sans serif</option><option value="serif">Serif</option><option value="mono">Monospace</option></select></label>
+                <label>Couleur<input onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, color: event.target.value }); setSubtitleDirty(true); }} type="color" value={subtitleDraft.color} /></label>
+              </div>
+              <div className="subtitle-cues">{subtitleDraft.cues.map((cue, index) => <label key={index}><span>{formatDuration(cue.start)} → {formatDuration(cue.end)}</span><textarea rows={2} value={cue.text} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, cues: subtitleDraft.cues.map((item, position) => position === index ? { ...item, text: event.target.value } : item) }); setSubtitleDirty(true); }} /></label>)}</div>
+              <div className="lab-next-actions"><button className="button secondary" onClick={() => void changeLab("audio-creation")}>Retour à Création Audio</button><button className="button accent" onClick={() => void changeLab("video-creation")}>Passer à Création Vidéo</button></div>
+            </section>
+          )}
+
           {activeLab === "audio-adjustment" && audioReady && exportJob && (
             <section className="studio-lab-panel audio-adjustment-lab" role="tabpanel">
               <div>
@@ -727,9 +874,9 @@ function CourseEditor({ job }: { job: Job }) {
             </section>
           )}
 
-          {activeLab === "video-creation" && audioReady && exportJob && (
+          {activeLab === "video-creation" && audioReady && (
             <section className="studio-lab-panel" role="tabpanel">
-              <header className="editor-heading"><div><span className="eyebrow">Création Vidéo</span><h2>Associer un visuel à l’audio</h2><p>Importez une image finalisée dans Canva ou créez-en une depuis votre modèle visuel avec l’IA.</p></div><div className="selected-source-chip"><span>Audio</span><strong>{exportJob.content?.title || "Extrait audio"}</strong><button onClick={() => setActiveLab("audio-creation")}>Changer</button></div></header>
+              <header className="editor-heading"><div><span className="eyebrow">Création Vidéo</span><h2>Associer un visuel à l’audio</h2><p>Importez une image finalisée dans Canva ou créez-en une depuis votre modèle visuel avec l’IA.</p></div><div className="selected-source-chip"><span>Audio</span><strong>{exportJob?.content?.title || analysis.parts[0]?.title || "Cours audio"}</strong><button onClick={() => setActiveLab("audio-creation")}>Changer</button></div></header>
 
               <section className="visual-mode-choice">
                 <button className={visualMode === "ready" ? "active" : ""} onClick={() => setVisualMode("ready")} type="button"><span>01</span><strong>Image prête</strong><small>Visuel finalisé dans Canva, utilisé sans modification</small></button>
@@ -737,7 +884,7 @@ function CourseEditor({ job }: { job: Job }) {
               </section>
 
               <section className="video-basics">
-                <label>Titre du contenu<input maxLength={300} onChange={(event) => setVideoValues((current) => ({ ...current, title: event.target.value }))} placeholder={exportJob.content?.title || "Titre de l’audio"} value={videoValues.title} /></label>
+                <label>Titre du contenu<input maxLength={300} onChange={(event) => setVideoValues((current) => ({ ...current, title: event.target.value }))} placeholder={exportJob?.content?.title || analysis.parts[0]?.title || "Titre de l’audio"} value={videoValues.title} /></label>
                 <div><span>Format de sortie</span><div className="format-choice" aria-label="Format de sortie">{(["16:9", "1:1", "9:16"] as const).map((format) => <button className={videoFormat === format ? "active" : ""} key={format} onClick={() => setVideoFormat(format)} type="button"><span className={`ratio ratio-${format.replace(":", "-")}`} />{format}</button>)}</div></div>
               </section>
 
@@ -766,9 +913,11 @@ function CourseEditor({ job }: { job: Job }) {
                 <section className="ready-image-preview"><img alt={`Visuel ${selectedTemplate.name}`} src={selectedTemplate.preview_url} /><div><span className="eyebrow">Aperçu</span><h3>{selectedTemplate.name}</h3><p>Cette image sera utilisée telle quelle. Le titre sert uniquement au nom du fichier et à la diffusion.</p></div></section>
               )}
 
+              <label className="subtitle-toggle"><input checked={includeSubtitles} onChange={(event) => setIncludeSubtitles(event.target.checked)} type="checkbox" /> Incruster les sous-titres préparés dans la vidéo {subtitleDirty && <small>Enregistrez d’abord vos modifications.</small>}</label>
+
               <section className="video-composer">
                 <div><span className="eyebrow">Dernière étape</span><strong>{visualReady ? "Le visuel et l’audio sont prêts" : visualMode === "ai" ? "Générez et validez d’abord l’image" : "Choisissez ou importez une image prête"}</strong></div>
-                <button className="button accent" disabled={!visualReady || dirty || renderingVideo || videoBusy || imageBusy} onClick={createVideo} type="button">{renderingVideo ? "Préparation…" : videoBusy ? "Rendu en cours…" : "Créer la vidéo"}</button>
+                <button className="button accent" disabled={!visualReady || dirty || (includeSubtitles && (subtitleDirty || proofreadBusy)) || renderingVideo || videoBusy || imageBusy} onClick={createVideo} type="button">{renderingVideo ? "Préparation…" : videoBusy ? "Rendu en cours…" : "Créer la vidéo"}</button>
               </section>
               {videoJob && (
                 <div className={`video-render-status ${videoJob.state}`}>
@@ -1396,7 +1545,8 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
   const [error, setError] = useState("");
   const [costConfirmed, setCostConfirmed] = useState(false);
   const [transcriptionMode, setTranscriptionMode] = useState<"cloud" | "local">("cloud");
-  const [chapteringMode, setChapteringMode] = useState<"ai" | "local">("ai");
+  const [chapteringMode, setChapteringMode] = useState<"ai" | "local" | "none">("ai");
+  const [courseTitle, setCourseTitle] = useState("");
   const fileIsArchive = Boolean(file?.name.toLowerCase().endsWith(".dars"));
 
   useEffect(() => {
@@ -1462,6 +1612,7 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
           quote!.duration_seconds,
           transcriptionMode,
           chapteringMode,
+          courseTitle,
           costConfirmed,
           setUploadStage,
         ));
@@ -1561,8 +1712,13 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
                     <input checked={chapteringMode === "local"} name="chaptering-mode" onChange={() => setChapteringMode("local")} type="radio" />
                     <span><strong>Script local — sans coût IA</strong><small><b>Avantages :</b> aucun appel facturé, résultat déterministe fondé sur les ruptures de vocabulaire.</small><small><b>Inconvénient :</b> titres plus simples et changements de sujet moins finement compris.</small></span>
                   </label>
+                  <label className={chapteringMode === "none" ? "mode-option active" : "mode-option"}>
+                    <input checked={chapteringMode === "none"} name="chaptering-mode" onChange={() => setChapteringMode("none")} type="radio" />
+                    <span><strong>Sans chapitrage — audio déjà prêt</strong><small>Le cours entier est transcrit et reste utilisable tel quel. Vous choisissez son titre.</small><small>Aucun coût de chapitrage ni découpage imposé.</small></span>
+                  </label>
                 </div>
               </fieldset>
+              {chapteringMode === "none" && <label className="course-title-field">Titre du cours<input maxLength={180} onChange={(event) => setCourseTitle(event.target.value)} placeholder="Un titre évocateur pour cet audio" required value={courseTitle} /></label>}
             </div>
           )}
           <div className="upload-options">
@@ -1578,7 +1734,7 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
               ) : quote ? (
                 <>
                   <strong>≈ {Number(quote.amount).toFixed(4)} {quote.currency}</strong>
-                  <small>{formatDuration(quote.duration_seconds)} · transcription {quote.transcription_mode === "cloud" ? "cloud" : `locale (${quote.model})`} · chapitrage {quote.chaptering_mode === "ai" ? "IA" : "local"}</small>
+                  <small>{formatDuration(quote.duration_seconds)} · transcription {quote.transcription_mode === "cloud" ? "cloud" : `locale (${quote.model})`} · {quote.chaptering_mode === "none" ? "sans chapitrage" : `chapitrage ${quote.chaptering_mode === "ai" ? "IA" : "local"}`}</small>
                   <small>
                     Transcription {Number(quote.transcription_amount).toFixed(4)} {quote.currency}
                     {` · chapitrage ${Number(quote.semantic_analysis.amount).toFixed(4)} ${quote.currency}`}
@@ -1696,9 +1852,9 @@ function AccountOverview({ user, onPasswordChanged }: { user: User; onPasswordCh
         <div className="account-identity"><span className="avatar">{user.display_name.charAt(0).toUpperCase()}</span><div><strong>{user.display_name}</strong><small>{user.email} · {user.role === "admin" ? "Administrateur" : "Client"}</small></div></div>
         <div className="account-security-copy"><span className="eyebrow">Mot de passe</span><h2>Changer mon mot de passe</h2><p>La modification ferme toutes vos sessions. Vous devrez vous reconnecter avec le nouveau mot de passe.</p></div>
         <form onSubmit={submit}>
-          <label>Mot de passe actuel<input autoComplete="current-password" maxLength={256} required type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label>
-          <label>Nouveau mot de passe<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
-          <label>Confirmer le nouveau mot de passe<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
+          <PasswordField autoComplete="current-password" label="Mot de passe actuel" onChange={setCurrentPassword} value={currentPassword} />
+          <PasswordField label="Nouveau mot de passe" minLength={10} onChange={setNewPassword} value={newPassword} />
+          <PasswordField label="Confirmer le nouveau mot de passe" minLength={10} onChange={setConfirmation} value={confirmation} />
           {error && <p className="form-error notice">{error}</p>}
           <button className="button primary" disabled={saving} type="submit">{saving ? "Modification…" : "Changer le mot de passe"}</button>
         </form>
@@ -1939,6 +2095,13 @@ function Dashboard({ user, onLogout, onUserUpdated }: { user: User; onLogout: ()
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [checking, setChecking] = useState(true);
+  const [, setHash] = useState(window.location.hash);
+
+  useEffect(() => {
+    const changed = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", changed);
+    return () => window.removeEventListener("hashchange", changed);
+  }, []);
 
   useEffect(() => {
     api.me().then(setUser).catch(() => setUser(null)).finally(() => setChecking(false));
@@ -1951,6 +2114,8 @@ export default function App() {
 
   const invitationToken = invitationTokenFromHash();
   if (invitationToken) return <InvitationAcceptance token={invitationToken} />;
+  const resetToken = resetTokenFromHash();
+  if (resetToken || window.location.hash === "#forgot-password") return <PasswordRecovery token={resetToken} />;
   if (checking) return <div className="boot"><Brand /><span className="loader" /></div>;
   return user ? <Dashboard user={user} onLogout={logout} onUserUpdated={setUser} /> : <Login onAuthenticated={setUser} />;
 }

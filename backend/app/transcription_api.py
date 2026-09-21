@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/transcription", tags=["transcription"])
 class QuoteRequest(BaseModel):
     duration_seconds: float = Field(gt=0, le=24 * 60 * 60)
     transcription_mode: Literal["cloud", "local"] | None = None
-    chaptering_mode: Literal["ai", "local"] | None = None
+    chaptering_mode: Literal["ai", "local", "none"] | None = None
 
 
 @router.post("/quote")

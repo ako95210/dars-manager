@@ -48,6 +48,11 @@ input:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .1
 .button.secondary { border: 1px solid var(--line); color: #354154; background: white; }
 .button.accent { color: #072c25; background: var(--green); white-space: nowrap; }
 .form-error { color: #b42318 !important; font-size: 13px !important; }
+.forgot-link { display: block; margin-top: -9px; color: #216e5a; font-size: 12px; text-align: right; }
+.password-input-wrap { position: relative; display: block; }
+.password-input-wrap input { padding-right: 88px; }
+.password-input-wrap button { position: absolute; right: 7px; top: 50%; transform: translateY(-50%); border: 0; border-radius: 6px; padding: 6px 8px; color: #365468; background: #eef3f6; font-size: 11px; font-weight: 700; }
+.course-title-field { display: grid; gap: 8px; color: #344054; font-size: 12px; font-weight: 700; }
 
 .invitation-shell { min-height: 100vh; display: grid; place-content: center; justify-items: center; gap: 28px; padding: 32px; background: radial-gradient(circle at 75% 10%, #1b4b47 0, transparent 26%), linear-gradient(145deg, #0b1220, #111d31); }
 .invitation-shell > .brand { color: white; }
@@ -701,3 +706,16 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .account-list-toolbar input { width: 100%; }
   .account-delete-panel { align-items: stretch; flex-direction: column; }
 }
+.subtitle-options { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1.25rem 0; }
+.subtitle-options label { display: grid; gap: .4rem; min-width: 130px; }
+.subtitle-options input, .subtitle-options select, .subtitle-cues textarea { border: 1px solid #cbd5e1; border-radius: .6rem; padding: .65rem; background: #fff; color: #14233b; }
+.subtitle-cues { display: grid; gap: .75rem; max-height: 36rem; overflow-y: auto; padding-right: .4rem; }
+.subtitle-cues label { display: grid; grid-template-columns: 8rem 1fr; align-items: start; gap: .75rem; }
+.subtitle-cues label span { color: #52627a; font-size: .85rem; padding-top: .7rem; }
+.subtitle-cues textarea { width: 100%; resize: vertical; }
+.subtitle-toggle { display: flex; align-items: center; gap: .6rem; margin: 1rem 0; }
+.subtitle-toggle small { color: #b45309; }
+.recovery-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 1rem; background: rgba(12, 24, 42, .55); }
+.recovery-card { width: min(100%, 34rem); border-radius: 1rem; padding: 2rem; background: #fff; box-shadow: 0 24px 70px rgba(0, 0, 0, .22); }
+.recovery-card div { display: flex; gap: .75rem; flex-wrap: wrap; margin-top: 1.5rem; }
+@media (max-width: 600px) { .subtitle-cues label { grid-template-columns: 1fr; gap: 0; } }

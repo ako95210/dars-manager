@@ -128,6 +128,9 @@ def delete_project(
     if project is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     jobs = manager.list_for_user(user.id, project.id)
+    for job in jobs:
+        if job.tool == "archive_export" and job.options.get("automatic") and job.state == "queued":
+            manager.cancel(job)
     if any(job.state not in TERMINAL_STATES for job in jobs):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

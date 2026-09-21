@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { AdminUser, api, EmailDeliveryStatus, User } from "./api";
+import { PasswordField } from "./PasswordField";
 
 type AccountDraft = {
   email: string;
@@ -150,8 +151,8 @@ function AccountEditor({
             {account.email_verified_at && <form className="password-reset-panel" onSubmit={resetPassword}>
               <div><strong>Réinitialiser le mot de passe</strong><p>Cette action ferme toutes les sessions actuellement ouvertes par cet utilisateur.</p></div>
               <div className="account-form-grid">
-                <label>Nouveau mot de passe<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={draft.password} onChange={(event) => update("password", event.target.value)} /></label>
-                <label>Confirmation<input autoComplete="new-password" minLength={10} maxLength={256} required type="password" value={draft.confirmation} onChange={(event) => update("confirmation", event.target.value)} /></label>
+                <PasswordField label="Nouveau mot de passe" minLength={10} onChange={(value) => update("password", value)} value={draft.password} />
+                <PasswordField label="Confirmation" minLength={10} onChange={(value) => update("confirmation", value)} value={draft.confirmation} />
               </div>
               <button className="danger-outline" disabled={resetting} type="submit">{resetting ? "Réinitialisation…" : "Réinitialiser"}</button>
             </form>}

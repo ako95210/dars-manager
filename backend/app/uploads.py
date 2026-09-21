@@ -70,7 +70,13 @@ class JobFromAsset(BaseModel):
     estimated_duration_seconds: float | None = Field(default=None, gt=0, le=24 * 60 * 60)
     cost_confirmed: bool = False
     transcription_mode: Literal["cloud", "local"] | None = None
-    chaptering_mode: Literal["ai", "local"] | None = None
+    chaptering_mode: Literal["ai", "local", "none"] | None = None
+    course_title: str | None = Field(default=None, max_length=180)
+
+    @field_validator("course_title", mode="before")
+    @classmethod
+    def clean_course_title(cls, value: str | None) -> str | None:
+        return value.strip() if isinstance(value, str) else value
 
 
 class AssetResponse(BaseModel):
@@ -251,6 +257,8 @@ def create_job_from_asset(
     chaptering_mode = payload.chaptering_mode or (
         "ai" if settings.semantic_analysis_backend == "openai" else "local"
     )
+    if chaptering_mode == "none" and not payload.course_title:
+        raise HTTPException(status_code=422, detail="Un titre est requis sans chapitrage.")
     if transcription_mode == "cloud":
         model = payload.model or settings.transcription_model
         if model != settings.transcription_model:
@@ -328,6 +336,7 @@ def create_job_from_asset(
             options={
                 "transcription_mode": transcription_mode,
                 "chaptering_mode": chaptering_mode,
+                "course_title": payload.course_title if chaptering_mode == "none" else None,
             },
         )
     except ValueError as exc:

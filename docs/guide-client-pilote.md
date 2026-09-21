@@ -3,10 +3,10 @@
 ## Première connexion
 
 1. Ouvrez l'adresse HTTPS transmise par l'administrateur.
-2. Connectez-vous avec l'identifiant reçu séparément.
-3. Ouvrez l’invitation reçue par e-mail et choisissez votre mot de passe. Le
+2. Ouvrez l’invitation reçue par e-mail et choisissez votre mot de passe. Le
    compte ne peut pas être utilisé avant cette vérification.
-4. Reconnectez-vous avec le nouveau mot de passe.
+3. Connectez-vous avec votre adresse e-mail et ce mot de passe. En cas d’oubli,
+   utilisez le lien « Mot de passe oublié ? » sur la page de connexion.
 
 Dars Manager fonctionne dans le navigateur sous Windows, macOS et Linux. Il
 n'est pas nécessaire d'installer l'application ni un moteur de traitement.
@@ -18,11 +18,20 @@ n'est pas nécessaire d'installer l'application ni un moteur de traitement.
 3. Vérifiez l'estimation de coût ; confirmez-la si un seuil est atteint.
 4. Lancez le traitement. Vous pouvez fermer la page : le worker cloud continue.
 5. Retrouvez l'avancement dans **Traitements** après votre reconnexion.
-6. Corrigez les parties et titres, puis générez l'audio ou la vidéo avec votre
-   template.
-7. Téléchargez les résultats ou l'archive `.dars` sur votre ordinateur.
+6. Choisissez la transcription et, si vous le souhaitez, le chapitrage. Sans
+   chapitrage, donnez un titre au cours entier.
+7. Dans **Création Audio**, corrigez les titres et sélectionnez vos extraits.
+   Dans **Sous-titres**, corrigez ou traduisez le texte si nécessaire ; la
+   correction IA affiche un coût estimé avant lancement.
+8. Dans **Création Vidéo**, choisissez le visuel et l’option d’incrustation des
+   sous-titres. Téléchargez ensuite les résultats ou l’archive `.dars`.
 
 ## Conservation et confidentialité
+
+Une archive `.dars` temporaire est créée automatiquement après les étapes
+terminées et les corrections enregistrées. Lors d’un retour sur le cours,
+Dars Manager propose de télécharger la dernière archive disponible. Ce n’est
+pas une sauvegarde durable : elle expire par défaut après sept jours.
 
 Les médias de travail sont temporaires et leur date d'expiration est affichée.
 Téléchargez les fichiers à conserver avant cette date. Les comptes, projets,

@@ -5,15 +5,33 @@ import tempfile
 import unittest
 import wave
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
-from backend.app.pipeline import generate_cover, render_static_video, write_analysis
+from backend.app.pipeline import generate_cover, render_static_video, run_pipeline, write_analysis
 from backend.app.rendering import compose_cover, render_animated_video
 from drsm_core import CoursePart, TranscriptSegment, audio_duration, export_clips
 
 
 class PipelineTests(unittest.TestCase):
+    def test_no_chaptering_preserves_full_audio_and_title(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            audio = root / "course.wav"
+            with wave.open(str(audio), "wb") as output:
+                output.setnchannels(1)
+                output.setsampwidth(2)
+                output.setframerate(8000)
+                output.writeframes(b"\x00\x00" * 8000)
+            (root / "work").mkdir()
+            with patch("backend.app.pipeline.transcribe_audio", return_value=[TranscriptSegment(0, 0.8, "Cours complet")]):
+                result = run_pipeline(audio, root / "work", chaptering_mode="none", course_title="Un sujet précis")
+            analysis = json.loads(result.analysis_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(analysis["parts"]), 1)
+            self.assertEqual(analysis["parts"][0]["title"], "Un sujet précis")
+            self.assertAlmostEqual(analysis["parts"][0]["end"], 1.0, places=1)
+
     def test_template_cover_and_animated_video_are_rendered(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -61,6 +79,14 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue(video.is_file())
             self.assertGreater(video.stat().st_size, 1000)
             self.assertGreater(audio_duration(video), 0.9)
+
+            subtitled = root / "subtitled.mp4"
+            render_static_video(cover, audio, subtitled, subtitles={
+                "font": "sans", "color": "#ffffff",
+                "cues": [{"start": 0, "end": 0.8, "text": "Sous-titre synchronisé"}],
+            })
+            self.assertTrue(subtitled.is_file())
+            self.assertGreater(audio_duration(subtitled), 0.9)
 
     def test_non_contiguous_audio_ranges_are_concatenated(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

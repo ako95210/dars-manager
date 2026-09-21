@@ -80,6 +80,12 @@ téléchargés séparément ou dans une archive `.dars`. Le navigateur ne doit p
 être considéré comme un stockage durable et aucun dossier synchronisé n'est
 requis pour la bêta.
 
+Les checkpoints `.dars` automatiques sont des copies temporaires côté serveur,
+créées après les étapes terminées et les modifications enregistrées. L’analyse
+est figée par empreinte avant l’archivage afin qu’une correction ultérieure ne
+modifie pas une sauvegarde déjà demandée. L’utilisateur conserve une copie
+durable uniquement en téléchargeant le fichier sur sa machine.
+
 ## Contrats d'extension
 
 Le coeur métier dépend d'interfaces, et non d'un fournisseur particulier :

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,7 @@ from .semantic_analysis import estimate_semantic_tokens
 
 
 router = APIRouter(prefix="/api/jobs", tags=["editor"])
+logger = logging.getLogger(__name__)
 
 
 class EditablePart(BaseModel):
@@ -49,6 +52,30 @@ class AnalysisUpdate(BaseModel):
     parts: list[EditablePart] = Field(min_length=1, max_length=500)
 
 
+class SubtitleCue(BaseModel):
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    text: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def clean_text(cls, value: str) -> str:
+        return value.strip()
+
+
+class SubtitleUpdate(BaseModel):
+    checksum_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    language: str = Field(min_length=2, max_length=20)
+    font: str = Field(pattern=r"^(sans|serif|mono)$")
+    color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
+    cues: list[SubtitleCue] = Field(min_length=1, max_length=10000)
+
+
+class SubtitleProofreadRequest(BaseModel):
+    checksum_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    cost_confirmed: bool = False
+
+
 class SemanticReanalysisRequest(BaseModel):
     checksum_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     cost_confirmed: bool = False
@@ -69,6 +96,7 @@ class AudioExportRequest(BaseModel):
 
 
 class VideoExportRequest(AudioExportRequest):
+    include_subtitles: bool = False
     template_id: str = Field(min_length=32, max_length=32)
     template_version: int = Field(ge=1)
     image_job_id: str | None = Field(default=None, min_length=32, max_length=32)
@@ -102,6 +130,18 @@ class ArchiveExportRequest(BaseModel):
     checksum_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     video_job_id: str | None = Field(default=None, min_length=32, max_length=32)
     audio_export_job_id: str | None = Field(default=None, min_length=32, max_length=32)
+
+
+@router.get("/{job_id}/exports/recovery")
+def latest_recovery_archive(job_id: str, user: User = Depends(require_client), db: Session = Depends(get_db)) -> dict[str, Any] | None:
+    source = owned_completed_job(user.id, job_id)
+    for child in manager.list_for_user(user.id, source.project_id):
+        if child.tool != "archive_export" or not child.options.get("automatic") or child.options.get("source_job_id") != source.id or child.state != "completed":
+            continue
+        artifact = db.scalar(select(Artifact).where(Artifact.job_id == child.id, Artifact.user_id == user.id, Artifact.kind == "archive"))
+        if artifact and artifact.storage_key and (artifact.expires_at is None or artifact.expires_at > utc_now()):
+            return child.public()
+    return None
 
 
 def owned_completed_job(user_id: str, job_id: str) -> Job:
@@ -195,6 +235,52 @@ def archive_reference(artifact: Artifact) -> dict[str, str | None]:
     }
 
 
+def queue_auto_archive(db: Session, source_job: Job, *, audio_job_id: str | None = None, video_job_id: str | None = None) -> None:
+    """Best-effort server-side checkpoint; a failed backup never invalidates the completed stage."""
+    if source_job.execution_backend != "worker" or source_job.state != "completed":
+        return
+    analysis = db.scalar(select(Artifact).where(Artifact.job_id == source_job.id, Artifact.kind == "analysis"))
+    audio = db.scalar(select(Artifact).where(Artifact.job_id == source_job.id, Artifact.kind == "audio"))
+    project = db.get(Project, source_job.project_id)
+    if not analysis or not audio or not project or not analysis.checksum_sha256:
+        return
+    snapshot_kind = f"analysis_snapshot_{analysis.checksum_sha256[:16]}"
+    snapshot = db.scalar(select(Artifact).where(Artifact.job_id == source_job.id, Artifact.kind == snapshot_kind, Artifact.checksum_sha256 == analysis.checksum_sha256))
+    if snapshot is None:
+        settings.workspace_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with tempfile.TemporaryDirectory(dir=settings.workspace_root) as temporary:
+            path = Path(temporary) / "analysis.json"
+            media_storage.download_file(analysis.storage_key, path)
+            if sha256_file(path) != analysis.checksum_sha256:
+                logger.warning("Analysis changed before automatic archive snapshot for %s", source_job.id)
+                return
+            snapshot_key = f"users/{source_job.user_id}/projects/{source_job.project_id}/jobs/{source_job.id}/analysis-snapshots/{analysis.checksum_sha256}.json"
+            media_storage.upload_file(snapshot_key, path, "application/json")
+            snapshot = Artifact(user_id=source_job.user_id, project_id=source_job.project_id, job_id=source_job.id, kind=snapshot_kind, mime_type="application/json", size_bytes=path.stat().st_size, storage_key=snapshot_key, checksum_sha256=analysis.checksum_sha256, storage_metered_at=utc_now(), expires_at=utc_now() + timedelta(seconds=settings.media_retention_seconds))
+            db.add(snapshot)
+            db.commit()
+    references = {"analysis": archive_reference(snapshot), "audio": archive_reference(audio)}
+    if audio_job_id or video_job_id:
+        child_id = video_job_id or audio_job_id
+        kind = "video_render" if video_job_id else "audio_selection"
+        selected = db.scalar(select(Artifact).where(Artifact.job_id == child_id, Artifact.kind == "selection_audio"))
+        if selected:
+            references["audio"] = archive_reference(selected)
+        if video_job_id:
+            for artifact_kind in ("cover", "video"):
+                item = db.scalar(select(Artifact).where(Artifact.job_id == child_id, Artifact.kind == artifact_kind))
+                if item:
+                    references[artifact_kind] = archive_reference(item)
+    signature = {"source_job_id": source_job.id, "analysis_checksum": analysis.checksum_sha256, "archive_files": references}
+    if any(item.tool == "archive_export" and item.options.get("automatic") and all(item.options.get(key) == value for key, value in signature.items()) and item.state not in {"failed", "cancelled", "expired"} for item in manager.list_for_user(source_job.user_id, source_job.project_id)):
+        return
+    child = manager.create(source_job.user_id, source_job.project_id, "cours-auto.dars", "", source_job.language, settings.whisper_cpu_threads, execution_backend="worker", allocate_workspace=False, tool="archive_export", options={**signature, "project_title": project.title, "automatic": True})
+    try:
+        job_queue.enqueue(child.id)
+    except Exception:
+        logger.exception("Automatic archive enqueue failed for %s", child.id)
+
+
 def inline_analysis_path(job: Job) -> Path:
     value = job.artifacts.get("analysis")
     if not value:
@@ -226,7 +312,123 @@ def response_payload(
         "checksum_sha256": checksum,
         "segments": payload["segments"],
         "parts": payload["parts"],
+        "subtitles": payload.get("subtitles") or {
+            "language": job.language or "fr",
+            "font": "sans",
+            "color": "#ffffff",
+            "cues": [
+                {
+                    "start": item["start"], "end": item["end"], "text": item["text"]
+                }
+                for item in payload["segments"]
+                if isinstance(item, dict) and str(item.get("text", "")).strip()
+            ],
+        },
     }
+
+
+@router.put("/{job_id}/analysis/subtitles")
+def update_subtitles(
+    job_id: str,
+    update: SubtitleUpdate,
+    user: User = Depends(require_client),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    job = owned_completed_job(user.id, job_id)
+    if job.execution_backend != "worker":
+        raise HTTPException(status_code=409, detail="Ce cours ne permet pas les sous-titres éditables.")
+    row = analysis_artifact(db, job, user.id, for_update=True)
+    if row.checksum_sha256 != update.checksum_sha256:
+        raise HTTPException(status_code=409, detail="L'analyse a changé. Rechargez-la.")
+    duration = float(job.metrics.get("duration_seconds", 0) or 0)
+    previous_end = 0.0
+    for cue in update.cues:
+        if cue.end <= cue.start or cue.start < previous_end - 0.1 or (duration and cue.end > duration + 0.1):
+            raise HTTPException(status_code=422, detail="Les horodatages des sous-titres sont invalides.")
+        previous_end = cue.end
+    settings.workspace_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with tempfile.TemporaryDirectory(dir=settings.workspace_root) as temporary:
+        path = Path(temporary) / "analysis.json"
+        media_storage.download_file(row.storage_key, path)
+        if sha256_file(path) != update.checksum_sha256:
+            raise HTTPException(status_code=409, detail="L'analyse a changé. Rechargez-la.")
+        payload = load_payload(path)
+        payload["subtitles"] = update.model_dump(exclude={"checksum_sha256"})
+        write_payload(path, payload)
+        checksum = sha256_file(path)
+        meter_media(db, row)
+        media_storage.upload_file(row.storage_key, path, "application/json")
+        row.size_bytes = path.stat().st_size
+        row.checksum_sha256 = checksum
+        row.storage_metered_at = utc_now()
+        db.commit()
+        queue_auto_archive(db, job)
+        return response_payload(job, payload, checksum)
+
+
+def subtitle_proofread_quote(db: Session, duration: float) -> tuple[int, int, int, str]:
+    input_tokens = max(800, round(duration * 5))
+    output_tokens = max(800, round(duration * 5))
+    prices = [quote_usage(db, provider="openai", service="content_analysis", model=settings.semantic_analysis_model, quantity=count, unit=unit) for count, unit in ((input_tokens, "input_token"), (output_tokens, "output_token"))]
+    return input_tokens, output_tokens, sum(price.amount_nanos for price in prices), prices[0].currency
+
+
+@router.get("/{job_id}/analysis/subtitles/proofread-quote")
+def quote_subtitle_proofread(job_id: str, user: User = Depends(require_client), db: Session = Depends(get_db)) -> dict[str, Any]:
+    source = owned_completed_job(user.id, job_id)
+    if source.execution_backend != "worker" or settings.semantic_analysis_backend != "openai":
+        raise HTTPException(status_code=409, detail="La correction cloud est indisponible.")
+    duration = float(source.metrics.get("duration_seconds", 0) or 0)
+    input_tokens, output_tokens, amount_nanos, currency = subtitle_proofread_quote(db, duration)
+    return {"model": settings.semantic_analysis_model, "estimated_input_tokens": input_tokens, "estimated_output_tokens": output_tokens, "amount": money_string(amount_nanos), "currency": currency}
+
+
+@router.post("/{job_id}/analysis/subtitles/proofread", status_code=202)
+def create_subtitle_proofread(job_id: str, request: SubtitleProofreadRequest, user: User = Depends(require_client), db: Session = Depends(get_db)) -> dict[str, Any]:
+    source = owned_completed_job(user.id, job_id)
+    if source.execution_backend != "worker" or settings.semantic_analysis_backend != "openai":
+        raise HTTPException(status_code=409, detail="La correction cloud est indisponible.")
+    analysis = analysis_artifact(db, source, user.id, for_update=True)
+    if analysis.checksum_sha256 != request.checksum_sha256:
+        raise HTTPException(status_code=409, detail="L'analyse a changé. Rechargez-la.")
+    previous = [item for item in manager.list_for_user(user.id, source.project_id) if item.tool == "subtitle_proofread" and item.options.get("source_job_id") == source.id]
+    identical = next((item for item in previous if item.options.get("analysis_checksum") == request.checksum_sha256 and item.state not in {"failed", "cancelled", "expired"}), None)
+    if identical:
+        return identical.public()
+    if any(item.state not in {"completed", "failed", "cancelled", "expired"} for item in previous):
+        raise HTTPException(status_code=409, detail="Une correction est déjà en cours.")
+    quantities = subtitle_proofread_quote(db, float(source.metrics.get("duration_seconds", 0) or 0))
+    input_tokens, output_tokens, amount_nanos, _currency = quantities
+    control = cost_control(db, user_id=user.id, proposed_amount_nanos=amount_nanos, lock_policy=True)
+    if control.requires_confirmation and not request.cost_confirmed:
+        raise HTTPException(status_code=409, detail="Cette correction dépasse un seuil financier et doit être confirmée.")
+    child = manager.create(user.id, source.project_id, "subtitle-suggestions.json", settings.semantic_analysis_model, source.language, settings.whisper_cpu_threads, execution_backend="worker", allocate_workspace=False, tool="subtitle_proofread", options={"source_job_id": source.id, "analysis_storage_key": analysis.storage_key, "analysis_checksum": request.checksum_sha256})
+    try:
+        for quantity, unit in ((input_tokens, "input_token"), (output_tokens, "output_token")):
+            record_usage(db, user_id=user.id, project_id=source.project_id, job_id=child.id, provider="openai", service="content_analysis", model=settings.semantic_analysis_model, quantity=quantity, unit=unit, status="estimated", idempotency_key=f"content-analysis:{child.id}:estimate:{unit}", details={"purpose": "subtitle_proofread", "cost_confirmed": request.cost_confirmed})
+        db.commit()
+    except Exception:
+        db.rollback()
+        manager.delete(child)
+        raise
+    try:
+        job_queue.enqueue(child.id)
+    except Exception:
+        pass
+    return child.public()
+
+
+@router.get("/{job_id}/analysis/subtitles/proofread/{child_id}")
+def get_subtitle_suggestions(job_id: str, child_id: str, user: User = Depends(require_client), db: Session = Depends(get_db)) -> dict[str, Any]:
+    source = owned_completed_job(user.id, job_id)
+    child, artifact = child_artifact(db, source, user.id, child_id, "subtitle_proofread", "subtitle_suggestions")
+    settings.workspace_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with tempfile.TemporaryDirectory(dir=settings.workspace_root) as temporary:
+        path = Path(temporary) / "suggestions.json"
+        media_storage.download_file(artifact.storage_key, path)
+        if artifact.checksum_sha256 != sha256_file(path):
+            raise HTTPException(status_code=502, detail="Suggestions corrompues.")
+        return json.loads(path.read_text(encoding="utf-8"))
 
 
 def validated_parts(
@@ -420,6 +622,7 @@ def update_analysis(
         row.checksum_sha256 = checksum
         row.storage_metered_at = utc_now()
         db.commit()
+        queue_auto_archive(db, job)
         return response_payload(job, payload, checksum)
 
 
@@ -927,6 +1130,9 @@ def create_video_export(
         "date": request.date,
         "episode": request.episode,
     }
+    subtitle_payload = None
+    if request.include_subtitles:
+        subtitle_payload = response_payload(source_job, analysis_payload, request.checksum_sha256)["subtitles"]
     signature = {
         "source_job_id": source_job.id,
         "analysis_checksum": request.checksum_sha256,
@@ -936,6 +1142,7 @@ def create_video_export(
         "image_job_id": request.image_job_id,
         "output_format": request.output_format,
         "values": values,
+        "include_subtitles": request.include_subtitles,
     }
     previous = [
         job
@@ -969,6 +1176,7 @@ def create_video_export(
         options={
             **signature,
             "ranges": ranges,
+            "subtitles": subtitle_payload,
             "template_source_key": (
                 generated_image.storage_key if generated_image else template_source.storage_key
             ),
@@ -1092,7 +1300,7 @@ def create_archive_export(
     previous = [
         job
         for job in manager.list_for_user(user.id, source_job.project_id)
-        if job.tool == "archive_export" and job.options.get("source_job_id") == source_job.id
+        if job.tool == "archive_export" and job.options.get("source_job_id") == source_job.id and not job.options.get("automatic")
     ]
     identical = next(
         (

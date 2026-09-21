@@ -25,6 +25,44 @@ def font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     return ImageFont.truetype(str(path), size=size) if path.exists() else ImageFont.load_default()
 
 
+def subtitle_frame(image: Image.Image, at_seconds: float, subtitles: dict[str, Any] | None) -> Image.Image:
+    if not subtitles:
+        return image
+    cue = next((item for item in subtitles.get("cues", []) if float(item["start"]) <= at_seconds < float(item["end"])), None)
+    if cue is None:
+        return image
+    output = image.copy().convert("RGB")
+    draw = ImageDraw.Draw(output)
+    width, height = output.size
+    font_name = {"sans": "DejaVuSans-Bold.ttf", "serif": "DejaVuSerif.ttf", "mono": "DejaVuSansMono.ttf"}.get(subtitles.get("font"), "DejaVuSans-Bold.ttf")
+    font_path = Path("/usr/share/fonts/truetype/dejavu") / font_name
+    size = max(22, round(height * 0.045))
+    selected_font = ImageFont.truetype(str(font_path), size) if font_path.exists() else font(size)
+    lines = textwrap.wrap(str(cue["text"]), width=max(12, int(width / (size * 0.55))))[:3]
+    caption = "\n".join(lines)
+    bounds = draw.multiline_textbbox((0, 0), caption, font=selected_font, spacing=6, align="center")
+    caption_width, caption_height = bounds[2] - bounds[0], bounds[3] - bounds[1]
+    x, y = (width - caption_width) // 2, height - caption_height - max(20, height // 15)
+    padding = max(10, size // 3)
+    draw.rounded_rectangle((x - padding, y - padding, x + caption_width + padding, y + caption_height + padding), radius=12, fill="#101820")
+    draw.multiline_text((x, y - bounds[1]), caption, font=selected_font, fill=str(subtitles.get("color", "#ffffff")), spacing=6, align="center")
+    return output
+
+
+def remap_subtitles(subtitles: dict[str, Any] | None, ranges: list[tuple[float, float]]) -> dict[str, Any] | None:
+    if not subtitles:
+        return None
+    cues = []
+    offset = 0.0
+    for start, end in ranges:
+        for cue in subtitles.get("cues", []):
+            cue_start, cue_end = float(cue["start"]), float(cue["end"])
+            if cue_end > start and cue_start < end:
+                cues.append({"start": offset + max(start, cue_start) - start, "end": offset + min(end, cue_end) - start, "text": cue["text"]})
+        offset += end - start
+    return {**subtitles, "cues": cues}
+
+
 def video_frame(path: Path, at_seconds: float = 0) -> Image.Image:
     container = av.open(str(path))
     try:
@@ -139,6 +177,7 @@ def render_animated_video(
     output_format: str,
     zones: list[dict[str, Any]],
     values: dict[str, str],
+    subtitles: dict[str, Any] | None = None,
 ) -> None:
     size = FORMAT_SIZES[output_format]
     duration = audio_duration(audio_path)
@@ -203,7 +242,7 @@ def render_animated_video(
                 method=Image.Resampling.BILINEAR,
             ).convert("RGBA")
             image.alpha_composite(overlay)
-            frame = av.VideoFrame.from_ndarray(np.asarray(image.convert("RGB")), format="rgb24")
+            frame = av.VideoFrame.from_ndarray(np.asarray(subtitle_frame(image, index / rate, subtitles).convert("RGB")), format="rgb24")
             frame.pts = index
             for packet in video_stream.encode(frame):
                 output.mux(packet)

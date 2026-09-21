@@ -70,3 +70,40 @@ def send_account_invitation(email: str, token: str) -> None:
             smtp.send_message(message)
     except (OSError, smtplib.SMTPException) as exc:
         raise EmailDeliveryError("L’e-mail d’invitation n’a pas pu être envoyé.") from exc
+
+
+def send_password_reset(email: str, token: str) -> None:
+    if not email_delivery_configured():
+        raise EmailDeliveryError("Le service d’envoi d’e-mails n’est pas configuré.")
+    url = f"{settings.frontend_origin}/#reset-password={token}"
+    message = EmailMessage()
+    message["Subject"] = "Réinitialisez votre mot de passe Dars Manager"
+    message["From"] = settings.email_from
+    message["To"] = email
+    message.set_content(
+        "Bonjour,\n\nPour choisir un nouveau mot de passe, ouvrez ce lien valable une heure :\n"
+        f"{url}\n\nSi vous n’avez rien demandé, ignorez ce message."
+    )
+    safe_url = html.escape(url, quote=True)
+    message.add_alternative(
+        "<html><body><p>Bonjour,</p>"
+        f'<p><a href="{safe_url}">Réinitialiser mon mot de passe</a></p>'
+        "<p>Ce lien est valable une heure. Si vous n’avez rien demandé, ignorez ce message.</p>"
+        "</body></html>", subtype="html",
+    )
+    try:
+        if settings.smtp_ssl:
+            smtp_connection = smtplib.SMTP_SSL(
+                settings.smtp_host, settings.smtp_port, timeout=15,
+                context=ssl.create_default_context(),
+            )
+        else:
+            smtp_connection = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15)
+        with smtp_connection as smtp:
+            if settings.smtp_starttls and not settings.smtp_ssl:
+                smtp.starttls(context=ssl.create_default_context())
+            if settings.smtp_username:
+                smtp.login(settings.smtp_username, settings.smtp_password)
+            smtp.send_message(message)
+    except (OSError, smtplib.SMTPException) as exc:
+        raise EmailDeliveryError("L’e-mail de réinitialisation n’a pas pu être envoyé.") from exc

@@ -21,6 +21,7 @@ from drsm_core import AnalysisCancelled, TranscriptSegment, audio_duration, expo
 from .app.archive_format import ALLOWED_FILES, InvalidArchive, build_archive, extract_archive
 from .app.config import settings
 from .app.costs import reconcile_job_estimates, record_usage, seed_default_rates
+from .app.editor import queue_auto_archive
 from .app.database import SessionLocal, init_database
 from .app.job_state import DatabaseJobStateStore
 from .app.jobs import Job
@@ -30,9 +31,9 @@ from .app.media_lifecycle import meter_media
 from .app.models import Artifact, Asset, BrandTemplateFile, utc_now
 from .app.observability import configure_logging
 from .app.pipeline import PipelineResult, render_static_video, run_pipeline
-from .app.rendering import compose_cover, render_animated_video
+from .app.rendering import compose_cover, remap_subtitles, render_animated_video
 from .app.semantic_analysis import OpenAISemanticAnalyzer, SemanticAnalysisCall
-from .app.runtime import job_queue, media_storage, storage
+from .app.runtime import job_queue, manager, media_storage, storage
 from .app.transcription import (
     OpenAIWhisperProvider,
     TranscriptionCall,
@@ -58,6 +59,18 @@ def sha256_file(path: Path) -> str:
 
 
 class Worker:
+    def _checkpoint_completed(self, job: Job) -> None:
+        if job.state != "completed" or job.tool not in {"audio_pipeline", "semantic_reanalysis", "audio_selection", "video_render"}:
+            return
+        source = job if job.tool == "audio_pipeline" else manager.get(job.user_id, str(job.options.get("source_job_id", "")))
+        if source is None:
+            return
+        try:
+            with SessionLocal() as db:
+                queue_auto_archive(db, source, audio_job_id=job.id if job.tool == "audio_selection" else None, video_job_id=job.id if job.tool == "video_render" else None)
+        except Exception:
+            logging.exception("Automatic archive checkpoint failed for %s", job.id)
+
     def __init__(self, worker_id: str | None = None) -> None:
         self.worker_id = worker_id or (
             f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
@@ -200,6 +213,7 @@ class Worker:
         self,
         job: Job,
         call: SemanticAnalysisCall,
+        purpose: str = "semantic_chapters_and_titles",
     ) -> None:
         with SessionLocal() as db:
             request_key = call.request_id or uuid.uuid4().hex
@@ -224,10 +238,58 @@ class Worker:
                         f"content-analysis:{job.id}:{request_key}:{unit}"
                     ),
                     provider_request_id=call.request_id,
-                    details={"purpose": "semantic_chapters_and_titles"},
+                    details={"purpose": purpose},
                 )
             reconcile_job_estimates(db, job.id, "content_analysis")
             db.commit()
+
+    def _process_subtitle_proofread(self, job: Job, heartbeat_stopped: threading.Event, heartbeat: threading.Thread) -> bool:
+        try:
+            if self.semantic_analyzer is None:
+                raise ValueError("Subtitle proofreader is unavailable")
+            key = str(job.options.get("analysis_storage_key", ""))
+            checksum = str(job.options.get("analysis_checksum", ""))
+            analysis_path = job.workspace / "analysis.json"
+            media_storage.download_file(key, analysis_path)
+            if sha256_file(analysis_path) != checksum:
+                raise ValueError("Source analysis changed before proofreading")
+            payload = json.loads(analysis_path.read_text(encoding="utf-8"))
+            subtitles = payload.get("subtitles") or {"language": job.language, "cues": payload.get("segments", [])}
+            cues = subtitles.get("cues", [])
+            if not isinstance(cues, list) or not cues:
+                raise ValueError("No subtitles to proofread")
+            corrected: list[str] = []
+            for offset in range(0, len(cues), 20):
+                self._wait_if_paused(job)
+                if self._control_state(job) in {"cancelled", "cancelling"}:
+                    raise AnalysisCancelled("Job cancelled")
+                chunk = cues[offset:offset + 20]
+                texts, call = self.semantic_analyzer.proofread_subtitles([str(item["text"]) for item in chunk], str(subtitles.get("language") or job.language))
+                self._record_semantic_analysis_call(job, call, "subtitle_proofread")
+                corrected.extend(texts)
+                self._save_progress(job, {"stage": "subtitle_proofread", "message": "Correction des sous-titres", "progress": min(0.9, (offset + len(chunk)) / len(cues) * 0.9)})
+            output_path = job.workspace / "subtitle-suggestions.json"
+            output_path.write_text(json.dumps({"analysis_checksum": checksum, "cues": [{"start": cue["start"], "end": cue["end"], "text": text} for cue, text in zip(cues, corrected)]}, ensure_ascii=False), encoding="utf-8")
+            output_key = f"users/{job.user_id}/projects/{job.project_id}/jobs/{job.id}/subtitle-suggestions.json"
+            media_storage.upload_file(output_key, output_path, "application/json")
+            with SessionLocal() as db:
+                db.add(Artifact(user_id=job.user_id, project_id=job.project_id, job_id=job.id, kind="subtitle_suggestions", mime_type="application/json", size_bytes=output_path.stat().st_size, storage_key=output_key, checksum_sha256=sha256_file(output_path), storage_metered_at=utc_now(), expires_at=utc_now() + timedelta(seconds=settings.media_retention_seconds)))
+                db.commit()
+            job.artifacts = {"subtitle_suggestions": output_key}
+            job.state, job.stage, job.message, job.progress, job.error = "completed", "done", "Suggestions prêtes", 1.0, None
+        except AnalysisCancelled:
+            job.state, job.message = "cancelled", "Correction annulée"
+        except Exception as exc:
+            job.state, job.stage, job.message, job.error = "failed", "failed", "Échec de la correction", f"{type(exc).__name__}: {exc}"
+        finally:
+            heartbeat_stopped.set()
+            heartbeat.join(timeout=2)
+            job.worker_id = None
+            job.lease_expires_at = None
+            job.updated_at = time.time()
+            self.state.save(job.record())
+            storage.remove_workspace(job.workspace)
+        return True
 
     def _record_image_generation_call(
         self,
@@ -737,6 +799,7 @@ class Worker:
                 "progress": 0.2,
             })
             export_clips(audio_path, selection_path, ranges)
+            subtitles = remap_subtitles(job.options.get("subtitles"), ranges)
             cover_path = job.workspace / "cover.png"
             self._save_progress(job, {
                 "stage": "cover_render",
@@ -767,9 +830,10 @@ class Worker:
                     output_format=output_format,
                     zones=list(job.options.get("template_zones", [])),
                     values=dict(job.options.get("values", {})),
+                    subtitles=subtitles,
                 )
             else:
-                render_static_video(cover_path, selection_path, video_path)
+                render_static_video(cover_path, selection_path, video_path, subtitles=subtitles)
             self._wait_if_paused(job)
 
             produced = {
@@ -1110,13 +1174,21 @@ class Worker:
         )
         heartbeat.start()
         if job.tool == "semantic_reanalysis":
-            return self._process_semantic_reanalysis(job, heartbeat_stopped, heartbeat)
+            result = self._process_semantic_reanalysis(job, heartbeat_stopped, heartbeat)
+            self._checkpoint_completed(job)
+            return result
+        if job.tool == "subtitle_proofread":
+            return self._process_subtitle_proofread(job, heartbeat_stopped, heartbeat)
         if job.tool == "audio_selection":
-            return self._process_audio_selection(job, heartbeat_stopped, heartbeat)
+            result = self._process_audio_selection(job, heartbeat_stopped, heartbeat)
+            self._checkpoint_completed(job)
+            return result
         if job.tool == "image_generation":
             return self._process_image_generation(job, heartbeat_stopped, heartbeat)
         if job.tool == "video_render":
-            return self._process_video_render(job, heartbeat_stopped, heartbeat)
+            result = self._process_video_render(job, heartbeat_stopped, heartbeat)
+            self._checkpoint_completed(job)
+            return result
         if job.tool == "archive_export":
             return self._process_archive_export(job, heartbeat_stopped, heartbeat)
         if job.tool == "archive_import":
@@ -1184,7 +1256,7 @@ class Worker:
             )
             if transcription_mode not in {"cloud", "local", "openai"}:
                 raise ValueError("Unsupported transcription mode")
-            if chaptering_mode not in {"ai", "local", "openai", "heuristic"}:
+            if chaptering_mode not in {"ai", "local", "none", "openai", "heuristic"}:
                 raise ValueError("Unsupported chaptering mode")
             use_cloud_transcription = transcription_mode in {"cloud", "openai"}
             use_ai_chaptering = chaptering_mode in {"ai", "openai"}
@@ -1225,6 +1297,8 @@ class Worker:
                 on_semantic_usage=(
                     record_semantic_analysis if semantic_analyzer else None
                 ),
+                chaptering_mode=chaptering_mode,
+                course_title=str(job.options.get("course_title") or "Cours audio"),
             )
             self._wait_if_paused(job)
             self._store_artifacts(job, result)
@@ -1257,7 +1331,7 @@ class Worker:
                 "semantic_input_tokens": semantic_input_tokens,
                 "semantic_output_tokens": semantic_output_tokens,
                 "transcription_mode": "cloud" if use_cloud_transcription else "local",
-                "chaptering_mode": "ai" if use_ai_chaptering else "local",
+                "chaptering_mode": "ai" if use_ai_chaptering else "none" if chaptering_mode == "none" else "local",
             }
             job.error = None
         except AnalysisCancelled:
@@ -1276,6 +1350,7 @@ class Worker:
             job.updated_at = time.time()
             self.state.save(job.record())
             storage.remove_workspace(job.workspace)
+        self._checkpoint_completed(job)
         return True
 
     def run(self) -> None:

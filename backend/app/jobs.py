@@ -78,6 +78,7 @@ class Job:
             "project_id": self.project_id,
             "tool": self.tool,
             "parent_job_id": self.options.get("source_job_id"),
+            "automatic": bool(self.options.get("automatic")),
             "content": content,
             "processing_modes": (
                 {

@@ -84,13 +84,17 @@ def generate_cover(output_path: Path, title: str, subtitle: str) -> None:
     image.save(output_path, format="PNG", optimize=True)
 
 
-def render_static_video(cover_path: Path, audio_path: Path, output_path: Path) -> None:
+def render_static_video(cover_path: Path, audio_path: Path, output_path: Path, subtitles: dict | None = None) -> None:
     """Render a lightweight one-frame-per-second H.264/AAC video."""
     duration = audio_duration(audio_path)
-    cover = np.asarray(Image.open(cover_path).convert("RGB"))
+    from .rendering import subtitle_frame
+
+    cover_image = Image.open(cover_path).convert("RGB")
+    cover = np.asarray(cover_image)
+    rate = 5 if subtitles else 1
 
     output = av.open(str(output_path), mode="w", options={"movflags": "+faststart"})
-    video_stream = output.add_stream("libx264", rate=1)
+    video_stream = output.add_stream("libx264", rate=rate)
     video_stream.width = int(cover.shape[1])
     video_stream.height = int(cover.shape[0])
     video_stream.pix_fmt = "yuv420p"
@@ -109,9 +113,10 @@ def render_static_video(cover_path: Path, audio_path: Path, output_path: Path) -
     resampler = AudioResampler(format="fltp", layout="stereo", rate=48000)
 
     try:
-        frame_count = max(1, int(math.ceil(duration)))
+        frame_count = max(1, int(math.ceil(duration * rate)))
         for index in range(frame_count):
-            frame = av.VideoFrame.from_ndarray(cover, format="rgb24")
+            pixels = np.asarray(subtitle_frame(cover_image, index / rate, subtitles)) if subtitles else cover
+            frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
             frame.pts = index
             for packet in video_stream.encode(frame):
                 output.mux(packet)
@@ -163,6 +168,8 @@ def run_pipeline(
     on_transcription_usage: UsageCallback | None = None,
     semantic_analyzer: SemanticAnalyzer | None = None,
     on_semantic_usage: SemanticUsageCallback | None = None,
+    chaptering_mode: str = "local",
+    course_title: str | None = None,
 ) -> PipelineResult:
     started = time.monotonic()
 
@@ -230,7 +237,13 @@ def run_pipeline(
         if should_cancel and should_cancel():
             raise AnalysisCancelled("Analysis cancelled")
         control_point()
-        if semantic_analyzer is None:
+        if chaptering_mode == "none":
+            duration = audio_duration(input_path)
+            parts = [CoursePart(
+                1, 0.0, duration, course_title or "Cours audio", "",
+                " ".join(segment.text for segment in segments),
+            )]
+        elif semantic_analyzer is None:
             report("segmentation", "Découpage heuristique du cours", 0.62)
             parts = segment_course(segments)
         else:
