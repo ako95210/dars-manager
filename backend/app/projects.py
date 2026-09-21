@@ -142,6 +142,10 @@ def delete_project(
     ]
     for media_row in media_rows:
         meter_media(db, media_row)
+    # Release the media row locks before manager.delete() removes jobs in its own session.
+    # Otherwise PostgreSQL waits on our transaction when cascading to artifacts.
+    db.commit()
+    for media_row in media_rows:
         if not media_row.storage_key:
             continue
         try:

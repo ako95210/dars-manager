@@ -712,6 +712,57 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(deleted.status_code, 204, deleted.text)
             self.assertEqual(client.get(f"/api/projects/{project_id}").status_code, 404)
 
+    def test_project_with_jobs_and_media_can_be_deleted(self) -> None:
+        with TestClient(app) as client:
+            self.login(client, "pilot-a@example.com", "mot-de-passe-a")
+            created = client.post("/api/projects", json={"title": "Projet avec médias"})
+            self.assertEqual(created.status_code, 201, created.text)
+            project_id = created.json()["id"]
+            with SessionLocal() as db:
+                user = db.scalar(select(User).where(User.email == "pilot-a@example.com"))
+                self.assertIsNotNone(user)
+                user_id = user.id
+
+            job = manager.create(
+                user_id, project_id, "cours.wav", "", "fr", 1,
+                execution_backend="worker", allocate_workspace=False,
+            )
+            job.state = "completed"
+            manager.state_store.save(job.record())
+            source_path = TEST_ROOT / f"project-media-{project_id}.wav"
+            source_path.parent.mkdir(parents=True, exist_ok=True)
+            source_path.write_bytes(b"test-audio")
+            asset_key = f"users/{user_id}/projects/{project_id}/source.wav"
+            artifact_key = f"users/{user_id}/projects/{project_id}/jobs/{job.id}/audio.wav"
+            media_storage.upload_file(asset_key, source_path, "audio/wav")
+            media_storage.upload_file(artifact_key, source_path, "audio/wav")
+            with SessionLocal() as db:
+                db.add_all([
+                    Asset(
+                        user_id=user_id, project_id=project_id, kind="audio",
+                        original_name="cours.wav", content_type="audio/wav",
+                        size_bytes=source_path.stat().st_size, storage_key=asset_key,
+                        status="ready", uploaded_at=utc_now(),
+                        expires_at=utc_now() + timedelta(days=1),
+                    ),
+                    Artifact(
+                        user_id=user_id, project_id=project_id, job_id=job.id,
+                        kind="audio", mime_type="audio/wav",
+                        size_bytes=source_path.stat().st_size, storage_key=artifact_key,
+                        expires_at=utc_now() + timedelta(days=1),
+                    ),
+                ])
+                db.commit()
+
+            deleted = client.delete(f"/api/projects/{project_id}")
+            self.assertEqual(deleted.status_code, 204, deleted.text)
+            self.assertEqual(client.get(f"/api/projects/{project_id}").status_code, 404)
+            self.assertIsNone(manager.get(user_id, job.id))
+            with self.assertRaises(FileNotFoundError):
+                media_storage.stat(asset_key)
+            with self.assertRaises(FileNotFoundError):
+                media_storage.stat(artifact_key)
+
     def test_image_and_video_templates_are_private_and_reusable(self) -> None:
         image_buffer = BytesIO()
         Image.new("RGB", (640, 360), "#17362c").save(image_buffer, format="PNG")
