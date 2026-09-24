@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from PIL import Image
 
-from backend.app.rendering import remap_subtitles, subtitle_frame
+from backend.app.rendering import remap_subtitles, subtitle_cue_indices, subtitle_frame
 from backend.app.semantic_analysis import OpenAISemanticAnalyzer, SemanticAnalysisError
 
 
@@ -22,6 +22,14 @@ class SubtitleTests(unittest.TestCase):
             {"start": 6, "end": 8, "text": "Deux"},
         ])
         self.assertEqual(source["cues"][0]["start"], 3)
+
+    def test_selected_audio_limits_subtitle_cues(self) -> None:
+        source = {"cues": [
+            {"start": 3, "end": 6, "text": "Un"},
+            {"start": 12, "end": 15, "text": "Deux"},
+            {"start": 30, "end": 35, "text": "Trois"},
+        ]}
+        self.assertEqual(subtitle_cue_indices(source, [(10, 20)]), [1])
 
     def test_subtitle_frame_only_changes_active_interval(self) -> None:
         blank = Image.new("RGB", (640, 360), "#ffffff")

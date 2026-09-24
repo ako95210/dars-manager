@@ -57,6 +57,7 @@ class Job:
             content = {
                 "title": self.options.get("title") or "Extrait audio",
                 "part_indices": list(self.options.get("part_indices", [])),
+                "ranges": list(self.options.get("ranges", [])),
             }
         elif self.tool == "video_render":
             values = self.options.get("values", {})

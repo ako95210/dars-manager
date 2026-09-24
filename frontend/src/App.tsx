@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, BillingSummary, CommunityAllocation, CommunityContribution, ImpactSummary, InvitationDetails, Job, JobAnalysis, Project, ProviderInvoice, TranscriptionQuote, User } from "./api";
+import { api, AnalysisSegment, BillingSummary, CommunityAllocation, CommunityContribution, ImpactSummary, InvitationDetails, Job, JobAnalysis, Project, ProviderInvoice, TranscriptionQuote, User } from "./api";
 import { TemplateLibrary } from "./TemplateLibrary";
 import type { VisualMode } from "./TemplateLibrary";
 import { UserAdministration } from "./UserAdministration";
@@ -279,6 +279,31 @@ function analysisDrafts(analysis: JobAnalysis): PartDraft[] {
   }));
 }
 
+type ScopedSubtitleCue = AnalysisSegment & {
+  sourceIndex: number;
+};
+
+function subtitleCuesForAudio(
+  subtitles: JobAnalysis["subtitles"],
+  ranges: [number, number][],
+): ScopedSubtitleCue[] {
+  const result: ScopedSubtitleCue[] = [];
+  let offset = 0;
+  for (const [rangeStart, rangeEnd] of ranges) {
+    subtitles.cues.forEach((cue, sourceIndex) => {
+      if (cue.end <= rangeStart || cue.start >= rangeEnd) return;
+      result.push({
+        sourceIndex,
+        start: offset + Math.max(rangeStart, cue.start) - rangeStart,
+        end: offset + Math.min(rangeEnd, cue.end) - rangeStart,
+        text: cue.text,
+      });
+    });
+    offset += rangeEnd - rangeStart;
+  }
+  return result;
+}
+
 function CourseEditor({ job }: { job: Job }) {
   const [returningToCourse] = useState(() => window.sessionStorage.getItem(`dars-course-visited:${job.id}`) === "1");
   const [activeLab, setActiveLab] = useState<StudioLab>("audio-creation");
@@ -549,14 +574,14 @@ function CourseEditor({ job }: { job: Job }) {
   }
 
   async function proofreadSubtitles() {
-    if (!analysis) return;
+    if (!analysis || !exportJob || exportJob.state !== "completed") return;
     const saved = subtitleDirty ? await saveSubtitles() : analysis;
     if (!saved) return;
     setError("");
     try {
-      const quote = await api.subtitleProofreadQuote(job.id);
+      const quote = await api.subtitleProofreadQuote(job.id, exportJob.id);
       if (!window.confirm(`Corriger l’orthographe et la grammaire avec ${quote.model} pour environ ${Number(quote.amount).toFixed(4)} ${quote.currency} ?`)) return;
-      setProofreadJob(await api.createSubtitleProofread(job.id, saved.checksum_sha256));
+      setProofreadJob(await api.createSubtitleProofread(job.id, saved.checksum_sha256, exportJob.id));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Correction impossible."); }
   }
 
@@ -705,6 +730,11 @@ function CourseEditor({ job }: { job: Job }) {
   const proofreadBusy = Boolean(proofreadJob && !terminalStates.has(proofreadJob.state));
   const reanalysisProgress = Math.round(Math.max(0, Math.min(1, reanalysisJob?.progress ?? 0)) * 100);
   const audioReady = Boolean(analysis && job.artifacts.includes("audio"));
+  const selectedAudio = exportJob?.state === "completed" ? exportJob : null;
+  const subtitleRanges = selectedAudio?.content?.ranges || [];
+  const scopedSubtitleCues = subtitleDraft
+    ? subtitleCuesForAudio(subtitleDraft, subtitleRanges)
+    : [];
   const effectiveVideoTitle = videoValues.title.trim() || exportJob?.content?.title || analysis?.parts[0]?.title || "Cours audio";
   const imageReady = Boolean(
     imageJob?.state === "completed"
@@ -718,7 +748,7 @@ function CourseEditor({ job }: { job: Job }) {
   const videoReady = Boolean(videoJob?.state === "completed" && videoJob.artifacts.includes("video"));
   const labs: { id: StudioLab; label: string; description: string; unlocked: boolean }[] = [
     { id: "audio-creation", label: "Création Audio", description: "Transcrire, chapitrer et sauvegarder les extraits", unlocked: true },
-    { id: "subtitles", label: "Sous-titres", description: "Corriger et synchroniser le texte", unlocked: audioReady },
+    { id: "subtitles", label: "Sous-titres", description: "Corriger et synchroniser le texte", unlocked: Boolean(selectedAudio) },
     { id: "audio-adjustment", label: "Ajustement Audio", description: "Étape optionnelle de montage et d’enrichissement", unlocked: Boolean(exportJob?.state === "completed") },
     { id: "video-creation", label: "Création Vidéo", description: "Composer le support visuel à partir d’un audio", unlocked: audioReady },
     { id: "distribution", label: "Diffusion", description: "Télécharger ou publier sur YouTube et Telegram", unlocked: videoReady },
@@ -844,14 +874,15 @@ function CourseEditor({ job }: { job: Job }) {
 
           {activeLab === "subtitles" && subtitleDraft && (
             <section className="studio-lab-panel subtitle-lab" role="tabpanel">
-              <header className="editor-heading"><div><span className="eyebrow">Sous-titres · optionnels</span><h2>Préparer le texte affiché dans la vidéo</h2><p>Relisez chaque phrase et son horaire. La transcription d’origine reste intacte.</p></div><div className="project-header-actions"><button className="button secondary compact" disabled={Boolean(proofreadJob && !terminalStates.has(proofreadJob.state)) || subtitleSaving} onClick={proofreadSubtitles}>{proofreadJob && !terminalStates.has(proofreadJob.state) ? "Correction en cours…" : "Corriger / traduire avec l’IA"}</button><button className="button primary compact" disabled={!subtitleDirty || subtitleSaving} onClick={() => void saveSubtitles()}>{subtitleSaving ? "Enregistrement…" : "Enregistrer les sous-titres"}</button></div></header>
+              <header className="editor-heading"><div><span className="eyebrow">Sous-titres · optionnels</span><h2>Préparer le texte affiché dans la vidéo</h2><p>Seuls les sous-titres de l’audio choisi sont affichés. Leur chronologie commence à 0:00 et correspond exactement à l’extrait.</p></div><div className="project-header-actions"><button className="button secondary compact" disabled={!selectedAudio || Boolean(proofreadJob && !terminalStates.has(proofreadJob.state)) || subtitleSaving} onClick={proofreadSubtitles}>{proofreadJob && !terminalStates.has(proofreadJob.state) ? "Correction en cours…" : "Corriger / traduire avec l’IA"}</button><button className="button primary compact" disabled={!subtitleDirty || subtitleSaving} onClick={() => void saveSubtitles()}>{subtitleSaving ? "Enregistrement…" : "Enregistrer les sous-titres"}</button></div></header>
               {proofreadJob && <p className="editor-feedback">{proofreadJob.error || proofreadJob.message}</p>}
+              {selectedAudio && <div className="adjustment-source"><div><span>Audio sélectionné</span><strong>{selectedAudio.content?.title || "Extrait audio"}</strong><small>{scopedSubtitleCues.length} sous-titre{scopedSubtitleCues.length > 1 ? "s" : ""} · {formatDuration(selectedAudio.metrics.duration_seconds)}</small></div><audio controls preload="metadata" src={api.artifactUrl(selectedAudio.id, "selection_audio")} /></div>}
               <div className="subtitle-options">
                 <label>Langue<input maxLength={20} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, language: event.target.value }); setSubtitleDirty(true); }} value={subtitleDraft.language} /></label>
                 <label>Police<select onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, font: event.target.value as JobAnalysis["subtitles"]["font"] }); setSubtitleDirty(true); }} value={subtitleDraft.font}><option value="sans">Sans serif</option><option value="serif">Serif</option><option value="mono">Monospace</option></select></label>
                 <label>Couleur<input onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, color: event.target.value }); setSubtitleDirty(true); }} type="color" value={subtitleDraft.color} /></label>
               </div>
-              <div className="subtitle-cues">{subtitleDraft.cues.map((cue, index) => <label key={index}><span>{formatDuration(cue.start)} → {formatDuration(cue.end)}</span><textarea rows={2} value={cue.text} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, cues: subtitleDraft.cues.map((item, position) => position === index ? { ...item, text: event.target.value } : item) }); setSubtitleDirty(true); }} /></label>)}</div>
+              <div className="subtitle-cues">{scopedSubtitleCues.map((cue) => <label key={`${cue.sourceIndex}-${cue.start}`}><span>{formatDuration(cue.start)} → {formatDuration(cue.end)}</span><textarea rows={2} value={cue.text} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, cues: subtitleDraft.cues.map((item, position) => position === cue.sourceIndex ? { ...item, text: event.target.value } : item) }); setSubtitleDirty(true); }} /></label>)}</div>
               <div className="lab-next-actions"><button className="button secondary" onClick={() => void changeLab("audio-creation")}>Retour à Création Audio</button><button className="button accent" onClick={() => void changeLab("video-creation")}>Passer à Création Vidéo</button></div>
             </section>
           )}

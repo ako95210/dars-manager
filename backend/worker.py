@@ -31,7 +31,7 @@ from .app.media_lifecycle import meter_media
 from .app.models import Artifact, Asset, BrandTemplateFile, utc_now
 from .app.observability import configure_logging
 from .app.pipeline import PipelineResult, render_static_video, run_pipeline
-from .app.rendering import compose_cover, remap_subtitles, render_animated_video
+from .app.rendering import compose_cover, remap_subtitles, render_animated_video, subtitle_cue_indices
 from .app.semantic_analysis import OpenAISemanticAnalyzer, SemanticAnalysisCall
 from .app.runtime import job_queue, manager, media_storage, storage
 from .app.transcription import (
@@ -258,18 +258,39 @@ class Worker:
             cues = subtitles.get("cues", [])
             if not isinstance(cues, list) or not cues:
                 raise ValueError("No subtitles to proofread")
-            corrected: list[str] = []
-            for offset in range(0, len(cues), 20):
+            raw_ranges = job.options.get("ranges", [])
+            if (
+                not isinstance(raw_ranges, list)
+                or not raw_ranges
+                or any(not isinstance(item, list) or len(item) != 2 for item in raw_ranges)
+            ):
+                raise ValueError("Invalid subtitle selection")
+            ranges = [
+                (float(item[0]), float(item[1]))
+                for item in raw_ranges
+            ]
+            if any(start < 0 or end <= start for start, end in ranges):
+                raise ValueError("Invalid subtitle selection ranges")
+            selected_indices = subtitle_cue_indices(subtitles, ranges)
+            if not selected_indices:
+                raise ValueError("The selected audio has no subtitles")
+            corrected_by_index: dict[int, str] = {}
+            for offset in range(0, len(selected_indices), 20):
                 self._wait_if_paused(job)
                 if self._control_state(job) in {"cancelled", "cancelling"}:
                     raise AnalysisCancelled("Job cancelled")
-                chunk = cues[offset:offset + 20]
+                chunk_indices = selected_indices[offset:offset + 20]
+                chunk = [cues[index] for index in chunk_indices]
                 texts, call = self.semantic_analyzer.proofread_subtitles([str(item["text"]) for item in chunk], str(subtitles.get("language") or job.language))
                 self._record_semantic_analysis_call(job, call, "subtitle_proofread")
-                corrected.extend(texts)
-                self._save_progress(job, {"stage": "subtitle_proofread", "message": "Correction des sous-titres", "progress": min(0.9, (offset + len(chunk)) / len(cues) * 0.9)})
+                corrected_by_index.update(zip(chunk_indices, texts))
+                self._save_progress(job, {"stage": "subtitle_proofread", "message": "Correction des sous-titres", "progress": min(0.9, (offset + len(chunk)) / len(selected_indices) * 0.9)})
+            corrected_cues = [
+                {**cue, "text": corrected_by_index.get(index, str(cue["text"]))}
+                for index, cue in enumerate(cues)
+            ]
             output_path = job.workspace / "subtitle-suggestions.json"
-            output_path.write_text(json.dumps({"analysis_checksum": checksum, "cues": [{"start": cue["start"], "end": cue["end"], "text": text} for cue, text in zip(cues, corrected)]}, ensure_ascii=False), encoding="utf-8")
+            output_path.write_text(json.dumps({"analysis_checksum": checksum, "cues": corrected_cues}, ensure_ascii=False), encoding="utf-8")
             output_key = f"users/{job.user_id}/projects/{job.project_id}/jobs/{job.id}/subtitle-suggestions.json"
             media_storage.upload_file(output_key, output_path, "application/json")
             with SessionLocal() as db:

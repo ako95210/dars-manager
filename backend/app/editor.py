@@ -8,7 +8,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -73,6 +73,7 @@ class SubtitleUpdate(BaseModel):
 
 class SubtitleProofreadRequest(BaseModel):
     checksum_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    audio_export_job_id: str = Field(min_length=32, max_length=32)
     cost_confirmed: bool = False
 
 
@@ -384,11 +385,19 @@ def subtitle_proofread_quote(db: Session, duration: float) -> tuple[int, int, in
 
 
 @router.get("/{job_id}/analysis/subtitles/proofread-quote")
-def quote_subtitle_proofread(job_id: str, user: User = Depends(require_client), db: Session = Depends(get_db)) -> dict[str, Any]:
+def quote_subtitle_proofread(
+    job_id: str,
+    audio_export_job_id: str = Query(min_length=32, max_length=32),
+    user: User = Depends(require_client),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
     source = owned_completed_job(user.id, job_id)
     if source.execution_backend != "worker" or settings.semantic_analysis_backend != "openai":
         raise HTTPException(status_code=409, detail="La correction cloud est indisponible.")
-    duration = float(source.metrics.get("duration_seconds", 0) or 0)
+    audio_export, _ = child_artifact(
+        db, source, user.id, audio_export_job_id, "audio_selection", "selection_audio"
+    )
+    duration = float(audio_export.metrics.get("duration_seconds", 0) or 0)
     input_tokens, output_tokens, amount_nanos, currency = subtitle_proofread_quote(db, duration)
     return {"model": settings.semantic_analysis_model, "estimated_input_tokens": input_tokens, "estimated_output_tokens": output_tokens, "amount": money_string(amount_nanos), "currency": currency}
 
@@ -401,18 +410,30 @@ def create_subtitle_proofread(job_id: str, request: SubtitleProofreadRequest, us
     analysis = analysis_artifact(db, source, user.id, for_update=True)
     if analysis.checksum_sha256 != request.checksum_sha256:
         raise HTTPException(status_code=409, detail="L'analyse a changé. Rechargez-la.")
+    audio_export, _ = child_artifact(
+        db,
+        source,
+        user.id,
+        request.audio_export_job_id,
+        "audio_selection",
+        "selection_audio",
+    )
+    part_indices = list(audio_export.options.get("part_indices", []))
+    ranges = list(audio_export.options.get("ranges", []))
+    if not part_indices or not ranges:
+        raise HTTPException(status_code=422, detail="L'audio sélectionné ne contient aucune partie.")
     previous = [item for item in manager.list_for_user(user.id, source.project_id) if item.tool == "subtitle_proofread" and item.options.get("source_job_id") == source.id]
-    identical = next((item for item in previous if item.options.get("analysis_checksum") == request.checksum_sha256 and item.state not in {"failed", "cancelled", "expired"}), None)
+    identical = next((item for item in previous if item.options.get("analysis_checksum") == request.checksum_sha256 and item.options.get("audio_export_job_id") == audio_export.id and item.state not in {"failed", "cancelled", "expired"}), None)
     if identical:
         return identical.public()
     if any(item.state not in {"completed", "failed", "cancelled", "expired"} for item in previous):
         raise HTTPException(status_code=409, detail="Une correction est déjà en cours.")
-    quantities = subtitle_proofread_quote(db, float(source.metrics.get("duration_seconds", 0) or 0))
+    quantities = subtitle_proofread_quote(db, float(audio_export.metrics.get("duration_seconds", 0) or 0))
     input_tokens, output_tokens, amount_nanos, _currency = quantities
     control = cost_control(db, user_id=user.id, proposed_amount_nanos=amount_nanos, lock_policy=True)
     if control.requires_confirmation and not request.cost_confirmed:
         raise HTTPException(status_code=409, detail="Cette correction dépasse un seuil financier et doit être confirmée.")
-    child = manager.create(user.id, source.project_id, "subtitle-suggestions.json", settings.semantic_analysis_model, source.language, settings.whisper_cpu_threads, execution_backend="worker", allocate_workspace=False, tool="subtitle_proofread", options={"source_job_id": source.id, "analysis_storage_key": analysis.storage_key, "analysis_checksum": request.checksum_sha256})
+    child = manager.create(user.id, source.project_id, "subtitle-suggestions.json", settings.semantic_analysis_model, source.language, settings.whisper_cpu_threads, execution_backend="worker", allocate_workspace=False, tool="subtitle_proofread", options={"source_job_id": source.id, "analysis_storage_key": analysis.storage_key, "analysis_checksum": request.checksum_sha256, "audio_export_job_id": audio_export.id, "part_indices": part_indices, "ranges": ranges})
     try:
         for quantity, unit in ((input_tokens, "input_token"), (output_tokens, "output_token")):
             record_usage(db, user_id=user.id, project_id=source.project_id, job_id=child.id, provider="openai", service="content_analysis", model=settings.semantic_analysis_model, quantity=quantity, unit=unit, status="estimated", idempotency_key=f"content-analysis:{child.id}:estimate:{unit}", details={"purpose": "subtitle_proofread", "cost_confirmed": request.cost_confirmed})

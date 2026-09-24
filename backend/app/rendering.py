@@ -63,6 +63,18 @@ def remap_subtitles(subtitles: dict[str, Any] | None, ranges: list[tuple[float, 
     return {**subtitles, "cues": cues}
 
 
+def subtitle_cue_indices(
+    subtitles: dict[str, Any], ranges: list[tuple[float, float]]
+) -> list[int]:
+    """Return source cue positions intersecting the selected audio ranges."""
+    selected: list[int] = []
+    for index, cue in enumerate(subtitles.get("cues", [])):
+        cue_start, cue_end = float(cue["start"]), float(cue["end"])
+        if any(cue_end > start and cue_start < end for start, end in ranges):
+            selected.append(index)
+    return selected
+
+
 def video_frame(path: Path, at_seconds: float = 0) -> Image.Image:
     container = av.open(str(path))
     try:

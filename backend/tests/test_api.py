@@ -1123,7 +1123,11 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(export_requested.json()["parent_job_id"], job.id)
             self.assertEqual(
                 export_requested.json()["content"],
-                {"title": "Titre corrigé", "part_indices": [1]},
+                {
+                    "title": "Titre corrigé",
+                    "part_indices": [1],
+                    "ranges": [[0.0, 29.5]],
+                },
             )
             duplicate = client.post(
                 f"/api/jobs/{job.id}/exports/audio",
