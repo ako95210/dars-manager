@@ -1212,6 +1212,16 @@ class ApiTests(unittest.TestCase):
                 [track["name"] for track in updated.json()["subtitle_tracks"]],
                 ["Français corrigé", "Arabe relu"],
             )
+            deleted_track = client.delete(
+                f"/api/jobs/{job.id}/analysis/subtitles/{first_track_id}",
+                params={"checksum_sha256": updated.json()["checksum_sha256"]},
+            )
+            self.assertEqual(deleted_track.status_code, 200, deleted_track.text)
+            updated = deleted_track
+            self.assertEqual(
+                [track["id"] for track in updated.json()["subtitle_tracks"]],
+                [second_track_id],
+            )
 
             template_buffer = BytesIO()
             Image.new("RGB", (640, 360), "#17362c").save(template_buffer, format="PNG")
@@ -1428,6 +1438,10 @@ class ApiTests(unittest.TestCase):
             restored_analysis = client.get(f"/api/jobs/{restored_job_id}/analysis")
             self.assertEqual(restored_analysis.status_code, 200, restored_analysis.text)
             self.assertEqual(restored_analysis.json()["parts"][0]["title"], "Titre corrigé")
+            self.assertEqual(
+                [track["id"] for track in restored_analysis.json()["subtitle_tracks"]],
+                [second_track_id],
+            )
             restored_job.metrics["duration_seconds"] = 10.0
             manager.state_store.save(restored_job.record())
             out_of_bounds = client.post(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import tempfile
 from datetime import timedelta
 from pathlib import Path
@@ -438,6 +439,49 @@ def update_subtitles(
         else:
             tracks[tracks.index(existing)] = track
         payload["subtitle_tracks"] = tracks
+        write_payload(path, payload)
+        checksum = sha256_file(path)
+        meter_media(db, row)
+        media_storage.upload_file(row.storage_key, path, "application/json")
+        row.size_bytes = path.stat().st_size
+        row.checksum_sha256 = checksum
+        row.storage_metered_at = utc_now()
+        db.commit()
+        queue_auto_archive(db, job)
+        return response_payload(job, payload, checksum)
+
+
+@router.delete("/{job_id}/analysis/subtitles/{track_id}")
+def delete_subtitle_track(
+    job_id: str,
+    track_id: str,
+    checksum_sha256: str = Query(pattern=r"^[0-9a-f]{64}$"),
+    user: User = Depends(require_client),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    if not re.fullmatch(r"[0-9a-f]{32}", track_id):
+        raise HTTPException(status_code=422, detail="Identifiant de piste invalide.")
+    job = owned_completed_job(user.id, job_id)
+    if job.execution_backend != "worker":
+        raise HTTPException(status_code=409, detail="Ce cours ne permet pas les sous-titres éditables.")
+    row = analysis_artifact(db, job, user.id, for_update=True)
+    if row.checksum_sha256 != checksum_sha256:
+        raise HTTPException(status_code=409, detail="L'analyse a changé. Rechargez-la.")
+    settings.workspace_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with tempfile.TemporaryDirectory(dir=settings.workspace_root) as temporary:
+        path = Path(temporary) / "analysis.json"
+        media_storage.download_file(row.storage_key, path)
+        if sha256_file(path) != checksum_sha256:
+            raise HTTPException(status_code=409, detail="L'analyse a changé. Rechargez-la.")
+        payload = load_payload(path)
+        tracks = payload.get("subtitle_tracks") or []
+        remaining = [
+            track for track in tracks
+            if not isinstance(track, dict) or track.get("id") != track_id
+        ]
+        if len(remaining) == len(tracks):
+            raise HTTPException(status_code=404, detail="Piste de sous-titres introuvable.")
+        payload["subtitle_tracks"] = remaining
         write_payload(path, payload)
         checksum = sha256_file(path)
         meter_media(db, row)

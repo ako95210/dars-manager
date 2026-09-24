@@ -412,15 +412,6 @@ function timePlainTextSubtitles(
   }).filter((cue) => cue.end > cue.start);
 }
 
-function subtitleFileTimestamp(seconds: number, separator: "," | ".") {
-  const milliseconds = Math.max(0, Math.round(seconds * 1000));
-  const hours = Math.floor(milliseconds / 3_600_000);
-  const minutes = Math.floor((milliseconds % 3_600_000) / 60_000);
-  const secs = Math.floor((milliseconds % 60_000) / 1000);
-  const millis = milliseconds % 1000;
-  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}${separator}${String(millis).padStart(3, "0")}`;
-}
-
 function subtitleTimelineToSource(
   cues: AnalysisSegment[],
   ranges: [number, number][],
@@ -853,6 +844,39 @@ function CourseEditor({ job }: { job: Job }) {
     setSubtitleDirty(false);
   }
 
+  async function deleteSubtitleTrack(trackId: string) {
+    if (!analysis) return;
+    const track = (analysis.subtitle_tracks || []).find((item) => item.id === trackId);
+    const discardWarning = subtitleDirty && selectedSubtitleTrackId === trackId
+      ? " Les modifications non enregistrées de cette piste seront également perdues."
+      : "";
+    if (!track || !window.confirm(`Supprimer définitivement la piste « ${track.name} » ?${discardWarning}`)) return;
+    let currentAnalysis = analysis;
+    if (subtitleDirty && selectedSubtitleTrackId !== trackId) {
+      const saved = await saveSubtitles();
+      if (!saved) return;
+      currentAnalysis = saved.analysis;
+    }
+    setSubtitleSaving(true);
+    setError("");
+    try {
+      const updated = await api.deleteSubtitleTrack(job.id, trackId, currentAnalysis.checksum_sha256);
+      setAnalysis(updated);
+      if (selectedSubtitleTrackId === trackId) {
+        setSelectedSubtitleTrackId(null);
+        setSubtitleDraft(null);
+        setSubtitleTrackName("");
+        setSubtitleDirty(false);
+      }
+      if (selectedVideoSubtitleTrackId === trackId) setSelectedVideoSubtitleTrackId("");
+      setNotice("Piste de sous-titres supprimée. La prochaine sauvegarde .dars reflétera cette modification.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Suppression de la piste impossible.");
+    } finally {
+      setSubtitleSaving(false);
+    }
+  }
+
   async function createSubtitleTrack() {
     if (!analysis || !selectedAudio) return;
     let currentAnalysis = analysis;
@@ -924,25 +948,6 @@ function CourseEditor({ job }: { job: Job }) {
     } catch {
       setError("Lecture du fichier de sous-titres impossible.");
     }
-  }
-
-  function downloadSubtitleTrack(format: "srt" | "vtt") {
-    if (!scopedSubtitleCues.length) return;
-    const separator = format === "srt" ? "," : ".";
-    const blocks = scopedSubtitleCues.map((cue, index) => [
-      format === "srt" ? String(index + 1) : "",
-      `${subtitleFileTimestamp(cue.start, separator)} --> ${subtitleFileTimestamp(cue.end, separator)}`,
-      cue.text,
-    ].filter(Boolean).join("\n"));
-    const content = `${format === "vtt" ? "WEBVTT\n\n" : ""}${blocks.join("\n\n")}\n`;
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(new Blob([content], { type: format === "vtt" ? "text/vtt" : "application/x-subrip" }));
-    link.href = url;
-    link.download = `${(subtitleTrackName.trim() || "sous-titres").replace(/[^a-zA-Z0-9À-ÿ_-]+/g, "-")}.${format}`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
   async function createExport() {
@@ -1220,7 +1225,7 @@ function CourseEditor({ job }: { job: Job }) {
               {selectedAudio && <div className="adjustment-source"><div><span>Audio sélectionné</span><strong>{selectedAudio.content?.title || "Extrait audio"}</strong><small>{scopedSubtitleCues.length} sous-titre{scopedSubtitleCues.length > 1 ? "s" : ""} · {formatDuration(selectedAudio.metrics.duration_seconds)}</small></div><audio controls preload="metadata" src={api.artifactUrl(selectedAudio.id, "selection_audio")} /></div>}
               <section className="subtitle-track-library">
                 <header><div><span className="eyebrow">Pistes sauvegardées</span><h3>Versions disponibles pour cet audio</h3></div><button className="button secondary compact" disabled={proofreadBusy || subtitleSaving} onClick={() => void createSubtitleTrack()} type="button">＋ Nouvelle piste</button></header>
-                {subtitleTracks.length ? <div>{subtitleTracks.map((track) => <button className={selectedSubtitleTrackId === track.id ? "active" : ""} disabled={proofreadBusy || subtitleSaving} key={track.id} onClick={() => void selectSubtitleTrack(track.id)} type="button"><strong>{track.name}</strong><small>{track.language.toUpperCase()} · {track.cues.length} sous-titre{track.cues.length > 1 ? "s" : ""}</small></button>)}</div> : <p>Aucune piste n’est encore enregistrée. Personnalisez la piste proposée puis sauvegardez-la.</p>}
+                {subtitleTracks.length ? <div>{subtitleTracks.map((track) => <article className={selectedSubtitleTrackId === track.id ? "active" : ""} key={track.id}><button className="subtitle-track-select" disabled={proofreadBusy || subtitleSaving} onClick={() => void selectSubtitleTrack(track.id)} type="button"><strong>{track.name}</strong><small>{track.language.toUpperCase()} · {track.cues.length} sous-titre{track.cues.length > 1 ? "s" : ""}</small></button><button aria-label={`Supprimer la piste ${track.name}`} className="subtitle-track-delete" disabled={proofreadBusy || subtitleSaving} onClick={() => void deleteSubtitleTrack(track.id)} title="Supprimer cette piste" type="button">×</button></article>)}</div> : <p>Aucune piste n’est encore enregistrée. Personnalisez la piste proposée puis sauvegardez-la.</p>}
               </section>
               <section className="subtitle-import-panel">
                 <div><span className="eyebrow">Sous-titres existants</span><h3>Importer un fichier TXT, SRT ou VTT</h3><p>Un TXT est automatiquement découpé et horodaté depuis la transcription de l’audio. Les timecodes d’un SRT/VTT sont conservés. Utilisez ensuite le décalage pour affiner la synchronisation.</p></div>
@@ -1235,7 +1240,7 @@ function CourseEditor({ job }: { job: Job }) {
                 <label>Couleur des caractères<input onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, color: event.target.value }); setSubtitleDirty(true); }} type="color" value={subtitleDraft.color} /></label>
                 <label>Position de la barre<select onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, position: event.target.value as JobAnalysis["subtitles"]["position"] }); setSubtitleDirty(true); }} value={subtitleDraft.position}><option value="top">En haut</option><option value="center">Au centre</option><option value="bottom">En bas</option></select></label>
               </div>
-              <div className="subtitle-layout-row"><p className="subtitle-layout-note">Le texte est automatiquement ajusté pour rester entièrement visible sur deux lignes maximum.</p><div><button className="button secondary compact" disabled={!scopedSubtitleCues.length} onClick={() => downloadSubtitleTrack("srt")} type="button">Télécharger SRT</button><button className="button secondary compact" disabled={!scopedSubtitleCues.length} onClick={() => downloadSubtitleTrack("vtt")} type="button">Télécharger VTT</button></div></div>
+              <p className="subtitle-layout-note">Le texte est automatiquement ajusté sur deux lignes maximum. Toutes les pistes et leurs timecodes seront inclus dans la sauvegarde `.dars`.</p>
               <div className="subtitle-cues">{scopedSubtitleCues.map((cue) => <label key={`${cue.sourceIndex}-${cue.start}`}><span>{formatDuration(cue.start)} → {formatDuration(cue.end)}</span><textarea rows={2} value={cue.text} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, cues: subtitleDraft.cues.map((item, position) => position === cue.sourceIndex ? { ...item, text: event.target.value } : item) }); setSubtitleDirty(true); }} /></label>)}</div>
               <div className="lab-next-actions"><button className="button secondary" onClick={() => void changeLab("audio-creation")}>Retour à Création Audio</button><button className="button accent" onClick={() => void changeLab("video-creation")}>Passer à Création Vidéo</button></div>
             </section>
