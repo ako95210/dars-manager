@@ -70,7 +70,9 @@ class SubtitleUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=180)
     language: str = Field(min_length=2, max_length=20)
     font: str = Field(pattern=r"^(sans|serif|mono)$")
+    font_size: int = Field(default=32, ge=12, le=96)
     color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
+    position: str = Field(default="bottom", pattern=r"^(top|center|bottom)$")
     cues: list[SubtitleCue] = Field(min_length=1, max_length=10000)
 
     @field_validator("name", "language", mode="before")
@@ -327,6 +329,32 @@ def response_payload(
     payload: dict[str, Any],
     checksum: str,
 ) -> dict[str, Any]:
+    subtitles = payload.get("subtitles") or {
+        "language": job.language or "fr",
+        "font": "sans",
+        "color": "#ffffff",
+        "cues": [
+            {
+                "start": item["start"], "end": item["end"], "text": item["text"]
+            }
+            for item in payload["segments"]
+            if isinstance(item, dict) and str(item.get("text", "")).strip()
+        ],
+    }
+    subtitles = {
+        **subtitles,
+        "font_size": int(subtitles.get("font_size", 32)),
+        "position": subtitles.get("position", "bottom"),
+    }
+    subtitle_tracks = [
+        {
+            **track,
+            "font_size": int(track.get("font_size", 32)),
+            "position": track.get("position", "bottom"),
+        }
+        for track in (payload.get("subtitle_tracks") or [])
+        if isinstance(track, dict)
+    ]
     return {
         "schema": payload.get("schema", 3),
         "audio_name": payload.get("audio_name", "audio"),
@@ -334,19 +362,8 @@ def response_payload(
         "checksum_sha256": checksum,
         "segments": payload["segments"],
         "parts": payload["parts"],
-        "subtitle_tracks": payload.get("subtitle_tracks") or [],
-        "subtitles": payload.get("subtitles") or {
-            "language": job.language or "fr",
-            "font": "sans",
-            "color": "#ffffff",
-            "cues": [
-                {
-                    "start": item["start"], "end": item["end"], "text": item["text"]
-                }
-                for item in payload["segments"]
-                if isinstance(item, dict) and str(item.get("text", "")).strip()
-            ],
-        },
+        "subtitle_tracks": subtitle_tracks,
+        "subtitles": subtitles,
     }
 
 
@@ -409,7 +426,9 @@ def update_subtitles(
             "name": update.name.strip(),
             "language": update.language,
             "font": update.font,
+            "font_size": update.font_size,
             "color": update.color,
+            "position": update.position,
             "cues": [cue.model_dump() for cue in update.cues],
             "created_at": existing.get("created_at", now) if existing else now,
             "updated_at": now,
@@ -1271,7 +1290,9 @@ def create_video_export(
         subtitle_payload = {
             "language": track.get("language") or source_job.language or "fr",
             "font": track.get("font") or "sans",
+            "font_size": int(track.get("font_size", 32)),
             "color": track.get("color") or "#ffffff",
+            "position": track.get("position") or "bottom",
             "cues": track.get("cues") or [],
         }
         if not subtitle_payload["cues"]:

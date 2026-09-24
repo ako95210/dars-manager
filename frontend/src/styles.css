@@ -731,14 +731,23 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .subtitle-track-library > div > button.active { border-color: #158462; box-shadow: 0 0 0 2px rgba(21, 132, 98, .12); background: #f1faf7; }
 .subtitle-track-library > div > button small, .subtitle-track-library > p { color: #64748b; }
 .subtitle-track-library > p { margin: .85rem 0 0; font-size: .88rem; }
+.subtitle-import-panel { display: grid; grid-template-columns: minmax(240px, 1fr) 150px auto; gap: 1rem; align-items: end; margin: 1rem 0; padding: 1rem; border: 1px dashed #aebdca; border-radius: .8rem; background: #fff; }
+.subtitle-import-panel h3 { margin: .2rem 0 .3rem; font-size: 1rem; }
+.subtitle-import-panel p { margin: 0; color: #64748b; font-size: .82rem; line-height: 1.45; }
+.subtitle-import-panel > label:not(.subtitle-import-button) { display: grid; gap: .4rem; color: #52627a; font-size: .8rem; font-weight: 700; }
+.subtitle-import-panel input[type="number"] { width: 100%; border: 1px solid #cbd5e1; border-radius: .6rem; padding: .65rem; background: #fff; color: #14233b; }
+.subtitle-import-button { position: relative; overflow: hidden; cursor: pointer; }
+.subtitle-import-button input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .subtitle-cues { display: grid; gap: .75rem; max-height: 36rem; overflow-y: auto; padding-right: .4rem; }
 .subtitle-cues label { display: grid; grid-template-columns: 8rem 1fr; align-items: start; gap: .75rem; }
 .subtitle-cues label span { color: #52627a; font-size: .85rem; padding-top: .7rem; }
 .subtitle-cues textarea { width: 100%; resize: vertical; }
+.subtitle-layout-note { margin: -.5rem 0 1rem; color: #64748b; font-size: .82rem; }
 .video-subtitle-choice { display: grid; gap: .65rem; min-width: min(100%, 290px); }
 .video-subtitle-select { display: grid; gap: .35rem; color: #52627a; font-size: .78rem; font-weight: 700; }
 .video-subtitle-select select { width: 100%; border: 1px solid #cbd5e1; border-radius: .6rem; padding: .6rem .7rem; background: #fff; color: #14233b; }
 .recovery-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 1rem; background: rgba(12, 24, 42, .55); }
 .recovery-card { width: min(100%, 34rem); border-radius: 1rem; padding: 2rem; background: #fff; box-shadow: 0 24px 70px rgba(0, 0, 0, .22); }
 .recovery-card div { display: flex; gap: .75rem; flex-wrap: wrap; margin-top: 1.5rem; }
+@media (max-width: 800px) { .subtitle-import-panel { grid-template-columns: 1fr; align-items: stretch; } }
 @media (max-width: 600px) { .subtitle-cues label { grid-template-columns: 1fr; gap: 0; } .subtitle-track-library > header { align-items: stretch; flex-direction: column; } }

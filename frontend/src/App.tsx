@@ -316,6 +316,70 @@ function subtitleSourceForAudio(
   };
 }
 
+function parseSubtitleTimestamp(value: string) {
+  const normalized = value.trim().split(/\s+/)[0].replace(",", ".");
+  const pieces = normalized.split(":").map(Number);
+  if ((pieces.length !== 2 && pieces.length !== 3) || pieces.some((piece) => !Number.isFinite(piece))) {
+    return Number.NaN;
+  }
+  return pieces.length === 3
+    ? pieces[0] * 3600 + pieces[1] * 60 + pieces[2]
+    : pieces[0] * 60 + pieces[1];
+}
+
+function parseSubtitleFile(content: string): AnalysisSegment[] {
+  const lines = content.replace(/^\uFEFF/, "").replace(/\r/g, "").split("\n");
+  const cues: AnalysisSegment[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!lines[index].includes("-->")) continue;
+    const [rawStart, rawEnd] = lines[index].split("-->", 2);
+    const start = parseSubtitleTimestamp(rawStart);
+    const end = parseSubtitleTimestamp(rawEnd);
+    const text: string[] = [];
+    index += 1;
+    while (index < lines.length && lines[index].trim()) {
+      text.push(lines[index].trim());
+      index += 1;
+    }
+    const cleanText = text.join(" ").replace(/<[^>]+>/g, "").trim();
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start && cleanText) {
+      cues.push({ start, end, text: cleanText });
+    }
+  }
+  return cues.sort((left, right) => left.start - right.start);
+}
+
+function subtitleTimelineToSource(
+  cues: AnalysisSegment[],
+  ranges: [number, number][],
+  offsetSeconds: number,
+): AnalysisSegment[] {
+  const result: AnalysisSegment[] = [];
+  let timelineStart = 0;
+  for (const [rangeStart, rangeEnd] of ranges) {
+    const timelineEnd = timelineStart + rangeEnd - rangeStart;
+    for (const cue of cues) {
+      const shiftedStart = cue.start + offsetSeconds;
+      const shiftedEnd = cue.end + offsetSeconds;
+      if (shiftedEnd <= timelineStart || shiftedStart >= timelineEnd) continue;
+      result.push({
+        start: rangeStart + Math.max(timelineStart, shiftedStart) - timelineStart,
+        end: rangeStart + Math.min(timelineEnd, shiftedEnd) - timelineStart,
+        text: cue.text,
+      });
+    }
+    timelineStart = timelineEnd;
+  }
+  result.sort((left, right) => left.start - right.start);
+  let previousEnd = 0;
+  return result.flatMap((cue) => {
+    const start = Math.max(cue.start, previousEnd);
+    if (cue.end <= start) return [];
+    previousEnd = cue.end;
+    return [{ ...cue, start }];
+  });
+}
+
 function CourseEditor({ job }: { job: Job }) {
   const [returningToCourse] = useState(() => window.sessionStorage.getItem(`dars-course-visited:${job.id}`) === "1");
   const [activeLab, setActiveLab] = useState<StudioLab>("audio-creation");
@@ -324,6 +388,7 @@ function CourseEditor({ job }: { job: Job }) {
   const [subtitleTrackName, setSubtitleTrackName] = useState("");
   const [selectedSubtitleTrackId, setSelectedSubtitleTrackId] = useState<string | null>(null);
   const [selectedVideoSubtitleTrackId, setSelectedVideoSubtitleTrackId] = useState("");
+  const [subtitleImportOffset, setSubtitleImportOffset] = useState("0");
   const [subtitleDirty, setSubtitleDirty] = useState(false);
   const [subtitleSaving, setSubtitleSaving] = useState(false);
   const [proofreadJob, setProofreadJob] = useState<Job | null>(null);
@@ -429,7 +494,9 @@ function CourseEditor({ job }: { job: Job }) {
       setSubtitleDraft({
         language: selected.language,
         font: selected.font,
+        font_size: selected.font_size || 32,
         color: selected.color,
+        position: selected.position || "bottom",
         cues: selected.cues,
       });
       return;
@@ -706,7 +773,9 @@ function CourseEditor({ job }: { job: Job }) {
     setSubtitleDraft({
       language: track.language,
       font: track.font,
+      font_size: track.font_size || 32,
       color: track.color,
+      position: track.position || "bottom",
       cues: track.cues,
     });
     setSubtitleDirty(false);
@@ -731,6 +800,46 @@ function CourseEditor({ job }: { job: Job }) {
     ));
     setSubtitleDirty(true);
     setNotice("Nouvelle piste prête à être personnalisée.");
+  }
+
+  async function importSubtitleTrack(file: File) {
+    if (!analysis || !selectedAudio) return;
+    let currentAnalysis = analysis;
+    if (subtitleDirty) {
+      const saved = await saveSubtitles();
+      if (!saved) return;
+      currentAnalysis = saved.analysis;
+    }
+    const offset = Number(subtitleImportOffset.replace(",", "."));
+    if (!Number.isFinite(offset)) {
+      setError("Le décalage de synchronisation doit être un nombre de secondes.");
+      return;
+    }
+    try {
+      const parsed = parseSubtitleFile(await file.text());
+      if (!parsed.length) {
+        setError("Aucun sous-titre horodaté n’a été trouvé dans ce fichier SRT ou VTT.");
+        return;
+      }
+      const cues = subtitleTimelineToSource(
+        parsed,
+        selectedAudio.content?.ranges || [],
+        offset,
+      );
+      if (!cues.length) {
+        setError("Les timecodes du fichier ne correspondent pas à la durée de l’audio sélectionné.");
+        return;
+      }
+      const base = subtitleDraft || currentAnalysis.subtitles;
+      setSelectedSubtitleTrackId(null);
+      setSubtitleTrackName(file.name.replace(/\.(srt|vtt)$/i, "") || "Sous-titres importés");
+      setSubtitleDraft({ ...base, cues });
+      setSubtitleDirty(true);
+      setError("");
+      setNotice(`${cues.length} sous-titre${cues.length > 1 ? "s" : ""} importé${cues.length > 1 ? "s" : ""} et synchronisé${cues.length > 1 ? "s" : ""} sur cet audio.`);
+    } catch {
+      setError("Lecture du fichier de sous-titres impossible.");
+    }
   }
 
   async function createExport() {
@@ -1010,12 +1119,20 @@ function CourseEditor({ job }: { job: Job }) {
                 <header><div><span className="eyebrow">Pistes sauvegardées</span><h3>Versions disponibles pour cet audio</h3></div><button className="button secondary compact" disabled={proofreadBusy || subtitleSaving} onClick={() => void createSubtitleTrack()} type="button">＋ Nouvelle piste</button></header>
                 {subtitleTracks.length ? <div>{subtitleTracks.map((track) => <button className={selectedSubtitleTrackId === track.id ? "active" : ""} disabled={proofreadBusy || subtitleSaving} key={track.id} onClick={() => void selectSubtitleTrack(track.id)} type="button"><strong>{track.name}</strong><small>{track.language.toUpperCase()} · {track.cues.length} sous-titre{track.cues.length > 1 ? "s" : ""}</small></button>)}</div> : <p>Aucune piste n’est encore enregistrée. Personnalisez la piste proposée puis sauvegardez-la.</p>}
               </section>
+              <section className="subtitle-import-panel">
+                <div><span className="eyebrow">Sous-titres existants</span><h3>Importer un fichier SRT ou VTT</h3><p>Les timecodes sont synchronisés sur la chronologie de l’audio choisi. Utilisez un décalage positif si le texte arrive trop tôt, négatif s’il arrive trop tard.</p></div>
+                <label>Décalage en secondes<input inputMode="decimal" onChange={(event) => setSubtitleImportOffset(event.target.value)} step="0.1" type="number" value={subtitleImportOffset} /></label>
+                <label className="button secondary compact subtitle-import-button">Importer le fichier<input accept=".srt,.vtt,text/vtt,application/x-subrip" disabled={proofreadBusy || subtitleSaving} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void importSubtitleTrack(file); }} type="file" /></label>
+              </section>
               <div className="subtitle-options">
                 <label className="subtitle-name">Nom de la piste<input maxLength={180} onChange={(event) => { setSubtitleTrackName(event.target.value); setSubtitleDirty(true); }} placeholder="Ex. Français corrigé" value={subtitleTrackName} /></label>
                 <label>Langue<input maxLength={20} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, language: event.target.value }); setSubtitleDirty(true); }} value={subtitleDraft.language} /></label>
                 <label>Police<select onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, font: event.target.value as JobAnalysis["subtitles"]["font"] }); setSubtitleDirty(true); }} value={subtitleDraft.font}><option value="sans">Sans serif</option><option value="serif">Serif</option><option value="mono">Monospace</option></select></label>
-                <label>Couleur<input onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, color: event.target.value }); setSubtitleDirty(true); }} type="color" value={subtitleDraft.color} /></label>
+                <label>Taille<input max={96} min={12} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, font_size: Number(event.target.value) }); setSubtitleDirty(true); }} step={2} type="number" value={subtitleDraft.font_size} /></label>
+                <label>Couleur des caractères<input onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, color: event.target.value }); setSubtitleDirty(true); }} type="color" value={subtitleDraft.color} /></label>
+                <label>Position de la barre<select onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, position: event.target.value as JobAnalysis["subtitles"]["position"] }); setSubtitleDirty(true); }} value={subtitleDraft.position}><option value="top">En haut</option><option value="center">Au centre</option><option value="bottom">En bas</option></select></label>
               </div>
+              <p className="subtitle-layout-note">Le texte est automatiquement ajusté pour rester entièrement visible sur deux lignes maximum.</p>
               <div className="subtitle-cues">{scopedSubtitleCues.map((cue) => <label key={`${cue.sourceIndex}-${cue.start}`}><span>{formatDuration(cue.start)} → {formatDuration(cue.end)}</span><textarea rows={2} value={cue.text} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, cues: subtitleDraft.cues.map((item, position) => position === cue.sourceIndex ? { ...item, text: event.target.value } : item) }); setSubtitleDirty(true); }} /></label>)}</div>
               <div className="lab-next-actions"><button className="button secondary" onClick={() => void changeLab("audio-creation")}>Retour à Création Audio</button><button className="button accent" onClick={() => void changeLab("video-creation")}>Passer à Création Vidéo</button></div>
             </section>

@@ -174,7 +174,9 @@ export type SubtitleTrack = {
   name: string;
   language: string;
   font: "sans" | "serif" | "mono";
+  font_size: number;
   color: string;
+  position: "top" | "center" | "bottom";
   cues: AnalysisSegment[];
   created_at: string;
   updated_at: string;
@@ -191,7 +193,9 @@ export type JobAnalysis = {
   subtitles: {
     language: string;
     font: "sans" | "serif" | "mono";
+    font_size: number;
     color: string;
+    position: "top" | "center" | "bottom";
     cues: AnalysisSegment[];
   };
 };

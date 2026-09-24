@@ -48,8 +48,26 @@ class SubtitleTests(unittest.TestCase):
                 ImageDraw.Draw(image), text, font_path, width, height
             )
             self.assertEqual(caption.replace("\n", " ").split(), text.split())
+            self.assertLessEqual(caption.count("\n"), 1)
             self.assertLessEqual(bounds[2] - bounds[0], round(width * 0.84))
             self.assertLessEqual(bounds[3] - bounds[1], round(height * 0.34))
+
+    def test_subtitle_size_and_bar_position_are_configurable(self) -> None:
+        image = Image.new("RGB", (1280, 720), "#ffffff")
+        draw = ImageDraw.Draw(image)
+        font_path = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+        _small_caption, small_font, _small_bounds, _small_spacing = subtitle_layout(
+            draw, "Un sous-titre court", font_path, 1280, 720, 20
+        )
+        _large_caption, large_font, _large_bounds, _large_spacing = subtitle_layout(
+            draw, "Un sous-titre court", font_path, 1280, 720, 64
+        )
+        self.assertLess(small_font.size, large_font.size)
+
+        cue = {"start": 0, "end": 2, "text": "Position visible"}
+        top = subtitle_frame(image, 1, {"position": "top", "font_size": 32, "cues": [cue]})
+        bottom = subtitle_frame(image, 1, {"position": "bottom", "font_size": 32, "cues": [cue]})
+        self.assertNotEqual(top.tobytes(), bottom.tobytes())
 
     def test_proofreader_preserves_number_and_order(self) -> None:
         class Client:
