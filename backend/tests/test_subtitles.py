@@ -4,9 +4,11 @@ import json
 import unittest
 from types import SimpleNamespace
 
-from PIL import Image
+from pathlib import Path
 
-from backend.app.rendering import remap_subtitles, subtitle_cue_indices, subtitle_frame
+from PIL import Image, ImageDraw
+
+from backend.app.rendering import FORMAT_SIZES, remap_subtitles, subtitle_cue_indices, subtitle_frame, subtitle_layout
 from backend.app.semantic_analysis import OpenAISemanticAnalyzer, SemanticAnalysisError
 
 
@@ -36,6 +38,18 @@ class SubtitleTests(unittest.TestCase):
         cues = {"font": "sans", "color": "#ffffff", "cues": [{"start": 1, "end": 2, "text": "Texte"}]}
         self.assertEqual(subtitle_frame(blank, 0.5, cues).tobytes(), blank.tobytes())
         self.assertNotEqual(subtitle_frame(blank, 1.5, cues).tobytes(), blank.tobytes())
+
+    def test_long_subtitle_is_fitted_without_truncation_in_every_format(self) -> None:
+        text = " ".join(f"expression-{index}" for index in range(80))
+        font_path = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+        for width, height in FORMAT_SIZES.values():
+            image = Image.new("RGB", (width, height), "#ffffff")
+            caption, _font, bounds, _spacing = subtitle_layout(
+                ImageDraw.Draw(image), text, font_path, width, height
+            )
+            self.assertEqual(caption.replace("\n", " ").split(), text.split())
+            self.assertLessEqual(bounds[2] - bounds[0], round(width * 0.84))
+            self.assertLessEqual(bounds[3] - bounds[1], round(height * 0.34))
 
     def test_proofreader_preserves_number_and_order(self) -> None:
         class Client:

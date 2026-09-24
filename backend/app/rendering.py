@@ -25,6 +25,69 @@ def font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     return ImageFont.truetype(str(path), size=size) if path.exists() else ImageFont.load_default()
 
 
+def wrap_subtitle_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    selected_font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    max_width: int,
+) -> list[str]:
+    """Wrap every character using its rendered pixel width, without truncating text."""
+    lines: list[str] = []
+    paragraphs = text.splitlines() or [text]
+    for paragraph in paragraphs:
+        words = paragraph.split()
+        if not words:
+            lines.append("")
+            continue
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            if draw.textbbox((0, 0), candidate, font=selected_font)[2] <= max_width:
+                current = candidate
+                continue
+            if current:
+                lines.append(current)
+                current = ""
+            chunk = ""
+            for character in word:
+                candidate = chunk + character
+                if chunk and draw.textbbox((0, 0), candidate, font=selected_font)[2] > max_width:
+                    lines.append(chunk)
+                    chunk = character
+                else:
+                    chunk = candidate
+            current = chunk
+        if current:
+            lines.append(current)
+    return lines or [""]
+
+
+def subtitle_layout(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font_path: Path,
+    width: int,
+    height: int,
+) -> tuple[str, ImageFont.FreeTypeFont | ImageFont.ImageFont, tuple[int, int, int, int], int]:
+    """Fit a complete subtitle inside the safe lower area for every video format."""
+    max_text_width = max(1, round(width * 0.84))
+    max_text_height = max(1, round(height * 0.34))
+    preferred_size = max(22, round(min(width, height) * 0.045))
+    last_layout = None
+    for size in range(preferred_size, 7, -2):
+        selected_font = ImageFont.truetype(str(font_path), size) if font_path.exists() else font(size)
+        caption = "\n".join(wrap_subtitle_text(draw, text, selected_font, max_text_width))
+        spacing = max(4, size // 7)
+        bounds = draw.multiline_textbbox(
+            (0, 0), caption, font=selected_font, spacing=spacing, align="center"
+        )
+        last_layout = (caption, selected_font, bounds, spacing)
+        if bounds[2] - bounds[0] <= max_text_width and bounds[3] - bounds[1] <= max_text_height:
+            return last_layout
+    assert last_layout is not None
+    return last_layout
+
+
 def subtitle_frame(image: Image.Image, at_seconds: float, subtitles: dict[str, Any] | None) -> Image.Image:
     if not subtitles:
         return image
@@ -36,16 +99,14 @@ def subtitle_frame(image: Image.Image, at_seconds: float, subtitles: dict[str, A
     width, height = output.size
     font_name = {"sans": "DejaVuSans-Bold.ttf", "serif": "DejaVuSerif.ttf", "mono": "DejaVuSansMono.ttf"}.get(subtitles.get("font"), "DejaVuSans-Bold.ttf")
     font_path = Path("/usr/share/fonts/truetype/dejavu") / font_name
-    size = max(22, round(height * 0.045))
-    selected_font = ImageFont.truetype(str(font_path), size) if font_path.exists() else font(size)
-    lines = textwrap.wrap(str(cue["text"]), width=max(12, int(width / (size * 0.55))))[:3]
-    caption = "\n".join(lines)
-    bounds = draw.multiline_textbbox((0, 0), caption, font=selected_font, spacing=6, align="center")
+    caption, selected_font, bounds, spacing = subtitle_layout(
+        draw, str(cue["text"]), font_path, width, height
+    )
     caption_width, caption_height = bounds[2] - bounds[0], bounds[3] - bounds[1]
     x, y = (width - caption_width) // 2, height - caption_height - max(20, height // 15)
-    padding = max(10, size // 3)
+    padding = max(10, getattr(selected_font, "size", 24) // 3)
     draw.rounded_rectangle((x - padding, y - padding, x + caption_width + padding, y + caption_height + padding), radius=12, fill="#101820")
-    draw.multiline_text((x, y - bounds[1]), caption, font=selected_font, fill=str(subtitles.get("color", "#ffffff")), spacing=6, align="center")
+    draw.multiline_text((x, y - bounds[1]), caption, font=selected_font, fill=str(subtitles.get("color", "#ffffff")), spacing=spacing, align="center")
     return output
 
 
