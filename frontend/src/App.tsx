@@ -944,10 +944,13 @@ function CourseEditor({ job }: { job: Job }) {
                 <section className="ready-image-preview"><img alt={`Visuel ${selectedTemplate.name}`} src={selectedTemplate.preview_url} /><div><span className="eyebrow">Aperçu</span><h3>{selectedTemplate.name}</h3><p>Cette image sera utilisée telle quelle. Le titre sert uniquement au nom du fichier et à la diffusion.</p></div></section>
               )}
 
-              <label className="subtitle-toggle"><input checked={includeSubtitles} onChange={(event) => setIncludeSubtitles(event.target.checked)} type="checkbox" /> Incruster les sous-titres préparés dans la vidéo {subtitleDirty && <small>Enregistrez d’abord vos modifications.</small>}</label>
-
               <section className="video-composer">
                 <div><span className="eyebrow">Dernière étape</span><strong>{visualReady ? "Le visuel et l’audio sont prêts" : visualMode === "ai" ? "Générez et validez d’abord l’image" : "Choisissez ou importez une image prête"}</strong></div>
+                <label className={`subtitle-switch ${includeSubtitles ? "active" : ""}`}>
+                  <input checked={includeSubtitles} disabled={scopedSubtitleCues.length === 0} onChange={(event) => setIncludeSubtitles(event.target.checked)} type="checkbox" />
+                  <span aria-hidden="true" className="subtitle-switch-track"><i /></span>
+                  <span className="subtitle-switch-copy"><strong>Incruster les sous-titres</strong><small>{scopedSubtitleCues.length === 0 ? "Préparez d’abord les sous-titres de cet audio" : includeSubtitles ? `${scopedSubtitleCues.length} sous-titres seront ajoutés` : "Vidéo sans sous-titres"}{subtitleDirty && " · modifications à enregistrer"}</small></span>
+                </label>
                 <button className="button accent" disabled={!visualReady || dirty || (includeSubtitles && (subtitleDirty || proofreadBusy)) || renderingVideo || videoBusy || imageBusy} onClick={createVideo} type="button">{renderingVideo ? "Préparation…" : videoBusy ? "Rendu en cours…" : "Créer la vidéo"}</button>
               </section>
               {videoJob && (

@@ -394,12 +394,24 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .ratio-16-9 { width: 23px; height: 13px; }
 .ratio-1-1 { width: 17px; height: 17px; }
 .ratio-9-16 { width: 12px; height: 21px; }
-.video-composer { display: flex; justify-content: space-between; gap: 15px; align-items: center; margin-top: 10px; padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: #f8fafb; }
+.video-composer { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(260px, auto) auto; gap: 18px; align-items: center; margin-top: 14px; padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: #f8fafb; }
 .video-composer > div > strong { display: block; margin-top: 4px; font-size: 11px; }
 .video-fields { flex: 1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
 .video-fields label { display: grid; gap: 5px; color: #596579; font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .video-fields input { min-height: 39px; padding: 9px 10px; font-size: 10px; text-transform: none; }
 .video-composer > .button { min-height: 39px; font-size: 10px; }
+.subtitle-switch { position: relative; display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid #d8e0e9; border-radius: 10px; background: white; cursor: pointer; }
+.subtitle-switch.active { border-color: #86cdb4; background: #f3fbf8; }
+.subtitle-switch:has(input:disabled) { opacity: .62; cursor: not-allowed; }
+.subtitle-switch > input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.subtitle-switch-track { width: 36px; height: 20px; display: flex; align-items: center; padding: 2px; border-radius: 999px; background: #aeb8c5; transition: background .18s ease; }
+.subtitle-switch-track i { width: 16px; height: 16px; border-radius: 50%; background: white; box-shadow: 0 1px 3px rgba(15, 23, 42, .25); transition: transform .18s ease; }
+.subtitle-switch input:checked + .subtitle-switch-track { background: #158462; }
+.subtitle-switch input:checked + .subtitle-switch-track i { transform: translateX(16px); }
+.subtitle-switch input:focus-visible + .subtitle-switch-track { outline: 3px solid rgba(21, 132, 98, .2); outline-offset: 2px; }
+.subtitle-switch-copy strong, .subtitle-switch-copy small { display: block; }
+.subtitle-switch-copy strong { color: #26364d; font-size: 10px; }
+.subtitle-switch-copy small { margin-top: 3px; color: var(--muted); font-size: 8px; line-height: 1.35; }
 .video-render-status { display: flex; justify-content: space-between; gap: 18px; align-items: center; margin-top: 10px; padding: 15px 17px; border: 1px solid #cfe3dc; border-radius: 12px; background: #f6fbf9; }
 .video-render-status.failed { border-color: #efc5c2; background: #fef7f6; }
 .video-render-status > div:first-child > strong, .video-render-status > div:first-child > small { display: block; }
@@ -690,7 +702,8 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
   .template-upload-fields { grid-template-columns: 1fr; }
   .video-template-choice { align-items: stretch; flex-direction: column; }
   .zone-fields, .video-fields { grid-template-columns: 1fr; }
-  .video-composer, .video-render-status { align-items: stretch; flex-direction: column; }
+  .video-composer { grid-template-columns: 1fr; }
+  .video-render-status { align-items: stretch; flex-direction: column; }
   .video-artifacts { flex-wrap: wrap; }
   .project-header-actions, .danger-zone, .delete-confirmation { align-items: stretch; flex-direction: column; }
   .cost-cards, .manual-payment-card .cost-cards { grid-template-columns: 1fr; }
@@ -713,8 +726,6 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .subtitle-cues label { display: grid; grid-template-columns: 8rem 1fr; align-items: start; gap: .75rem; }
 .subtitle-cues label span { color: #52627a; font-size: .85rem; padding-top: .7rem; }
 .subtitle-cues textarea { width: 100%; resize: vertical; }
-.subtitle-toggle { display: flex; align-items: center; gap: .6rem; margin: 1rem 0; }
-.subtitle-toggle small { color: #b45309; }
 .recovery-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 1rem; background: rgba(12, 24, 42, .55); }
 .recovery-card { width: min(100%, 34rem); border-radius: 1rem; padding: 2rem; background: #fff; box-shadow: 0 24px 70px rgba(0, 0, 0, .22); }
 .recovery-card div { display: flex; gap: .75rem; flex-wrap: wrap; margin-top: 1.5rem; }
