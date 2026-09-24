@@ -721,12 +721,24 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 }
 .subtitle-options { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1.25rem 0; }
 .subtitle-options label { display: grid; gap: .4rem; min-width: 130px; }
+.subtitle-options .subtitle-name { flex: 1 1 260px; }
 .subtitle-options input, .subtitle-options select, .subtitle-cues textarea { border: 1px solid #cbd5e1; border-radius: .6rem; padding: .65rem; background: #fff; color: #14233b; }
+.subtitle-track-library { margin: 1rem 0 1.25rem; padding: 1rem; border: 1px solid #dbe4ec; border-radius: .8rem; background: #f8fafc; }
+.subtitle-track-library > header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.subtitle-track-library h3 { margin: .2rem 0 0; font-size: 1rem; }
+.subtitle-track-library > div { display: flex; flex-wrap: wrap; gap: .65rem; margin-top: .85rem; }
+.subtitle-track-library > div > button { display: grid; gap: .2rem; min-width: 175px; padding: .7rem .85rem; border: 1px solid #cbd5e1; border-radius: .65rem; background: #fff; color: #26364d; text-align: left; cursor: pointer; }
+.subtitle-track-library > div > button.active { border-color: #158462; box-shadow: 0 0 0 2px rgba(21, 132, 98, .12); background: #f1faf7; }
+.subtitle-track-library > div > button small, .subtitle-track-library > p { color: #64748b; }
+.subtitle-track-library > p { margin: .85rem 0 0; font-size: .88rem; }
 .subtitle-cues { display: grid; gap: .75rem; max-height: 36rem; overflow-y: auto; padding-right: .4rem; }
 .subtitle-cues label { display: grid; grid-template-columns: 8rem 1fr; align-items: start; gap: .75rem; }
 .subtitle-cues label span { color: #52627a; font-size: .85rem; padding-top: .7rem; }
 .subtitle-cues textarea { width: 100%; resize: vertical; }
+.video-subtitle-choice { display: grid; gap: .65rem; min-width: min(100%, 290px); }
+.video-subtitle-select { display: grid; gap: .35rem; color: #52627a; font-size: .78rem; font-weight: 700; }
+.video-subtitle-select select { width: 100%; border: 1px solid #cbd5e1; border-radius: .6rem; padding: .6rem .7rem; background: #fff; color: #14233b; }
 .recovery-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 1rem; background: rgba(12, 24, 42, .55); }
 .recovery-card { width: min(100%, 34rem); border-radius: 1rem; padding: 2rem; background: #fff; box-shadow: 0 24px 70px rgba(0, 0, 0, .22); }
 .recovery-card div { display: flex; gap: .75rem; flex-wrap: wrap; margin-top: 1.5rem; }
-@media (max-width: 600px) { .subtitle-cues label { grid-template-columns: 1fr; gap: 0; } }
+@media (max-width: 600px) { .subtitle-cues label { grid-template-columns: 1fr; gap: 0; } .subtitle-track-library > header { align-items: stretch; flex-direction: column; } }

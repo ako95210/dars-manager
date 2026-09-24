@@ -1170,6 +1170,49 @@ class ApiTests(unittest.TestCase):
                 selection.headers["content-disposition"],
             )
 
+            first_track_id = "1" * 32
+            first_track = client.put(
+                f"/api/jobs/{job.id}/analysis/subtitles",
+                json={
+                    "checksum_sha256": updated.json()["checksum_sha256"],
+                    "track_id": first_track_id,
+                    "audio_export_job_id": export_id,
+                    "name": "Français corrigé",
+                    "language": "fr",
+                    "font": "sans",
+                    "color": "#ffffff",
+                    "cues": [
+                        {"start": 0.0, "end": 12.0, "text": "Première version."},
+                        {"start": 12.0, "end": 29.5, "text": "Suite en français."},
+                    ],
+                },
+            )
+            self.assertEqual(first_track.status_code, 200, first_track.text)
+            second_track_id = "2" * 32
+            second_track = client.put(
+                f"/api/jobs/{job.id}/analysis/subtitles",
+                json={
+                    "checksum_sha256": first_track.json()["checksum_sha256"],
+                    "track_id": second_track_id,
+                    "audio_export_job_id": export_id,
+                    "name": "Arabe relu",
+                    "language": "ar",
+                    "font": "serif",
+                    "color": "#fef3c7",
+                    "cues": [
+                        {"start": 0.0, "end": 14.0, "text": "نسخة عربية أولى"},
+                        {"start": 14.0, "end": 29.5, "text": "تكملة عربية"},
+                    ],
+                },
+            )
+            self.assertEqual(second_track.status_code, 200, second_track.text)
+            updated = second_track
+            self.assertEqual(len(updated.json()["subtitle_tracks"]), 2)
+            self.assertEqual(
+                [track["name"] for track in updated.json()["subtitle_tracks"]],
+                ["Français corrigé", "Arabe relu"],
+            )
+
             template_buffer = BytesIO()
             Image.new("RGB", (640, 360), "#17362c").save(template_buffer, format="PNG")
             template_content = template_buffer.getvalue()
@@ -1275,6 +1318,9 @@ class ApiTests(unittest.TestCase):
                     "speaker": "Intervenant",
                     "date": "",
                     "episode": "",
+                    "include_subtitles": True,
+                    "audio_export_job_id": export_id,
+                    "subtitle_track_id": second_track_id,
                 },
             )
             self.assertEqual(video_requested.status_code, 202, video_requested.text)
@@ -1290,7 +1336,12 @@ class ApiTests(unittest.TestCase):
                 output.write_bytes(b"rendered-cover")
 
             def fake_video(_cover, _audio, output, **kwargs) -> None:
-                self.assertIsNone(kwargs.get("subtitles"))
+                self.assertEqual(kwargs["subtitles"]["language"], "ar")
+                self.assertEqual(kwargs["subtitles"]["font"], "serif")
+                self.assertEqual(
+                    [cue["text"] for cue in kwargs["subtitles"]["cues"]],
+                    ["نسخة عربية أولى", "تكملة عربية"],
+                )
                 output.write_bytes(b"rendered-video")
 
             with (

@@ -65,15 +65,24 @@ class SubtitleCue(BaseModel):
 
 class SubtitleUpdate(BaseModel):
     checksum_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    track_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    audio_export_job_id: str = Field(min_length=32, max_length=32)
+    name: str = Field(min_length=1, max_length=180)
     language: str = Field(min_length=2, max_length=20)
     font: str = Field(pattern=r"^(sans|serif|mono)$")
     color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
     cues: list[SubtitleCue] = Field(min_length=1, max_length=10000)
 
+    @field_validator("name", "language", mode="before")
+    @classmethod
+    def strip_subtitle_values(cls, value: str) -> str:
+        return value.strip()
+
 
 class SubtitleProofreadRequest(BaseModel):
     checksum_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     audio_export_job_id: str = Field(min_length=32, max_length=32)
+    subtitle_track_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     cost_confirmed: bool = False
 
 
@@ -98,6 +107,8 @@ class AudioExportRequest(BaseModel):
 
 class VideoExportRequest(AudioExportRequest):
     include_subtitles: bool = False
+    audio_export_job_id: str | None = Field(default=None, min_length=32, max_length=32)
+    subtitle_track_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     template_id: str = Field(min_length=32, max_length=32)
     template_version: int = Field(ge=1)
     image_job_id: str | None = Field(default=None, min_length=32, max_length=32)
@@ -323,6 +334,7 @@ def response_payload(
         "checksum_sha256": checksum,
         "segments": payload["segments"],
         "parts": payload["parts"],
+        "subtitle_tracks": payload.get("subtitle_tracks") or [],
         "subtitles": payload.get("subtitles") or {
             "language": job.language or "fr",
             "font": "sans",
@@ -351,10 +363,24 @@ def update_subtitles(
     row = analysis_artifact(db, job, user.id, for_update=True)
     if row.checksum_sha256 != update.checksum_sha256:
         raise HTTPException(status_code=409, detail="L'analyse a changé. Rechargez-la.")
-    duration = float(job.metrics.get("duration_seconds", 0) or 0)
+    audio_export, _ = child_artifact(
+        db, job, user.id, update.audio_export_job_id, "audio_selection", "selection_audio"
+    )
+    raw_ranges = audio_export.options.get("ranges", [])
+    ranges = [
+        (float(item[0]), float(item[1]))
+        for item in raw_ranges
+        if isinstance(item, list) and len(item) == 2
+    ]
+    if not ranges or len(ranges) != len(raw_ranges):
+        raise HTTPException(status_code=422, detail="La sélection audio est invalide.")
     previous_end = 0.0
     for cue in update.cues:
-        if cue.end <= cue.start or cue.start < previous_end - 0.1 or (duration and cue.end > duration + 0.1):
+        if (
+            cue.end <= cue.start
+            or cue.start < previous_end - 0.1
+            or not any(cue.end > start and cue.start < end for start, end in ranges)
+        ):
             raise HTTPException(status_code=422, detail="Les horodatages des sous-titres sont invalides.")
         previous_end = cue.end
     settings.workspace_root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -364,7 +390,35 @@ def update_subtitles(
         if sha256_file(path) != update.checksum_sha256:
             raise HTTPException(status_code=409, detail="L'analyse a changé. Rechargez-la.")
         payload = load_payload(path)
-        payload["subtitles"] = update.model_dump(exclude={"checksum_sha256"})
+        tracks = payload.get("subtitle_tracks")
+        if not isinstance(tracks, list):
+            tracks = []
+        existing = next(
+            (item for item in tracks if isinstance(item, dict) and item.get("id") == update.track_id),
+            None,
+        )
+        if existing and existing.get("audio_export_job_id") != audio_export.id:
+            raise HTTPException(
+                status_code=409,
+                detail="Cette piste appartient à un autre audio.",
+            )
+        now = utc_now().isoformat(timespec="seconds")
+        track = {
+            "id": update.track_id,
+            "audio_export_job_id": audio_export.id,
+            "name": update.name.strip(),
+            "language": update.language,
+            "font": update.font,
+            "color": update.color,
+            "cues": [cue.model_dump() for cue in update.cues],
+            "created_at": existing.get("created_at", now) if existing else now,
+            "updated_at": now,
+        }
+        if existing is None:
+            tracks.append(track)
+        else:
+            tracks[tracks.index(existing)] = track
+        payload["subtitle_tracks"] = tracks
         write_payload(path, payload)
         checksum = sha256_file(path)
         meter_media(db, row)
@@ -422,8 +476,26 @@ def create_subtitle_proofread(job_id: str, request: SubtitleProofreadRequest, us
     ranges = list(audio_export.options.get("ranges", []))
     if not part_indices or not ranges:
         raise HTTPException(status_code=422, detail="L'audio sélectionné ne contient aucune partie.")
+    settings.workspace_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with tempfile.TemporaryDirectory(dir=settings.workspace_root) as temporary:
+        analysis_path = Path(temporary) / "analysis.json"
+        media_storage.download_file(analysis.storage_key, analysis_path)
+        if sha256_file(analysis_path) != request.checksum_sha256:
+            raise HTTPException(status_code=409, detail="L'analyse a changé. Rechargez-la.")
+        payload = load_payload(analysis_path)
+    track = next(
+        (
+            item for item in payload.get("subtitle_tracks", [])
+            if isinstance(item, dict)
+            and item.get("id") == request.subtitle_track_id
+            and item.get("audio_export_job_id") == audio_export.id
+        ),
+        None,
+    )
+    if track is None:
+        raise HTTPException(status_code=404, detail="Piste de sous-titres introuvable.")
     previous = [item for item in manager.list_for_user(user.id, source.project_id) if item.tool == "subtitle_proofread" and item.options.get("source_job_id") == source.id]
-    identical = next((item for item in previous if item.options.get("analysis_checksum") == request.checksum_sha256 and item.options.get("audio_export_job_id") == audio_export.id and item.state not in {"failed", "cancelled", "expired"}), None)
+    identical = next((item for item in previous if item.options.get("analysis_checksum") == request.checksum_sha256 and item.options.get("audio_export_job_id") == audio_export.id and item.options.get("subtitle_track_id") == request.subtitle_track_id and item.state not in {"failed", "cancelled", "expired"}), None)
     if identical:
         return identical.public()
     if any(item.state not in {"completed", "failed", "cancelled", "expired"} for item in previous):
@@ -433,7 +505,7 @@ def create_subtitle_proofread(job_id: str, request: SubtitleProofreadRequest, us
     control = cost_control(db, user_id=user.id, proposed_amount_nanos=amount_nanos, lock_policy=True)
     if control.requires_confirmation and not request.cost_confirmed:
         raise HTTPException(status_code=409, detail="Cette correction dépasse un seuil financier et doit être confirmée.")
-    child = manager.create(user.id, source.project_id, "subtitle-suggestions.json", settings.semantic_analysis_model, source.language, settings.whisper_cpu_threads, execution_backend="worker", allocate_workspace=False, tool="subtitle_proofread", options={"source_job_id": source.id, "analysis_storage_key": analysis.storage_key, "analysis_checksum": request.checksum_sha256, "audio_export_job_id": audio_export.id, "part_indices": part_indices, "ranges": ranges})
+    child = manager.create(user.id, source.project_id, "subtitle-suggestions.json", settings.semantic_analysis_model, source.language, settings.whisper_cpu_threads, execution_backend="worker", allocate_workspace=False, tool="subtitle_proofread", options={"source_job_id": source.id, "analysis_storage_key": analysis.storage_key, "analysis_checksum": request.checksum_sha256, "audio_export_job_id": audio_export.id, "subtitle_track_id": request.subtitle_track_id, "part_indices": part_indices, "ranges": ranges})
     try:
         for quantity, unit in ((input_tokens, "input_token"), (output_tokens, "output_token")):
             record_usage(db, user_id=user.id, project_id=source.project_id, job_id=child.id, provider="openai", service="content_analysis", model=settings.semantic_analysis_model, quantity=quantity, unit=unit, status="estimated", idempotency_key=f"content-analysis:{child.id}:estimate:{unit}", details={"purpose": "subtitle_proofread", "cost_confirmed": request.cost_confirmed})
@@ -1162,8 +1234,50 @@ def create_video_export(
         "episode": request.episode,
     }
     subtitle_payload = None
+    subtitle_track_id = None
+    audio_export_job_id = None
     if request.include_subtitles:
-        subtitle_payload = response_payload(source_job, analysis_payload, request.checksum_sha256)["subtitles"]
+        if not request.audio_export_job_id or not request.subtitle_track_id:
+            raise HTTPException(
+                status_code=422,
+                detail="Choisissez une piste de sous-titres pour cet audio.",
+            )
+        audio_export, _ = child_artifact(
+            db,
+            source_job,
+            user.id,
+            request.audio_export_job_id,
+            "audio_selection",
+            "selection_audio",
+        )
+        audio_indices = sorted(int(index) for index in audio_export.options.get("part_indices", []))
+        if audio_indices != sorted(canonical_indices):
+            raise HTTPException(
+                status_code=422,
+                detail="La piste de sous-titres ne correspond pas à l'audio de cette vidéo.",
+            )
+        track = next(
+            (
+                item
+                for item in analysis_payload.get("subtitle_tracks", [])
+                if isinstance(item, dict)
+                and item.get("id") == request.subtitle_track_id
+                and item.get("audio_export_job_id") == audio_export.id
+            ),
+            None,
+        )
+        if track is None:
+            raise HTTPException(status_code=404, detail="Piste de sous-titres introuvable.")
+        subtitle_payload = {
+            "language": track.get("language") or source_job.language or "fr",
+            "font": track.get("font") or "sans",
+            "color": track.get("color") or "#ffffff",
+            "cues": track.get("cues") or [],
+        }
+        if not subtitle_payload["cues"]:
+            raise HTTPException(status_code=422, detail="Cette piste ne contient aucun sous-titre.")
+        subtitle_track_id = request.subtitle_track_id
+        audio_export_job_id = audio_export.id
     signature = {
         "source_job_id": source_job.id,
         "analysis_checksum": request.checksum_sha256,
@@ -1174,6 +1288,8 @@ def create_video_export(
         "output_format": request.output_format,
         "values": values,
         "include_subtitles": request.include_subtitles,
+        "audio_export_job_id": audio_export_job_id,
+        "subtitle_track_id": subtitle_track_id,
     }
     previous = [
         job

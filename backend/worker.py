@@ -254,7 +254,20 @@ class Worker:
             if sha256_file(analysis_path) != checksum:
                 raise ValueError("Source analysis changed before proofreading")
             payload = json.loads(analysis_path.read_text(encoding="utf-8"))
-            subtitles = payload.get("subtitles") or {"language": job.language, "cues": payload.get("segments", [])}
+            track_id = str(job.options.get("subtitle_track_id", ""))
+            audio_export_job_id = str(job.options.get("audio_export_job_id", ""))
+            subtitles = next(
+                (
+                    item
+                    for item in payload.get("subtitle_tracks", [])
+                    if isinstance(item, dict)
+                    and item.get("id") == track_id
+                    and item.get("audio_export_job_id") == audio_export_job_id
+                ),
+                None,
+            )
+            if subtitles is None:
+                raise ValueError("Subtitle track no longer exists")
             cues = subtitles.get("cues", [])
             if not isinstance(cues, list) or not cues:
                 raise ValueError("No subtitles to proofread")

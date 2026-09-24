@@ -304,11 +304,26 @@ function subtitleCuesForAudio(
   return result;
 }
 
+function subtitleSourceForAudio(
+  subtitles: JobAnalysis["subtitles"],
+  ranges: [number, number][],
+): JobAnalysis["subtitles"] {
+  return {
+    ...subtitles,
+    cues: subtitles.cues.filter((cue) => ranges.some(
+      ([rangeStart, rangeEnd]) => cue.end > rangeStart && cue.start < rangeEnd,
+    )),
+  };
+}
+
 function CourseEditor({ job }: { job: Job }) {
   const [returningToCourse] = useState(() => window.sessionStorage.getItem(`dars-course-visited:${job.id}`) === "1");
   const [activeLab, setActiveLab] = useState<StudioLab>("audio-creation");
   const [analysis, setAnalysis] = useState<JobAnalysis | null>(null);
   const [subtitleDraft, setSubtitleDraft] = useState<JobAnalysis["subtitles"] | null>(null);
+  const [subtitleTrackName, setSubtitleTrackName] = useState("");
+  const [selectedSubtitleTrackId, setSelectedSubtitleTrackId] = useState<string | null>(null);
+  const [selectedVideoSubtitleTrackId, setSelectedVideoSubtitleTrackId] = useState("");
   const [subtitleDirty, setSubtitleDirty] = useState(false);
   const [subtitleSaving, setSubtitleSaving] = useState(false);
   const [proofreadJob, setProofreadJob] = useState<Job | null>(null);
@@ -337,6 +352,7 @@ function CourseEditor({ job }: { job: Job }) {
   const [videoValues, setVideoValues] = useState({ title: "", speaker: "", date: "", episode: "" });
   const [renderingVideo, setRenderingVideo] = useState(false);
   const [archiving, setArchiving] = useState(false);
+  const selectedAudio = exportJob?.state === "completed" ? exportJob : null;
 
   useEffect(() => { window.sessionStorage.setItem(`dars-course-visited:${job.id}`, "1"); }, [job.id]);
 
@@ -347,8 +363,6 @@ function CourseEditor({ job }: { job: Job }) {
     return api.jobAnalysis(job.id)
       .then((value) => {
         setAnalysis(value);
-        setSubtitleDraft(value.subtitles);
-        setSubtitleDirty(false);
         setParts(analysisDrafts(value));
         setSelectedParts((current) => current.length ? current : value.parts.map((part) => part.index));
         setDirty(false);
@@ -364,8 +378,6 @@ function CourseEditor({ job }: { job: Job }) {
       .then((value) => {
         if (!active) return;
         setAnalysis(value);
-        setSubtitleDraft(value.subtitles);
-        setSubtitleDirty(false);
         setParts(analysisDrafts(value));
         setSelectedParts((current) => current.length ? current : value.parts.map((part) => part.index));
         setDirty(false);
@@ -404,6 +416,44 @@ function CourseEditor({ job }: { job: Job }) {
       .finally(() => { if (active) setExportLoading(false); });
     return () => { active = false; };
   }, [job.id, job.project_id]);
+
+  useEffect(() => {
+    if (!analysis || !selectedAudio || subtitleDirty) return;
+    const tracks = (analysis.subtitle_tracks || []).filter(
+      (track) => track.audio_export_job_id === selectedAudio.id,
+    );
+    const selected = tracks.find((track) => track.id === selectedSubtitleTrackId) || tracks[0];
+    if (selected) {
+      setSelectedSubtitleTrackId(selected.id);
+      setSubtitleTrackName(selected.name);
+      setSubtitleDraft({
+        language: selected.language,
+        font: selected.font,
+        color: selected.color,
+        cues: selected.cues,
+      });
+      return;
+    }
+    setSelectedSubtitleTrackId(null);
+    setSubtitleTrackName(`Sous-titres ${analysis.subtitles.language.toUpperCase()}`);
+    setSubtitleDraft(subtitleSourceForAudio(
+      analysis.subtitles,
+      selectedAudio.content?.ranges || [],
+    ));
+  }, [analysis?.checksum_sha256, selectedAudio?.id]);
+
+  useEffect(() => {
+    if (!analysis || !selectedAudio) return;
+    const tracks = (analysis.subtitle_tracks || []).filter(
+      (track) => track.audio_export_job_id === selectedAudio.id,
+    );
+    if (!tracks.some((track) => track.id === selectedVideoSubtitleTrackId)) {
+      setSelectedVideoSubtitleTrackId(
+        tracks.find((track) => track.id === selectedSubtitleTrackId)?.id || tracks[0]?.id || "",
+      );
+      if (!tracks.length) setIncludeSubtitles(false);
+    }
+  }, [analysis?.checksum_sha256, selectedAudio?.id, selectedSubtitleTrackId]);
 
   useEffect(() => {
     function checkRecovery() {
@@ -533,7 +583,6 @@ function CourseEditor({ job }: { job: Job }) {
     try {
       const updated = await api.updateJobAnalysis(job.id, analysis.checksum_sha256, parsed);
       setAnalysis(updated);
-      setSubtitleDraft(updated.subtitles);
       setParts(analysisDrafts(updated));
       setDirty(false);
       setNotice("Corrections enregistrées sans nouvelle transcription ni coût IA.");
@@ -547,16 +596,29 @@ function CourseEditor({ job }: { job: Job }) {
   }
 
   async function saveSubtitles(checksumOverride?: string) {
-    if (!analysis || !subtitleDraft) return false;
+    if (!analysis || !subtitleDraft || !selectedAudio) return false;
+    if (!subtitleTrackName.trim()) {
+      setError("Donnez un nom à cette piste de sous-titres.");
+      return false;
+    }
+    const trackId = selectedSubtitleTrackId || crypto.randomUUID().replaceAll("-", "");
     setSubtitleSaving(true);
     setError("");
     try {
-      const updated = await api.updateSubtitles(job.id, checksumOverride || analysis.checksum_sha256, subtitleDraft);
+      const updated = await api.updateSubtitles(
+        job.id,
+        checksumOverride || analysis.checksum_sha256,
+        trackId,
+        selectedAudio.id,
+        subtitleTrackName.trim(),
+        subtitleDraft,
+      );
       setAnalysis(updated);
-      setSubtitleDraft(updated.subtitles);
+      setSelectedSubtitleTrackId(trackId);
+      setSelectedVideoSubtitleTrackId(trackId);
       setSubtitleDirty(false);
-      setNotice("Sous-titres enregistrés sur le serveur.");
-      return updated;
+      setNotice("Piste de sous-titres enregistrée sur le serveur.");
+      return { analysis: updated, trackId };
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Enregistrement des sous-titres impossible.");
       return false;
@@ -575,13 +637,20 @@ function CourseEditor({ job }: { job: Job }) {
 
   async function proofreadSubtitles() {
     if (!analysis || !exportJob || exportJob.state !== "completed") return;
-    const saved = subtitleDirty ? await saveSubtitles() : analysis;
+    const saved = subtitleDirty || !selectedSubtitleTrackId
+      ? await saveSubtitles()
+      : { analysis, trackId: selectedSubtitleTrackId };
     if (!saved) return;
     setError("");
     try {
       const quote = await api.subtitleProofreadQuote(job.id, exportJob.id);
       if (!window.confirm(`Corriger l’orthographe et la grammaire avec ${quote.model} pour environ ${Number(quote.amount).toFixed(4)} ${quote.currency} ?`)) return;
-      setProofreadJob(await api.createSubtitleProofread(job.id, saved.checksum_sha256, exportJob.id));
+      setProofreadJob(await api.createSubtitleProofread(
+        job.id,
+        saved.analysis.checksum_sha256,
+        exportJob.id,
+        saved.trackId,
+      ));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Correction impossible."); }
   }
 
@@ -614,6 +683,56 @@ function CourseEditor({ job }: { job: Job }) {
       : [...current, index]);
   }
 
+  async function selectAudio(item: Job) {
+    if (subtitleDirty && !(await saveSubtitles())) return;
+    setExportJob(item);
+    setSelectedParts(item.content?.part_indices || []);
+    setSelectedSubtitleTrackId(null);
+    setSubtitleDirty(false);
+  }
+
+  async function selectSubtitleTrack(trackId: string) {
+    if (!analysis) return;
+    let currentAnalysis = analysis;
+    if (subtitleDirty) {
+      const saved = await saveSubtitles();
+      if (!saved) return;
+      currentAnalysis = saved.analysis;
+    }
+    const track = (currentAnalysis.subtitle_tracks || []).find((item) => item.id === trackId);
+    if (!track) return;
+    setSelectedSubtitleTrackId(track.id);
+    setSubtitleTrackName(track.name);
+    setSubtitleDraft({
+      language: track.language,
+      font: track.font,
+      color: track.color,
+      cues: track.cues,
+    });
+    setSubtitleDirty(false);
+  }
+
+  async function createSubtitleTrack() {
+    if (!analysis || !selectedAudio) return;
+    let currentAnalysis = analysis;
+    if (subtitleDirty) {
+      const saved = await saveSubtitles();
+      if (!saved) return;
+      currentAnalysis = saved.analysis;
+    }
+    const existingCount = (currentAnalysis.subtitle_tracks || []).filter(
+      (track) => track.audio_export_job_id === selectedAudio.id,
+    ).length;
+    setSelectedSubtitleTrackId(null);
+    setSubtitleTrackName(`Sous-titres ${currentAnalysis.subtitles.language.toUpperCase()} ${existingCount + 1}`);
+    setSubtitleDraft(subtitleSourceForAudio(
+      currentAnalysis.subtitles,
+      selectedAudio.content?.ranges || [],
+    ));
+    setSubtitleDirty(true);
+    setNotice("Nouvelle piste prête à être personnalisée.");
+  }
+
   async function createExport() {
     if (!analysis || selectedParts.length === 0) return;
     if (dirty) {
@@ -635,7 +754,7 @@ function CourseEditor({ job }: { job: Job }) {
   }
 
   async function createVideo() {
-    if (!analysis || !selectedTemplate || selectedParts.length === 0) return;
+    if (!analysis || !selectedTemplate || selectedParts.length === 0 || !selectedAudio) return;
     if (dirty || (includeSubtitles && subtitleDirty)) {
       setError("Enregistrez d’abord vos corrections avant de générer la vidéo.");
       return;
@@ -653,6 +772,8 @@ function CourseEditor({ job }: { job: Job }) {
         videoValues,
         visualMode === "ai" ? imageJob?.id : undefined,
         includeSubtitles,
+        selectedAudio.id,
+        includeSubtitles ? selectedVideoSubtitleTrackId : undefined,
       ));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Création de la vidéo impossible.");
@@ -730,11 +851,19 @@ function CourseEditor({ job }: { job: Job }) {
   const proofreadBusy = Boolean(proofreadJob && !terminalStates.has(proofreadJob.state));
   const reanalysisProgress = Math.round(Math.max(0, Math.min(1, reanalysisJob?.progress ?? 0)) * 100);
   const audioReady = Boolean(analysis && job.artifacts.includes("audio"));
-  const selectedAudio = exportJob?.state === "completed" ? exportJob : null;
   const subtitleRanges = selectedAudio?.content?.ranges || [];
   const scopedSubtitleCues = subtitleDraft
     ? subtitleCuesForAudio(subtitleDraft, subtitleRanges)
     : [];
+  const subtitleTracks = (analysis?.subtitle_tracks || []).filter(
+    (track) => track.audio_export_job_id === selectedAudio?.id,
+  );
+  const selectedVideoSubtitleTrack = subtitleTracks.find(
+    (track) => track.id === selectedVideoSubtitleTrackId,
+  ) || null;
+  const selectedVideoSubtitleCount = selectedVideoSubtitleTrack
+    ? subtitleCuesForAudio(selectedVideoSubtitleTrack, subtitleRanges).length
+    : 0;
   const effectiveVideoTitle = videoValues.title.trim() || exportJob?.content?.title || analysis?.parts[0]?.title || "Cours audio";
   const imageReady = Boolean(
     imageJob?.state === "completed"
@@ -841,7 +970,7 @@ function CourseEditor({ job }: { job: Job }) {
                   <div>
                     {audioExports.filter((item) => item.state === "completed").map((item) => (
                       <article className={exportJob?.id === item.id ? "selected" : ""} key={item.id}>
-                        <button onClick={() => { setExportJob(item); setSelectedParts(item.content?.part_indices || []); }} type="button">
+                        <button onClick={() => void selectAudio(item)} type="button">
                           <span>♪</span><strong>{item.content?.title || "Extrait audio"}</strong><small>{formatDuration(item.metrics.duration_seconds)}</small>
                         </button>
                         <audio controls preload="metadata" src={api.artifactUrl(item.id, "selection_audio")} />
@@ -874,10 +1003,15 @@ function CourseEditor({ job }: { job: Job }) {
 
           {activeLab === "subtitles" && subtitleDraft && (
             <section className="studio-lab-panel subtitle-lab" role="tabpanel">
-              <header className="editor-heading"><div><span className="eyebrow">Sous-titres · optionnels</span><h2>Préparer le texte affiché dans la vidéo</h2><p>Seuls les sous-titres de l’audio choisi sont affichés. Leur chronologie commence à 0:00 et correspond exactement à l’extrait.</p></div><div className="project-header-actions"><button className="button secondary compact" disabled={!selectedAudio || Boolean(proofreadJob && !terminalStates.has(proofreadJob.state)) || subtitleSaving} onClick={proofreadSubtitles}>{proofreadJob && !terminalStates.has(proofreadJob.state) ? "Correction en cours…" : "Corriger / traduire avec l’IA"}</button><button className="button primary compact" disabled={!subtitleDirty || subtitleSaving} onClick={() => void saveSubtitles()}>{subtitleSaving ? "Enregistrement…" : "Enregistrer les sous-titres"}</button></div></header>
+              <header className="editor-heading"><div><span className="eyebrow">Sous-titres · optionnels</span><h2>Préparer le texte affiché dans la vidéo</h2><p>Créez et conservez plusieurs pistes pour un même audio. Leur chronologie commence à 0:00 et correspond exactement à l’extrait.</p></div><div className="project-header-actions"><button className="button secondary compact" disabled={!selectedAudio || proofreadBusy || subtitleSaving} onClick={proofreadSubtitles}>{proofreadBusy ? "Correction en cours…" : "Corriger / traduire avec l’IA"}</button><button className="button primary compact" disabled={!subtitleDirty || subtitleSaving} onClick={() => void saveSubtitles()}>{subtitleSaving ? "Enregistrement…" : "Enregistrer cette piste"}</button></div></header>
               {proofreadJob && <p className="editor-feedback">{proofreadJob.error || proofreadJob.message}</p>}
               {selectedAudio && <div className="adjustment-source"><div><span>Audio sélectionné</span><strong>{selectedAudio.content?.title || "Extrait audio"}</strong><small>{scopedSubtitleCues.length} sous-titre{scopedSubtitleCues.length > 1 ? "s" : ""} · {formatDuration(selectedAudio.metrics.duration_seconds)}</small></div><audio controls preload="metadata" src={api.artifactUrl(selectedAudio.id, "selection_audio")} /></div>}
+              <section className="subtitle-track-library">
+                <header><div><span className="eyebrow">Pistes sauvegardées</span><h3>Versions disponibles pour cet audio</h3></div><button className="button secondary compact" disabled={proofreadBusy || subtitleSaving} onClick={() => void createSubtitleTrack()} type="button">＋ Nouvelle piste</button></header>
+                {subtitleTracks.length ? <div>{subtitleTracks.map((track) => <button className={selectedSubtitleTrackId === track.id ? "active" : ""} disabled={proofreadBusy || subtitleSaving} key={track.id} onClick={() => void selectSubtitleTrack(track.id)} type="button"><strong>{track.name}</strong><small>{track.language.toUpperCase()} · {track.cues.length} sous-titre{track.cues.length > 1 ? "s" : ""}</small></button>)}</div> : <p>Aucune piste n’est encore enregistrée. Personnalisez la piste proposée puis sauvegardez-la.</p>}
+              </section>
               <div className="subtitle-options">
+                <label className="subtitle-name">Nom de la piste<input maxLength={180} onChange={(event) => { setSubtitleTrackName(event.target.value); setSubtitleDirty(true); }} placeholder="Ex. Français corrigé" value={subtitleTrackName} /></label>
                 <label>Langue<input maxLength={20} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, language: event.target.value }); setSubtitleDirty(true); }} value={subtitleDraft.language} /></label>
                 <label>Police<select onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, font: event.target.value as JobAnalysis["subtitles"]["font"] }); setSubtitleDirty(true); }} value={subtitleDraft.font}><option value="sans">Sans serif</option><option value="serif">Serif</option><option value="mono">Monospace</option></select></label>
                 <label>Couleur<input onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, color: event.target.value }); setSubtitleDirty(true); }} type="color" value={subtitleDraft.color} /></label>
@@ -946,12 +1080,15 @@ function CourseEditor({ job }: { job: Job }) {
 
               <section className="video-composer">
                 <div><span className="eyebrow">Dernière étape</span><strong>{visualReady ? "Le visuel et l’audio sont prêts" : visualMode === "ai" ? "Générez et validez d’abord l’image" : "Choisissez ou importez une image prête"}</strong></div>
-                <label className={`subtitle-switch ${includeSubtitles ? "active" : ""}`}>
-                  <input checked={includeSubtitles} disabled={scopedSubtitleCues.length === 0} onChange={(event) => setIncludeSubtitles(event.target.checked)} type="checkbox" />
-                  <span aria-hidden="true" className="subtitle-switch-track"><i /></span>
-                  <span className="subtitle-switch-copy"><strong>Incruster les sous-titres</strong><small>{scopedSubtitleCues.length === 0 ? "Préparez d’abord les sous-titres de cet audio" : includeSubtitles ? `${scopedSubtitleCues.length} sous-titres seront ajoutés` : "Vidéo sans sous-titres"}{subtitleDirty && " · modifications à enregistrer"}</small></span>
-                </label>
-                <button className="button accent" disabled={!visualReady || dirty || (includeSubtitles && (subtitleDirty || proofreadBusy)) || renderingVideo || videoBusy || imageBusy} onClick={createVideo} type="button">{renderingVideo ? "Préparation…" : videoBusy ? "Rendu en cours…" : "Créer la vidéo"}</button>
+                <div className="video-subtitle-choice">
+                  <label className={`subtitle-switch ${includeSubtitles ? "active" : ""}`}>
+                    <input checked={includeSubtitles} disabled={subtitleTracks.length === 0} onChange={(event) => setIncludeSubtitles(event.target.checked)} type="checkbox" />
+                    <span aria-hidden="true" className="subtitle-switch-track"><i /></span>
+                    <span className="subtitle-switch-copy"><strong>Incruster les sous-titres</strong><small>{subtitleTracks.length === 0 ? "Préparez d’abord une piste pour cet audio" : includeSubtitles ? `${selectedVideoSubtitleCount} sous-titres seront ajoutés` : "Vidéo sans sous-titres"}</small></span>
+                  </label>
+                  {includeSubtitles && subtitleTracks.length > 0 && <label className="video-subtitle-select">Piste à utiliser<select onChange={(event) => setSelectedVideoSubtitleTrackId(event.target.value)} value={selectedVideoSubtitleTrackId}>{subtitleTracks.map((track) => <option key={track.id} value={track.id}>{track.name} · {track.language.toUpperCase()}</option>)}</select></label>}
+                </div>
+                <button className="button accent" disabled={!visualReady || dirty || (includeSubtitles && (subtitleDirty || proofreadBusy || !selectedVideoSubtitleTrack)) || renderingVideo || videoBusy || imageBusy} onClick={createVideo} type="button">{renderingVideo ? "Préparation…" : videoBusy ? "Rendu en cours…" : "Créer la vidéo"}</button>
               </section>
               {videoJob && (
                 <div className={`video-render-status ${videoJob.state}`}>

@@ -168,6 +168,18 @@ export type CoursePart = {
   transcript: string;
 };
 
+export type SubtitleTrack = {
+  id: string;
+  audio_export_job_id: string;
+  name: string;
+  language: string;
+  font: "sans" | "serif" | "mono";
+  color: string;
+  cues: AnalysisSegment[];
+  created_at: string;
+  updated_at: string;
+};
+
 export type JobAnalysis = {
   schema: number;
   audio_name: string;
@@ -175,6 +187,7 @@ export type JobAnalysis = {
   checksum_sha256: string;
   segments: AnalysisSegment[];
   parts: CoursePart[];
+  subtitle_tracks: SubtitleTrack[];
   subtitles: {
     language: string;
     font: "sans" | "serif" | "mono";
@@ -535,13 +548,26 @@ export const api = {
     method: "PUT",
     body: JSON.stringify({ checksum_sha256: checksumSha256, parts }),
   }),
-  updateSubtitles: (jobId: string, checksumSha256: string, subtitles: JobAnalysis["subtitles"]) =>
+  updateSubtitles: (
+    jobId: string,
+    checksumSha256: string,
+    trackId: string,
+    audioExportJobId: string,
+    name: string,
+    subtitles: JobAnalysis["subtitles"],
+  ) =>
     request<JobAnalysis>(`/api/jobs/${jobId}/analysis/subtitles`, {
       method: "PUT",
-      body: JSON.stringify({ checksum_sha256: checksumSha256, ...subtitles }),
+      body: JSON.stringify({
+        checksum_sha256: checksumSha256,
+        track_id: trackId,
+        audio_export_job_id: audioExportJobId,
+        name,
+        ...subtitles,
+      }),
     }),
   subtitleProofreadQuote: (jobId: string, audioExportJobId: string) => request<{ model: string; amount: string; currency: string }>(`/api/jobs/${jobId}/analysis/subtitles/proofread-quote?audio_export_job_id=${encodeURIComponent(audioExportJobId)}`),
-  createSubtitleProofread: (jobId: string, checksumSha256: string, audioExportJobId: string) => request<Job>(`/api/jobs/${jobId}/analysis/subtitles/proofread`, { method: "POST", body: JSON.stringify({ checksum_sha256: checksumSha256, audio_export_job_id: audioExportJobId, cost_confirmed: true }) }),
+  createSubtitleProofread: (jobId: string, checksumSha256: string, audioExportJobId: string, subtitleTrackId: string) => request<Job>(`/api/jobs/${jobId}/analysis/subtitles/proofread`, { method: "POST", body: JSON.stringify({ checksum_sha256: checksumSha256, audio_export_job_id: audioExportJobId, subtitle_track_id: subtitleTrackId, cost_confirmed: true }) }),
   subtitleSuggestions: (jobId: string, childId: string) => request<{ analysis_checksum: string; cues: AnalysisSegment[] }>(`/api/jobs/${jobId}/analysis/subtitles/proofread/${childId}`),
   semanticReanalysisQuote: (jobId: string) =>
     request<SemanticReanalysisQuote>(`/api/jobs/${jobId}/analysis/reanalysis-quote`),
@@ -651,6 +677,8 @@ export const api = {
     values: { title: string; speaker: string; date: string; episode: string },
     imageJobId?: string,
     includeSubtitles = false,
+    audioExportJobId?: string,
+    subtitleTrackId?: string,
   ) => request<Job>(`/api/jobs/${jobId}/exports/video`, {
     method: "POST",
     body: JSON.stringify({
@@ -661,6 +689,8 @@ export const api = {
       output_format: outputFormat,
       image_job_id: imageJobId || null,
       include_subtitles: includeSubtitles,
+      audio_export_job_id: audioExportJobId || null,
+      subtitle_track_id: subtitleTrackId || null,
       ...values,
     }),
   }),
