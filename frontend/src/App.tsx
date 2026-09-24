@@ -349,6 +349,78 @@ function parseSubtitleFile(content: string): AnalysisSegment[] {
   return cues.sort((left, right) => left.start - right.start);
 }
 
+function plainTextSubtitleBlocks(content: string): string[] {
+  const paragraphs = content.replace(/^\uFEFF/, "").replace(/\r/g, "").split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const sentences = paragraphs.flatMap((paragraph) => (
+    paragraph.match(/[^.!?…؟]+[.!?…؟]?/gu)?.map((sentence) => sentence.trim()).filter(Boolean)
+    || [paragraph]
+  ));
+  return sentences.flatMap((sentence) => {
+    if (sentence.length <= 110) return [sentence];
+    const words = sentence.split(/\s+/);
+    const chunks: string[] = [];
+    let current = "";
+    for (const word of words) {
+      const candidate = `${current} ${word}`.trim();
+      if (current && candidate.length > 110) {
+        chunks.push(current);
+        current = word;
+      } else {
+        current = candidate;
+      }
+    }
+    if (current) chunks.push(current);
+    return chunks;
+  });
+}
+
+function timePlainTextSubtitles(
+  blocks: string[],
+  referenceCues: AnalysisSegment[],
+): AnalysisSegment[] {
+  const reference = referenceCues.filter((cue) => cue.end > cue.start);
+  if (!blocks.length || !reference.length) return [];
+  const referenceWeights = reference.map((cue) => Math.max(1, cue.text.trim().split(/\s+/).length));
+  const totalReferenceWeight = referenceWeights.reduce((total, weight) => total + weight, 0);
+  const blockWeights = blocks.map((block) => Math.max(1, block.trim().split(/\s+/).length));
+  const totalBlockWeight = blockWeights.reduce((total, weight) => total + weight, 0);
+
+  function timeAt(fraction: number) {
+    if (fraction <= 0) return reference[0].start;
+    if (fraction >= 1) return reference[reference.length - 1].end;
+    const target = fraction * totalReferenceWeight;
+    let consumed = 0;
+    for (let index = 0; index < reference.length; index += 1) {
+      const next = consumed + referenceWeights[index];
+      if (target <= next) {
+        const local = (target - consumed) / referenceWeights[index];
+        return reference[index].start + local * (reference[index].end - reference[index].start);
+      }
+      consumed = next;
+    }
+    return reference[reference.length - 1].end;
+  }
+
+  let consumedBlocks = 0;
+  return blocks.map((text, index) => {
+    const start = timeAt(consumedBlocks / totalBlockWeight);
+    consumedBlocks += blockWeights[index];
+    const end = timeAt(consumedBlocks / totalBlockWeight);
+    return { start, end, text };
+  }).filter((cue) => cue.end > cue.start);
+}
+
+function subtitleFileTimestamp(seconds: number, separator: "," | ".") {
+  const milliseconds = Math.max(0, Math.round(seconds * 1000));
+  const hours = Math.floor(milliseconds / 3_600_000);
+  const minutes = Math.floor((milliseconds % 3_600_000) / 60_000);
+  const secs = Math.floor((milliseconds % 60_000) / 1000);
+  const millis = milliseconds % 1000;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}${separator}${String(millis).padStart(3, "0")}`;
+}
+
 function subtitleTimelineToSource(
   cues: AnalysisSegment[],
   ranges: [number, number][],
@@ -816,9 +888,21 @@ function CourseEditor({ job }: { job: Job }) {
       return;
     }
     try {
-      const parsed = parseSubtitleFile(await file.text());
+      const content = await file.text();
+      const plainText = file.name.toLowerCase().endsWith(".txt");
+      const parsed = plainText
+        ? timePlainTextSubtitles(
+          plainTextSubtitleBlocks(content),
+          subtitleCuesForAudio(
+            currentAnalysis.subtitles,
+            selectedAudio.content?.ranges || [],
+          ),
+        )
+        : parseSubtitleFile(content);
       if (!parsed.length) {
-        setError("Aucun sous-titre horodaté n’a été trouvé dans ce fichier SRT ou VTT.");
+        setError(plainText
+          ? "Le texte n’a pas pu être réparti sur la transcription de cet audio."
+          : "Aucun sous-titre horodaté n’a été trouvé dans ce fichier SRT ou VTT.");
         return;
       }
       const cues = subtitleTimelineToSource(
@@ -832,14 +916,33 @@ function CourseEditor({ job }: { job: Job }) {
       }
       const base = subtitleDraft || currentAnalysis.subtitles;
       setSelectedSubtitleTrackId(null);
-      setSubtitleTrackName(file.name.replace(/\.(srt|vtt)$/i, "") || "Sous-titres importés");
+      setSubtitleTrackName(file.name.replace(/\.(srt|vtt|txt)$/i, "") || "Sous-titres importés");
       setSubtitleDraft({ ...base, cues });
       setSubtitleDirty(true);
       setError("");
-      setNotice(`${cues.length} sous-titre${cues.length > 1 ? "s" : ""} importé${cues.length > 1 ? "s" : ""} et synchronisé${cues.length > 1 ? "s" : ""} sur cet audio.`);
+      setNotice(`${cues.length} sous-titre${cues.length > 1 ? "s" : ""} importé${cues.length > 1 ? "s" : ""} et synchronisé${cues.length > 1 ? "s" : ""} sur cet audio.${plainText ? " Vérifiez la synchronisation proposée avant l’enregistrement." : ""}`);
     } catch {
       setError("Lecture du fichier de sous-titres impossible.");
     }
+  }
+
+  function downloadSubtitleTrack(format: "srt" | "vtt") {
+    if (!scopedSubtitleCues.length) return;
+    const separator = format === "srt" ? "," : ".";
+    const blocks = scopedSubtitleCues.map((cue, index) => [
+      format === "srt" ? String(index + 1) : "",
+      `${subtitleFileTimestamp(cue.start, separator)} --> ${subtitleFileTimestamp(cue.end, separator)}`,
+      cue.text,
+    ].filter(Boolean).join("\n"));
+    const content = `${format === "vtt" ? "WEBVTT\n\n" : ""}${blocks.join("\n\n")}\n`;
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(new Blob([content], { type: format === "vtt" ? "text/vtt" : "application/x-subrip" }));
+    link.href = url;
+    link.download = `${(subtitleTrackName.trim() || "sous-titres").replace(/[^a-zA-Z0-9À-ÿ_-]+/g, "-")}.${format}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
   async function createExport() {
@@ -1120,9 +1223,9 @@ function CourseEditor({ job }: { job: Job }) {
                 {subtitleTracks.length ? <div>{subtitleTracks.map((track) => <button className={selectedSubtitleTrackId === track.id ? "active" : ""} disabled={proofreadBusy || subtitleSaving} key={track.id} onClick={() => void selectSubtitleTrack(track.id)} type="button"><strong>{track.name}</strong><small>{track.language.toUpperCase()} · {track.cues.length} sous-titre{track.cues.length > 1 ? "s" : ""}</small></button>)}</div> : <p>Aucune piste n’est encore enregistrée. Personnalisez la piste proposée puis sauvegardez-la.</p>}
               </section>
               <section className="subtitle-import-panel">
-                <div><span className="eyebrow">Sous-titres existants</span><h3>Importer un fichier SRT ou VTT</h3><p>Les timecodes sont synchronisés sur la chronologie de l’audio choisi. Utilisez un décalage positif si le texte arrive trop tôt, négatif s’il arrive trop tard.</p></div>
+                <div><span className="eyebrow">Sous-titres existants</span><h3>Importer un fichier TXT, SRT ou VTT</h3><p>Un TXT est automatiquement découpé et horodaté depuis la transcription de l’audio. Les timecodes d’un SRT/VTT sont conservés. Utilisez ensuite le décalage pour affiner la synchronisation.</p></div>
                 <label>Décalage en secondes<input inputMode="decimal" onChange={(event) => setSubtitleImportOffset(event.target.value)} step="0.1" type="number" value={subtitleImportOffset} /></label>
-                <label className="button secondary compact subtitle-import-button">Importer le fichier<input accept=".srt,.vtt,text/vtt,application/x-subrip" disabled={proofreadBusy || subtitleSaving} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void importSubtitleTrack(file); }} type="file" /></label>
+                <label className="button secondary compact subtitle-import-button">Importer le fichier<input accept=".txt,.srt,.vtt,text/plain,text/vtt,application/x-subrip" disabled={proofreadBusy || subtitleSaving} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void importSubtitleTrack(file); }} type="file" /></label>
               </section>
               <div className="subtitle-options">
                 <label className="subtitle-name">Nom de la piste<input maxLength={180} onChange={(event) => { setSubtitleTrackName(event.target.value); setSubtitleDirty(true); }} placeholder="Ex. Français corrigé" value={subtitleTrackName} /></label>
@@ -1132,7 +1235,7 @@ function CourseEditor({ job }: { job: Job }) {
                 <label>Couleur des caractères<input onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, color: event.target.value }); setSubtitleDirty(true); }} type="color" value={subtitleDraft.color} /></label>
                 <label>Position de la barre<select onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, position: event.target.value as JobAnalysis["subtitles"]["position"] }); setSubtitleDirty(true); }} value={subtitleDraft.position}><option value="top">En haut</option><option value="center">Au centre</option><option value="bottom">En bas</option></select></label>
               </div>
-              <p className="subtitle-layout-note">Le texte est automatiquement ajusté pour rester entièrement visible sur deux lignes maximum.</p>
+              <div className="subtitle-layout-row"><p className="subtitle-layout-note">Le texte est automatiquement ajusté pour rester entièrement visible sur deux lignes maximum.</p><div><button className="button secondary compact" disabled={!scopedSubtitleCues.length} onClick={() => downloadSubtitleTrack("srt")} type="button">Télécharger SRT</button><button className="button secondary compact" disabled={!scopedSubtitleCues.length} onClick={() => downloadSubtitleTrack("vtt")} type="button">Télécharger VTT</button></div></div>
               <div className="subtitle-cues">{scopedSubtitleCues.map((cue) => <label key={`${cue.sourceIndex}-${cue.start}`}><span>{formatDuration(cue.start)} → {formatDuration(cue.end)}</span><textarea rows={2} value={cue.text} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, cues: subtitleDraft.cues.map((item, position) => position === cue.sourceIndex ? { ...item, text: event.target.value } : item) }); setSubtitleDirty(true); }} /></label>)}</div>
               <div className="lab-next-actions"><button className="button secondary" onClick={() => void changeLab("audio-creation")}>Retour à Création Audio</button><button className="button accent" onClick={() => void changeLab("video-creation")}>Passer à Création Vidéo</button></div>
             </section>

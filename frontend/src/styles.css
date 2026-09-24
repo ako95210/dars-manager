@@ -742,12 +742,14 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .subtitle-cues label { display: grid; grid-template-columns: 8rem 1fr; align-items: start; gap: .75rem; }
 .subtitle-cues label span { color: #52627a; font-size: .85rem; padding-top: .7rem; }
 .subtitle-cues textarea { width: 100%; resize: vertical; }
-.subtitle-layout-note { margin: -.5rem 0 1rem; color: #64748b; font-size: .82rem; }
+.subtitle-layout-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin: -.5rem 0 1rem; }
+.subtitle-layout-row > div { display: flex; flex-wrap: wrap; gap: .5rem; }
+.subtitle-layout-note { margin: 0; color: #64748b; font-size: .82rem; }
 .video-subtitle-choice { display: grid; gap: .65rem; min-width: min(100%, 290px); }
 .video-subtitle-select { display: grid; gap: .35rem; color: #52627a; font-size: .78rem; font-weight: 700; }
 .video-subtitle-select select { width: 100%; border: 1px solid #cbd5e1; border-radius: .6rem; padding: .6rem .7rem; background: #fff; color: #14233b; }
 .recovery-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 1rem; background: rgba(12, 24, 42, .55); }
 .recovery-card { width: min(100%, 34rem); border-radius: 1rem; padding: 2rem; background: #fff; box-shadow: 0 24px 70px rgba(0, 0, 0, .22); }
 .recovery-card div { display: flex; gap: .75rem; flex-wrap: wrap; margin-top: 1.5rem; }
-@media (max-width: 800px) { .subtitle-import-panel { grid-template-columns: 1fr; align-items: stretch; } }
+@media (max-width: 800px) { .subtitle-import-panel { grid-template-columns: 1fr; align-items: stretch; } .subtitle-layout-row { align-items: stretch; flex-direction: column; } }
 @media (max-width: 600px) { .subtitle-cues label { grid-template-columns: 1fr; gap: 0; } .subtitle-track-library > header { align-items: stretch; flex-direction: column; } }
