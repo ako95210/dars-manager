@@ -112,6 +112,9 @@ class VideoExportRequest(AudioExportRequest):
     include_subtitles: bool = False
     audio_export_job_id: str | None = Field(default=None, min_length=32, max_length=32)
     subtitle_track_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    subtitle_font_size: int | None = Field(default=None, ge=12, le=96)
+    subtitle_color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    subtitle_position: str | None = Field(default=None, pattern=r"^(top|center|bottom)$")
     template_id: str = Field(min_length=32, max_length=32)
     template_version: int = Field(ge=1)
     image_job_id: str | None = Field(default=None, min_length=32, max_length=32)
@@ -1334,9 +1337,9 @@ def create_video_export(
         subtitle_payload = {
             "language": track.get("language") or source_job.language or "fr",
             "font": track.get("font") or "sans",
-            "font_size": int(track.get("font_size", 32)),
-            "color": track.get("color") or "#ffffff",
-            "position": track.get("position") or "bottom",
+            "font_size": request.subtitle_font_size or int(track.get("font_size", 32)),
+            "color": request.subtitle_color or track.get("color") or "#ffffff",
+            "position": request.subtitle_position or track.get("position") or "bottom",
             "cues": track.get("cues") or [],
         }
         if not subtitle_payload["cues"]:
@@ -1355,6 +1358,14 @@ def create_video_export(
         "include_subtitles": request.include_subtitles,
         "audio_export_job_id": audio_export_job_id,
         "subtitle_track_id": subtitle_track_id,
+        "subtitle_style": (
+            {
+                "font_size": subtitle_payload["font_size"],
+                "color": subtitle_payload["color"],
+                "position": subtitle_payload["position"],
+            }
+            if subtitle_payload else None
+        ),
     }
     previous = [
         job

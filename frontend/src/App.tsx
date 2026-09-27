@@ -270,6 +270,22 @@ type PartDraft = {
 
 type StudioLab = "audio-creation" | "subtitles" | "audio-adjustment" | "video-creation" | "distribution";
 const pageOpenedAt = Date.now() / 1000;
+const subtitleLanguages = [
+  ["fr", "Français"],
+  ["ar", "Arabe"],
+  ["en", "Anglais"],
+  ["es", "Espagnol"],
+  ["de", "Allemand"],
+  ["it", "Italien"],
+  ["pt", "Portugais"],
+  ["tr", "Turc"],
+  ["ur", "Ourdou"],
+  ["fa", "Persan"],
+  ["nl", "Néerlandais"],
+  ["ru", "Russe"],
+  ["hi", "Hindi"],
+  ["zh", "Chinois"],
+] as const;
 
 function analysisDrafts(analysis: JobAnalysis): PartDraft[] {
   return analysis.parts.map((part) => ({
@@ -451,6 +467,11 @@ function CourseEditor({ job }: { job: Job }) {
   const [subtitleTrackName, setSubtitleTrackName] = useState("");
   const [selectedSubtitleTrackId, setSelectedSubtitleTrackId] = useState<string | null>(null);
   const [selectedVideoSubtitleTrackId, setSelectedVideoSubtitleTrackId] = useState("");
+  const [videoSubtitleStyle, setVideoSubtitleStyle] = useState<{
+    font_size: number;
+    color: string;
+    position: "top" | "center" | "bottom";
+  }>({ font_size: 32, color: "#ffffff", position: "bottom" });
   const [subtitleImportOffset, setSubtitleImportOffset] = useState("0");
   const [subtitleDirty, setSubtitleDirty] = useState(false);
   const [subtitleSaving, setSubtitleSaving] = useState(false);
@@ -584,6 +605,19 @@ function CourseEditor({ job }: { job: Job }) {
       if (!tracks.length) setIncludeSubtitles(false);
     }
   }, [analysis?.checksum_sha256, selectedAudio?.id, selectedSubtitleTrackId]);
+
+  useEffect(() => {
+    const track = (analysis?.subtitle_tracks || []).find(
+      (item) => item.id === selectedVideoSubtitleTrackId
+        && item.audio_export_job_id === selectedAudio?.id,
+    );
+    if (!track) return;
+    setVideoSubtitleStyle({
+      font_size: track.font_size || 32,
+      color: track.color || "#ffffff",
+      position: track.position || "bottom",
+    });
+  }, [analysis?.checksum_sha256, selectedAudio?.id, selectedVideoSubtitleTrackId]);
 
   useEffect(() => {
     function checkRecovery() {
@@ -991,6 +1025,7 @@ function CourseEditor({ job }: { job: Job }) {
         includeSubtitles,
         selectedAudio.id,
         includeSubtitles ? selectedVideoSubtitleTrackId : undefined,
+        includeSubtitles ? videoSubtitleStyle : undefined,
       ));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Création de la vidéo impossible.");
@@ -1091,6 +1126,20 @@ function CourseEditor({ job }: { job: Job }) {
     && imageJob.metrics.output_format === videoFormat
   );
   const visualReady = Boolean(selectedTemplate && (visualMode === "ready" || imageReady));
+  const subtitlePreviewImageUrl = visualMode === "ai"
+    ? (imageReady && imageJob ? api.artifactUrl(imageJob.id, "generated_image") : null)
+    : selectedTemplate?.preview_url || null;
+  const subtitlePreviewText = selectedVideoSubtitleTrack
+    ? subtitleCuesForAudio(selectedVideoSubtitleTrack, subtitleRanges)[0]?.text || "Aperçu des sous-titres"
+    : "Aperçu des sous-titres";
+  const subtitlePreviewFont = selectedVideoSubtitleTrack?.font === "serif"
+    ? "Georgia, serif"
+    : selectedVideoSubtitleTrack?.font === "mono"
+      ? "ui-monospace, monospace"
+      : "Arial, sans-serif";
+  const videoSubtitleStyleValid = Number.isFinite(videoSubtitleStyle.font_size)
+    && videoSubtitleStyle.font_size >= 12
+    && videoSubtitleStyle.font_size <= 96;
   const videoReady = Boolean(videoJob?.state === "completed" && videoJob.artifacts.includes("video"));
   const labs: { id: StudioLab; label: string; description: string; unlocked: boolean }[] = [
     { id: "audio-creation", label: "Création Audio", description: "Transcrire, chapitrer et sauvegarder les extraits", unlocked: true },
@@ -1234,7 +1283,7 @@ function CourseEditor({ job }: { job: Job }) {
               </section>
               <div className="subtitle-options">
                 <label className="subtitle-name">Nom de la piste<input maxLength={180} onChange={(event) => { setSubtitleTrackName(event.target.value); setSubtitleDirty(true); }} placeholder="Ex. Français corrigé" value={subtitleTrackName} /></label>
-                <label>Langue<input maxLength={20} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, language: event.target.value }); setSubtitleDirty(true); }} value={subtitleDraft.language} /></label>
+                <label>Langue<select onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, language: event.target.value }); setSubtitleDirty(true); }} value={subtitleDraft.language}>{!subtitleLanguages.some(([code]) => code === subtitleDraft.language) && <option value={subtitleDraft.language}>{subtitleDraft.language.toUpperCase()}</option>}{subtitleLanguages.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select></label>
                 <label>Police<select onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, font: event.target.value as JobAnalysis["subtitles"]["font"] }); setSubtitleDirty(true); }} value={subtitleDraft.font}><option value="sans">Sans serif</option><option value="serif">Serif</option><option value="mono">Monospace</option></select></label>
                 <label>Taille<input max={96} min={12} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, font_size: Number(event.target.value) }); setSubtitleDirty(true); }} step={2} type="number" value={subtitleDraft.font_size} /></label>
                 <label>Couleur des caractères<input onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, color: event.target.value }); setSubtitleDirty(true); }} type="color" value={subtitleDraft.color} /></label>
@@ -1313,8 +1362,22 @@ function CourseEditor({ job }: { job: Job }) {
                   </label>
                   {includeSubtitles && subtitleTracks.length > 0 && <label className="video-subtitle-select">Piste à utiliser<select onChange={(event) => setSelectedVideoSubtitleTrackId(event.target.value)} value={selectedVideoSubtitleTrackId}>{subtitleTracks.map((track) => <option key={track.id} value={track.id}>{track.name} · {track.language.toUpperCase()}</option>)}</select></label>}
                 </div>
-                <button className="button accent" disabled={!visualReady || dirty || (includeSubtitles && (subtitleDirty || proofreadBusy || !selectedVideoSubtitleTrack)) || renderingVideo || videoBusy || imageBusy} onClick={createVideo} type="button">{renderingVideo ? "Préparation…" : videoBusy ? "Rendu en cours…" : "Créer la vidéo"}</button>
+                <button className="button accent" disabled={!visualReady || dirty || (includeSubtitles && (subtitleDirty || proofreadBusy || !selectedVideoSubtitleTrack || !videoSubtitleStyleValid)) || renderingVideo || videoBusy || imageBusy} onClick={createVideo} type="button">{renderingVideo ? "Préparation…" : videoBusy ? "Rendu en cours…" : "Créer la vidéo"}</button>
               </section>
+              {includeSubtitles && selectedVideoSubtitleTrack && (
+                <section className="video-subtitle-editor">
+                  <div className="video-subtitle-settings">
+                    <div><span className="eyebrow">Aperçu avant rendu</span><h3>Placement des sous-titres</h3><p>Ces réglages s’appliquent uniquement à cette vidéo et ne modifient pas la piste sauvegardée.</p></div>
+                    <label>Taille des caractères<input max={96} min={12} onChange={(event) => setVideoSubtitleStyle((current) => ({ ...current, font_size: Number(event.target.value) }))} step={2} type="number" value={videoSubtitleStyle.font_size} /></label>
+                    <label>Couleur<input onChange={(event) => setVideoSubtitleStyle((current) => ({ ...current, color: event.target.value }))} type="color" value={videoSubtitleStyle.color} /></label>
+                    <label>Position de la barre<select onChange={(event) => setVideoSubtitleStyle((current) => ({ ...current, position: event.target.value as JobAnalysis["subtitles"]["position"] }))} value={videoSubtitleStyle.position}><option value="top">En haut</option><option value="center">Au centre</option><option value="bottom">En bas</option></select></label>
+                  </div>
+                  <div className={`video-subtitle-preview preview-${videoFormat.replace(":", "-")}`}>
+                    {subtitlePreviewImageUrl ? <img alt="Aperçu du visuel avec sous-titres" src={subtitlePreviewImageUrl} /> : <div className="video-subtitle-preview-placeholder">Sélectionnez le visuel pour afficher l’aperçu</div>}
+                    {subtitlePreviewImageUrl && <span className={`video-subtitle-overlay ${videoSubtitleStyle.position}`} style={{ color: videoSubtitleStyle.color, fontFamily: subtitlePreviewFont, fontSize: `${Math.max(8, Math.round(videoSubtitleStyle.font_size * 0.5 * Math.min(1, 90 / Math.max(1, subtitlePreviewText.length))))}px` }}>{subtitlePreviewText}</span>}
+                  </div>
+                </section>
+              )}
               {videoJob && (
                 <div className={`video-render-status ${videoJob.state}`}>
                   <div><span className={`job-state ${videoJob.state}`}>{videoJob.state}</span><strong>{videoJob.state === "completed" ? "Vidéo prête à diffuser" : "Rendu vidéo"}</strong><small>{videoJob.error || videoJob.message}</small></div>
