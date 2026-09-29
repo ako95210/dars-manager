@@ -87,10 +87,11 @@ def generate_cover(output_path: Path, title: str, subtitle: str) -> None:
 def render_static_video(cover_path: Path, audio_path: Path, output_path: Path, subtitles: dict | None = None) -> None:
     """Render a lightweight one-frame-per-second H.264/AAC video."""
     duration = audio_duration(audio_path)
-    from .rendering import subtitle_frame
+    from .rendering import prepare_subtitles, subtitle_frame
 
     cover_image = Image.open(cover_path).convert("RGB")
     cover = np.asarray(cover_image)
+    subtitles = prepare_subtitles(subtitles, cover_image.size)
     rate = 5 if subtitles else 1
 
     output = av.open(str(output_path), mode="w", options={"movflags": "+faststart"})

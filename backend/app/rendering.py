@@ -69,6 +69,7 @@ def subtitle_layout(
     width: int,
     height: int,
     font_size: int = 32,
+    shrink_to_fit: bool = True,
 ) -> tuple[str, ImageFont.FreeTypeFont | ImageFont.ImageFont, tuple[int, int, int, int], int]:
     """Fit the complete subtitle in at most two lines without truncating it."""
     max_text_width = max(1, round(width * 0.84))
@@ -115,7 +116,7 @@ def subtitle_layout(
         return layout, fits
 
     preferred, fits = layout_at(preferred_size)
-    if fits:
+    if fits or not shrink_to_fit:
         return preferred
     best, _fits = layout_at(1)
     low, high = 2, preferred_size - 1
@@ -130,6 +131,87 @@ def subtitle_layout(
     return best
 
 
+def subtitle_font_path(font_name: str | None) -> Path:
+    filename = {
+        "sans": "DejaVuSans-Bold.ttf",
+        "serif": "DejaVuSerif.ttf",
+        "mono": "DejaVuSansMono.ttf",
+    }.get(font_name, "DejaVuSans-Bold.ttf")
+    return Path("/usr/share/fonts/truetype/dejavu") / filename
+
+
+def prepare_subtitles(
+    subtitles: dict[str, Any] | None,
+    size: tuple[int, int],
+) -> dict[str, Any] | None:
+    """Split long cues while preserving one fixed font size for the complete video."""
+    if not subtitles:
+        return None
+    width, height = size
+    draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    font_path = subtitle_font_path(str(subtitles.get("font", "sans")))
+    selected_size = int(subtitles.get("font_size", 32))
+    max_width = round(width * 0.84)
+    max_height = round(height * 0.25)
+
+    def fits(text: str) -> bool:
+        _caption, _font, bounds, _spacing = subtitle_layout(
+            draw,
+            text,
+            font_path,
+            width,
+            height,
+            selected_size,
+            shrink_to_fit=False,
+        )
+        return bounds[2] - bounds[0] <= max_width and bounds[3] - bounds[1] <= max_height
+
+    def split_text(text: str) -> list[str]:
+        words = text.split()
+        chunks: list[str] = []
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            if fits(candidate):
+                current = candidate
+                continue
+            if current:
+                chunks.append(current)
+                current = ""
+            if fits(word):
+                current = word
+                continue
+            fragment = ""
+            for character in word:
+                candidate = fragment + character
+                if fragment and not fits(candidate):
+                    chunks.append(fragment)
+                    fragment = character
+                else:
+                    fragment = candidate
+            current = fragment
+        if current:
+            chunks.append(current)
+        return chunks or [text]
+
+    cues: list[dict[str, Any]] = []
+    for cue in subtitles.get("cues", []):
+        start, end = float(cue["start"]), float(cue["end"])
+        text = " ".join(str(cue.get("text", "")).split())
+        if end <= start or not text:
+            continue
+        chunks = split_text(text)
+        total_weight = sum(max(1, len(chunk)) for chunk in chunks)
+        cursor = start
+        consumed = 0
+        for index, chunk in enumerate(chunks):
+            consumed += max(1, len(chunk))
+            chunk_end = end if index == len(chunks) - 1 else start + (end - start) * consumed / total_weight
+            cues.append({"start": cursor, "end": chunk_end, "text": chunk})
+            cursor = chunk_end
+    return {**subtitles, "cues": cues}
+
+
 def subtitle_frame(image: Image.Image, at_seconds: float, subtitles: dict[str, Any] | None) -> Image.Image:
     if not subtitles:
         return image
@@ -139,8 +221,7 @@ def subtitle_frame(image: Image.Image, at_seconds: float, subtitles: dict[str, A
     output = image.copy().convert("RGB")
     draw = ImageDraw.Draw(output)
     width, height = output.size
-    font_name = {"sans": "DejaVuSans-Bold.ttf", "serif": "DejaVuSerif.ttf", "mono": "DejaVuSansMono.ttf"}.get(subtitles.get("font"), "DejaVuSans-Bold.ttf")
-    font_path = Path("/usr/share/fonts/truetype/dejavu") / font_name
+    font_path = subtitle_font_path(str(subtitles.get("font", "sans")))
     caption, selected_font, bounds, spacing = subtitle_layout(
         draw,
         str(cue["text"]),
@@ -148,6 +229,7 @@ def subtitle_frame(image: Image.Image, at_seconds: float, subtitles: dict[str, A
         width,
         height,
         int(subtitles.get("font_size", 32)),
+        shrink_to_fit=False,
     )
     caption_width, caption_height = bounds[2] - bounds[0], bounds[3] - bounds[1]
     padding = max(10, getattr(selected_font, "size", 24) // 3)
@@ -309,6 +391,7 @@ def render_animated_video(
     subtitles: dict[str, Any] | None = None,
 ) -> None:
     size = FORMAT_SIZES[output_format]
+    subtitles = prepare_subtitles(subtitles, size)
     duration = audio_duration(audio_path)
     rate = 5
     output = av.open(str(output_path), mode="w", options={"movflags": "+faststart"})

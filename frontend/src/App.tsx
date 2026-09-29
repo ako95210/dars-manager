@@ -1374,7 +1374,7 @@ function CourseEditor({ job }: { job: Job }) {
                   </div>
                   <div className={`video-subtitle-preview preview-${videoFormat.replace(":", "-")}`}>
                     {subtitlePreviewImageUrl ? <img alt="Aperçu du visuel avec sous-titres" src={subtitlePreviewImageUrl} /> : <div className="video-subtitle-preview-placeholder">Sélectionnez le visuel pour afficher l’aperçu</div>}
-                    {subtitlePreviewImageUrl && <span className={`video-subtitle-overlay ${videoSubtitleStyle.position}`} style={{ color: videoSubtitleStyle.color, fontFamily: subtitlePreviewFont, fontSize: `${Math.max(8, Math.round(videoSubtitleStyle.font_size * 0.5 * Math.min(1, 90 / Math.max(1, subtitlePreviewText.length))))}px` }}>{subtitlePreviewText}</span>}
+                    {subtitlePreviewImageUrl && <span className={`video-subtitle-overlay ${videoSubtitleStyle.position}`} style={{ color: videoSubtitleStyle.color, fontFamily: subtitlePreviewFont, fontSize: `${Math.max(8, Math.round(videoSubtitleStyle.font_size * 0.45))}px` }}>{subtitlePreviewText}</span>}
                   </div>
                 </section>
               )}

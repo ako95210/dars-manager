@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from backend.app.rendering import FORMAT_SIZES, remap_subtitles, subtitle_cue_indices, subtitle_frame, subtitle_layout
+from backend.app.rendering import FORMAT_SIZES, prepare_subtitles, remap_subtitles, subtitle_cue_indices, subtitle_frame, subtitle_layout
 from backend.app.semantic_analysis import OpenAISemanticAnalyzer, SemanticAnalysisError
 
 
@@ -68,6 +68,36 @@ class SubtitleTests(unittest.TestCase):
         top = subtitle_frame(image, 1, {"position": "top", "font_size": 32, "cues": [cue]})
         bottom = subtitle_frame(image, 1, {"position": "bottom", "font_size": 32, "cues": [cue]})
         self.assertNotEqual(top.tobytes(), bottom.tobytes())
+
+    def test_long_cues_are_split_without_changing_font_size(self) -> None:
+        text = " ".join(f"mot-{index}" for index in range(80))
+        prepared = prepare_subtitles({
+            "font": "sans",
+            "font_size": 48,
+            "cues": [{"start": 2.0, "end": 14.0, "text": text}],
+        }, FORMAT_SIZES["16:9"])
+        self.assertIsNotNone(prepared)
+        self.assertGreater(len(prepared["cues"]), 1)
+        self.assertEqual(
+            " ".join(cue["text"] for cue in prepared["cues"]).split(),
+            text.split(),
+        )
+        self.assertEqual(prepared["cues"][0]["start"], 2.0)
+        self.assertEqual(prepared["cues"][-1]["end"], 14.0)
+        font_path = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+        image = Image.new("RGB", FORMAT_SIZES["16:9"], "#ffffff")
+        for cue in prepared["cues"]:
+            caption, selected_font, bounds, _spacing = subtitle_layout(
+                ImageDraw.Draw(image),
+                cue["text"],
+                font_path,
+                *FORMAT_SIZES["16:9"],
+                48,
+                shrink_to_fit=False,
+            )
+            self.assertEqual(selected_font.size, 48)
+            self.assertLessEqual(caption.count("\n"), 1)
+            self.assertLessEqual(bounds[2] - bounds[0], round(FORMAT_SIZES["16:9"][0] * 0.84))
 
     def test_proofreader_preserves_number_and_order(self) -> None:
         class Client:
