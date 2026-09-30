@@ -499,6 +499,8 @@ function CourseEditor({ job }: { job: Job }) {
   const [subtitleDirty, setSubtitleDirty] = useState(false);
   const [subtitleSaving, setSubtitleSaving] = useState(false);
   const subtitleRevision = useRef(0);
+  const sourceAudioRef = useRef<HTMLAudioElement | null>(null);
+  const reviewStopTimer = useRef<number | null>(null);
   const [proofreadJob, setProofreadJob] = useState<Job | null>(null);
   const [includeSubtitles, setIncludeSubtitles] = useState(false);
   const [parts, setParts] = useState<PartDraft[]>([]);
@@ -527,12 +529,27 @@ function CourseEditor({ job }: { job: Job }) {
   const [archiving, setArchiving] = useState(false);
   const selectedAudio = exportJob?.state === "completed" ? exportJob : null;
 
+  function playReviewSegment(segment: AnalysisSegment) {
+    const audio = sourceAudioRef.current;
+    if (!audio) return;
+    if (reviewStopTimer.current !== null) window.clearTimeout(reviewStopTimer.current);
+    audio.currentTime = Math.max(0, segment.start - 0.4);
+    void audio.play().catch(() => setError("La lecture audio n’a pas pu démarrer."));
+    reviewStopTimer.current = window.setTimeout(() => {
+      audio.pause();
+      reviewStopTimer.current = null;
+    }, Math.max(800, (segment.end - segment.start + 0.8) * 1000));
+  }
+
   function markSubtitleDirty() {
     subtitleRevision.current += 1;
     setSubtitleDirty(true);
   }
 
   useEffect(() => { window.sessionStorage.setItem(`dars-course-visited:${job.id}`, "1"); }, [job.id]);
+  useEffect(() => () => {
+    if (reviewStopTimer.current !== null) window.clearTimeout(reviewStopTimer.current);
+  }, []);
 
   function load() {
     setLoading(true);
@@ -1213,6 +1230,7 @@ function CourseEditor({ job }: { job: Job }) {
     { id: "video-creation", label: "Création Vidéo", description: "Composer le support visuel à partir d’un audio", unlocked: audioReady },
     { id: "distribution", label: "Diffusion", description: "Télécharger ou publier sur YouTube et Telegram", unlocked: videoReady },
   ];
+  const uncertainSegments = analysis?.segments.filter((segment) => segment.uncertain) || [];
 
   return (
     <section className="course-editor">
@@ -1276,8 +1294,26 @@ function CourseEditor({ job }: { job: Job }) {
                 <div className="audio-review">
                   <span aria-hidden="true">▶</span>
                   <div><strong>{userFacingAudioName(analysis)}</strong><small>{formatDuration(analysis.duration_seconds)} · source de travail</small></div>
-                  <audio controls preload="metadata" src={api.artifactUrl(job.id, "audio")} />
+                  <audio controls preload="metadata" ref={sourceAudioRef} src={api.artifactUrl(job.id, "audio")} />
                 </div>
+              )}
+
+              {uncertainSegments.length > 0 && (
+                <details className="transcription-review" open>
+                  <summary>
+                    <span>À vérifier dans l’audio</span>
+                    <strong>{uncertainSegments.length} passage{uncertainSegments.length > 1 ? "s" : ""} incertain{uncertainSegments.length > 1 ? "s" : ""}</strong>
+                  </summary>
+                  <p>La correction n’a rien inventé pour ces passages. Écoutez uniquement les extraits concernés, puis ajustez leur texte dans la piste du labo Sous-titres si nécessaire.</p>
+                  <div>
+                    {uncertainSegments.map((segment, index) => (
+                      <article key={`${segment.start}-${index}`}>
+                        <button className="button secondary compact" onClick={() => playReviewSegment(segment)} type="button">▶ {formatDuration(segment.start)}</button>
+                        <div><strong>{segment.text}</strong><small>{segment.uncertainty_reason || "Passage à vérifier dans l’audio."}</small></div>
+                      </article>
+                    ))}
+                  </div>
+                </details>
               )}
 
               <div className="selection-toolbar">
@@ -1498,6 +1534,7 @@ function ProjectEditor({
 }) {
   const [title, setTitle] = useState(project.title);
   const [description, setDescription] = useState(project.description);
+  const [glossary, setGlossary] = useState(project.glossary_terms.join("\n"));
   const [saving, setSaving] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState("");
@@ -1508,7 +1545,11 @@ function ProjectEditor({
     setSaving(true);
     setError("");
     try {
-      onSaved(await api.updateProject(project.id, title.trim(), description.trim()));
+      const glossaryTerms = glossary
+        .split(/[\n,;]/)
+        .map((term) => term.trim())
+        .filter((term, index, values) => term && values.findIndex((item) => item.toLocaleLowerCase("fr") === term.toLocaleLowerCase("fr")) === index);
+      onSaved(await api.updateProject(project.id, title.trim(), description.trim(), glossaryTerms));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Modification impossible.");
     } finally {
@@ -1545,6 +1586,11 @@ function ProjectEditor({
           <label>
             Description
             <textarea maxLength={4000} onChange={(event) => setDescription(event.target.value)} rows={5} value={description} />
+          </label>
+          <label>
+            Glossaire de transcription
+            <textarea maxLength={8000} onChange={(event) => setGlossary(event.target.value)} placeholder={"Ex. nom d’un intervenant\nNom propre\nTerme technique"} rows={7} value={glossary} />
+            <small>Une expression par ligne. Elle complète le vocabulaire intégré et aide le moteur à reconnaître les noms propres et termes spécialisés sans les inventer.</small>
           </label>
           {error && <p className="form-error notice">{error}</p>}
           <div className="modal-actions">
@@ -2212,6 +2258,14 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
           </label>
           {!fileIsArchive && (
             <div className="processing-modes">
+              <section className="glossary-summary">
+                <div>
+                  <span className="eyebrow">Glossaire de transcription</span>
+                  <strong>{project.glossary_terms.length ? `${project.glossary_terms.length} expression${project.glossary_terms.length > 1 ? "s" : ""} personnalisée${project.glossary_terms.length > 1 ? "s" : ""}` : "Vocabulaire intégré actif"}</strong>
+                  <small>Les termes spécialisés et le contexte précédent aideront la reconnaissance. Le glossaire ne remplace jamais ce qui est réellement prononcé.</small>
+                </div>
+                <button className="button secondary compact" onClick={onEdit} type="button">Modifier le glossaire</button>
+              </section>
               <fieldset className="mode-group">
                 <legend>Mode de transcription</legend>
                 <div className="mode-options">

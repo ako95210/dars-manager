@@ -20,6 +20,7 @@ from .media_lifecycle import meter_media
 from .models import Asset, Project, User, utc_now
 from .runtime import job_queue, manager, media_storage
 from .semantic_analysis import estimate_proofreading_tokens, estimate_semantic_tokens
+from .terminology import effective_glossary
 
 
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
@@ -272,6 +273,11 @@ def create_job_from_asset(
     asset = owned_asset(db, user.id, payload.asset_id)
     if asset.status != "ready" or not asset.storage_key:
         raise HTTPException(status_code=409, detail="Asset upload is not complete")
+    project = db.scalar(
+        select(Project).where(Project.id == asset.project_id, Project.user_id == user.id)
+    )
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
     cost_decision = None
     transcription_amount_nanos = 0
     analysis_input_tokens = 0
@@ -360,6 +366,7 @@ def create_job_from_asset(
                 "chaptering_mode": chaptering_mode,
                 "course_title": payload.course_title if chaptering_mode == "none" else None,
                 "source_filename": asset.original_name,
+                "glossary_terms": effective_glossary(project.glossary_terms),
             },
         )
     except ValueError as exc:

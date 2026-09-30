@@ -1358,6 +1358,11 @@ class Worker:
                 chaptering_mode=chaptering_mode,
                 course_title=str(job.options.get("course_title") or "Cours audio"),
                 source_name=str(job.options.get("source_filename") or "") or None,
+                glossary_terms=[
+                    str(term)
+                    for term in job.options.get("glossary_terms", [])
+                    if str(term).strip()
+                ],
             )
             self._wait_if_paused(job)
             self._store_artifacts(job, result)

@@ -12,6 +12,8 @@ from av.audio.resampler import AudioResampler
 
 from drsm_core import TranscriptSegment, audio_duration, transcribe_audio, trim_audio_frame
 
+from .terminology import transcription_prompt
+
 
 @dataclass(frozen=True)
 class ProviderTranscription:
@@ -25,7 +27,13 @@ class TranscriptionProvider(Protocol):
     provider: str
     model: str
 
-    def transcribe(self, path: Path, language: str) -> ProviderTranscription: ...
+    def transcribe(
+        self,
+        path: Path,
+        language: str,
+        *,
+        prompt: str | None = None,
+    ) -> ProviderTranscription: ...
 
 
 @dataclass(frozen=True)
@@ -136,15 +144,24 @@ class OpenAIWhisperProvider:
             client = OpenAI(api_key=api_key, timeout=timeout_seconds, max_retries=0)
         self.client = client
 
-    def transcribe(self, path: Path, language: str) -> ProviderTranscription:
+    def transcribe(
+        self,
+        path: Path,
+        language: str,
+        *,
+        prompt: str | None = None,
+    ) -> ProviderTranscription:
         with path.open("rb") as audio:
-            response = self.client.audio.transcriptions.create(
+            request = dict(
                 file=audio,
                 model=self.model,
                 language=language or None,
                 response_format="verbose_json",
                 timestamp_granularities=["word", "segment"],
             )
+            if prompt:
+                request["prompt"] = prompt
+            response = self.client.audio.transcriptions.create(**request)
         duration = float(_value(response, "duration", 0.0) or audio_duration(path))
         word_segments = _subtitle_segments_from_words(_value(response, "words", ()) or ())
         raw_segments = _value(response, "segments", ()) or ()
@@ -187,7 +204,13 @@ class LocalWhisperProvider:
         self.should_pause = should_pause
         self.should_cancel = should_cancel
 
-    def transcribe(self, path: Path, language: str) -> ProviderTranscription:
+    def transcribe(
+        self,
+        path: Path,
+        language: str,
+        *,
+        prompt: str | None = None,
+    ) -> ProviderTranscription:
         segments = transcribe_audio(
             path,
             self.model,
@@ -309,6 +332,7 @@ def transcribe_in_chunks(
     progress: Callable[[str, float], None] | None = None,
     control_point: Callable[[], None] | None = None,
     on_usage: UsageCallback | None = None,
+    glossary_terms: list[str] | None = None,
 ) -> list[TranscriptSegment]:
     chunk_dir = workspace / "transcription-chunks"
     try:
@@ -327,7 +351,9 @@ def transcribe_in_chunks(
                     f"Transcription du fragment {position}/{len(chunks)}",
                     (position - 1) / len(chunks),
                 )
-            result = provider.transcribe(chunk.path, language)
+            previous_context = " ".join(segment.text for segment in merged[-12:])
+            prompt = transcription_prompt(glossary_terms, previous_context)
+            result = provider.transcribe(chunk.path, language, prompt=prompt)
             if on_usage:
                 on_usage(
                     TranscriptionCall(

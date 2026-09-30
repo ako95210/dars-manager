@@ -114,8 +114,8 @@ class SemanticAnalysisTests(unittest.TestCase):
                     (),
                     {
                         "output_text": json.dumps({"items": [
-                            {"index": 0, "text": "Première phrase corrigée."},
-                            {"index": 1, "text": "Deuxième phrase corrigée."},
+                            {"index": 0, "text": "Première phrase corrigée.", "uncertain": False, "uncertainty_reason": ""},
+                            {"index": 1, "text": "Deuxième phrase [inaudible].", "uncertain": True, "uncertainty_reason": "Mot manquant."},
                         ]}),
                         "usage": type("Usage", (), {"input_tokens": 40, "output_tokens": 30})(),
                         "_request_id": "req_proofread_test",
@@ -126,14 +126,18 @@ class SemanticAnalysisTests(unittest.TestCase):
         client = type("ProofreadClient", (), {"responses": responses})()
         analyzer = OpenAISemanticAnalyzer(api_key="", client=client)
 
-        corrected, call = analyzer.proofread_transcript(
+        result = analyzer.proofread_transcript(
             ["Premiere phrase.", "Deuxieme phrase."],
             "fr",
+            glossary_terms=["Sunna"],
+            context_before="Contexte précédent.",
         )
 
-        self.assertEqual(corrected[0], "Première phrase corrigée.")
-        self.assertEqual(call.request_id, "req_proofread_test")
+        self.assertEqual(result.texts[0], "Première phrase corrigée.")
+        self.assertEqual(result.call.request_id, "req_proofread_test")
+        self.assertEqual(result.uncertainties[0].index, 1)
         self.assertIn("Ne traduis jamais", responses.arguments["instructions"])
+        self.assertIn("Sunna", responses.arguments["input"])
 
 
 if __name__ == "__main__":

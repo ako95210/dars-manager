@@ -705,11 +705,19 @@ class ApiTests(unittest.TestCase):
 
             updated = client.put(
                 f"/api/projects/{project_id}",
-                json={"title": "Titre final", "description": "Description finale"},
+                json={
+                    "title": "Titre final",
+                    "description": "Description finale",
+                    "glossary_terms": ["Sunna", "Nom du conférencier", "sunna"],
+                },
             )
             self.assertEqual(updated.status_code, 200, updated.text)
             self.assertEqual(updated.json()["title"], "Titre final")
             self.assertEqual(updated.json()["description"], "Description finale")
+            self.assertEqual(
+                updated.json()["glossary_terms"],
+                ["Sunna", "Nom du conférencier"],
+            )
 
             deleted = client.delete(f"/api/projects/{project_id}")
             self.assertEqual(deleted.status_code, 204, deleted.text)
@@ -1663,7 +1671,7 @@ class ApiTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.calls = 0
 
-            def transcribe(self, _path: Path, _language: str) -> ProviderTranscription:
+            def transcribe(self, _path: Path, _language: str, *, prompt: str | None = None) -> ProviderTranscription:
                 self.calls += 1
                 return ProviderTranscription(
                     segments=(TranscriptSegment(0.0, 1.0, "contenu"),),

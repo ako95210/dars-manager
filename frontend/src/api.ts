@@ -27,6 +27,7 @@ export type Project = {
   id: string;
   title: string;
   description: string;
+  glossary_terms: string[];
   created_at: string;
   updated_at: string;
 };
@@ -164,6 +165,8 @@ export type AnalysisSegment = {
   start: number;
   end: number;
   text: string;
+  uncertain?: boolean;
+  uncertainty_reason?: string;
 };
 
 export type CoursePart = {
@@ -463,15 +466,15 @@ export const api = {
   deleteAdminUser: (userId: string) =>
     request<void>(`/api/admin/users/${userId}`, { method: "DELETE" }),
   projects: () => request<Project[]>("/api/projects"),
-  createProject: (title: string, description: string) =>
+  createProject: (title: string, description: string, glossaryTerms: string[] = []) =>
     request<Project>("/api/projects", {
       method: "POST",
-      body: JSON.stringify({ title, description }),
+      body: JSON.stringify({ title, description, glossary_terms: glossaryTerms }),
     }),
-  updateProject: (projectId: string, title: string, description: string) =>
+  updateProject: (projectId: string, title: string, description: string, glossaryTerms: string[]) =>
     request<Project>(`/api/projects/${projectId}`, {
       method: "PUT",
-      body: JSON.stringify({ title, description }),
+      body: JSON.stringify({ title, description, glossary_terms: glossaryTerms }),
     }),
   deleteProject: (projectId: string) =>
     request<void>(`/api/projects/${projectId}`, { method: "DELETE" }),

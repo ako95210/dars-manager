@@ -20,15 +20,23 @@ class PipelineTests(unittest.TestCase):
             provider = "openai"
             model = "test-model"
 
-            def proofread_transcript(self, texts, _language):
-                from backend.app.semantic_analysis import SemanticAnalysisCall
+            def proofread_transcript(self, texts, _language, **_context):
+                from backend.app.semantic_analysis import (
+                    SemanticAnalysisCall,
+                    TranscriptProofreadingResult,
+                    TranscriptUncertainty,
+                )
 
-                return ["Texte corrigé." for _ in texts], SemanticAnalysisCall(
-                    provider=self.provider,
-                    model=self.model,
-                    input_tokens=10,
-                    output_tokens=8,
-                    request_id="req_pipeline_proofread",
+                return TranscriptProofreadingResult(
+                    texts=tuple("Texte corrigé." for _ in texts),
+                    uncertainties=(TranscriptUncertainty(0, "Mot à vérifier."),),
+                    call=SemanticAnalysisCall(
+                        provider=self.provider,
+                        model=self.model,
+                        input_tokens=10,
+                        output_tokens=8,
+                        request_id="req_pipeline_proofread",
+                    ),
                 )
 
         with tempfile.TemporaryDirectory() as directory:
@@ -57,6 +65,8 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(analysis["segments"][0]["text"], "Texte corrigé.")
             self.assertEqual(analysis["segments"][0]["start"], 0.125)
             self.assertEqual(analysis["segments"][0]["end"], 0.875)
+            self.assertTrue(analysis["segments"][0]["uncertain"])
+            self.assertEqual(analysis["segments"][0]["uncertainty_reason"], "Mot à vérifier.")
             self.assertEqual(usage[0].request_id, "req_pipeline_proofread")
 
     def test_no_chaptering_preserves_full_audio_and_title(self) -> None:

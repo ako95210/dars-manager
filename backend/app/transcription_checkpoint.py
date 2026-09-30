@@ -156,12 +156,21 @@ class CheckpointingTranscriptionProvider:
         finally:
             checkpoint.unlink(missing_ok=True)
 
-    def transcribe(self, path: Path, language: str) -> ProviderTranscription:
-        checksum = sha256_file(path)
+    def transcribe(
+        self,
+        path: Path,
+        language: str,
+        *,
+        prompt: str | None = None,
+    ) -> ProviderTranscription:
+        audio_checksum = sha256_file(path)
+        checksum = hashlib.sha256(
+            f"{audio_checksum}\0{language}\0{prompt or ''}".encode("utf-8")
+        ).hexdigest()
         key = self._key(checksum)
         cached = self._load(key, checksum, path)
         if cached is not None:
             return cached
-        result = self._provider.transcribe(path, language)
+        result = self._provider.transcribe(path, language, prompt=prompt)
         self._save(key, checksum, path, result)
         return result

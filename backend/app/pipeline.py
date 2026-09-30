@@ -143,12 +143,27 @@ def write_analysis(
     parts: list[CoursePart],
     *,
     source_name: str | None = None,
+    transcription_uncertainties: dict[int, str] | None = None,
 ) -> None:
+    uncertainty_by_index = transcription_uncertainties or {}
     payload = {
-        "schema": 3,
+        "schema": 4,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "audio_name": source_name or source_audio.name,
-        "segments": [asdict(segment) for segment in segments],
+        "segments": [
+            {
+                **asdict(segment),
+                **(
+                    {
+                        "uncertain": True,
+                        "uncertainty_reason": uncertainty_by_index[index],
+                    }
+                    if index in uncertainty_by_index
+                    else {}
+                ),
+            }
+            for index, segment in enumerate(segments)
+        ],
         "parts": [asdict(part) for part in parts],
     }
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -176,6 +191,7 @@ def run_pipeline(
     chaptering_mode: str = "local",
     course_title: str | None = None,
     source_name: str | None = None,
+    glossary_terms: list[str] | None = None,
 ) -> PipelineResult:
     started = time.monotonic()
 
@@ -195,6 +211,7 @@ def run_pipeline(
                 announced = True
             time.sleep(0.2)
 
+    transcription_uncertainties: dict[int, str] = {}
     if reuse_analysis:
         report("transcription", "Reusing existing analysis for downstream validation", 0.5)
         _, segments, parts = load_analysis(reuse_analysis)
@@ -237,6 +254,7 @@ def run_pipeline(
                 ),
                 control_point=control_point,
                 on_usage=on_transcription_usage,
+                glossary_terms=glossary_terms,
             )
         if not segments:
             raise ValueError("Whisper did not return any transcript segment")
@@ -255,18 +273,32 @@ def run_pipeline(
                 )
                 control_point()
                 batch = segments[offset : offset + batch_size]
-                corrected, call = proofreading_analyzer.proofread_transcript(
+                context_before = " ".join(
+                    segment.text for segment in segments[max(0, offset - 12) : offset]
+                )
+                context_after = " ".join(
+                    segment.text
+                    for segment in segments[
+                        offset + len(batch) : offset + len(batch) + 12
+                    ]
+                )
+                proofreading = proofreading_analyzer.proofread_transcript(
                     [segment.text for segment in batch],
                     language,
+                    glossary_terms=glossary_terms,
+                    context_before=context_before,
+                    context_after=context_after,
                 )
-                if len(corrected) != len(batch):
+                if len(proofreading.texts) != len(batch):
                     raise ValueError("Transcript proofreading changed the segment count")
                 corrected_segments.extend(
                     TranscriptSegment(segment.start, segment.end, text)
-                    for segment, text in zip(batch, corrected, strict=True)
+                    for segment, text in zip(batch, proofreading.texts, strict=True)
                 )
+                for uncertainty in proofreading.uncertainties:
+                    transcription_uncertainties[offset + uncertainty.index] = uncertainty.reason
                 if on_proofreading_usage:
-                    on_proofreading_usage(call)
+                    on_proofreading_usage(proofreading.call)
             segments = corrected_segments
         if chaptering_mode == "none":
             duration = audio_duration(input_path)
@@ -295,7 +327,14 @@ def run_pipeline(
 
     duration = audio_duration(input_path)
     analysis_path = workspace / "analysis.json"
-    write_analysis(analysis_path, input_path, segments, parts, source_name=source_name)
+    write_analysis(
+        analysis_path,
+        input_path,
+        segments,
+        parts,
+        source_name=source_name,
+        transcription_uncertainties=transcription_uncertainties,
+    )
 
     control_point()
     report("audio_export", "Exporting WAV", 0.7)

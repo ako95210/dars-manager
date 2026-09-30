@@ -26,7 +26,7 @@ class FakeProvider:
     provider = "fake"
     model = "timestamp-test"
 
-    def transcribe(self, path: Path, _language: str) -> ProviderTranscription:
+    def transcribe(self, path: Path, _language: str, *, prompt: str | None = None) -> ProviderTranscription:
         index = int(path.stem.split("-")[-1])
         return ProviderTranscription(
             segments=(TranscriptSegment(0.1, 0.8, f"fragment {index}"),),
@@ -111,7 +111,7 @@ class TranscriptionTests(unittest.TestCase):
             silent_wav(source, 2)
             client = FakeOpenAIClient()
             provider = OpenAIWhisperProvider(api_key="", client=client)
-            result = provider.transcribe(source, "fr")
+            result = provider.transcribe(source, "fr", prompt="Sunna, hadith")
             self.assertEqual(result.request_id, "req_openai_test")
             self.assertEqual(
                 result.segments[0],
@@ -125,6 +125,7 @@ class TranscriptionTests(unittest.TestCase):
                 client.audio.transcriptions.arguments["response_format"],
                 "verbose_json",
             )
+            self.assertEqual(client.audio.transcriptions.arguments["prompt"], "Sunna, hadith")
 
 
 if __name__ == "__main__":

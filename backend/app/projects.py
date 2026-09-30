@@ -13,6 +13,11 @@ from .jobs import TERMINAL_STATES
 from .media_lifecycle import meter_media
 from .models import Artifact, Asset, Project, User
 from .runtime import manager, media_storage
+from .terminology import (
+    MAX_CUSTOM_GLOSSARY_TERMS,
+    MAX_GLOSSARY_TERM_LENGTH,
+    normalize_glossary_terms,
+)
 
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -21,6 +26,7 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 class ProjectCreate(BaseModel):
     title: str = Field(min_length=1, max_length=180)
     description: str = Field(default="", max_length=4000)
+    glossary_terms: list[str] = Field(default_factory=list, max_length=MAX_CUSTOM_GLOSSARY_TERMS)
 
     @field_validator("title")
     @classmethod
@@ -35,6 +41,15 @@ class ProjectCreate(BaseModel):
     def normalize_description(cls, value: str) -> str:
         return value.strip()
 
+    @field_validator("glossary_terms")
+    @classmethod
+    def normalize_glossary(cls, value: list[str]) -> list[str]:
+        if any(len(str(item).strip()) > MAX_GLOSSARY_TERM_LENGTH for item in value):
+            raise ValueError(
+                f"Chaque terme du glossaire est limité à {MAX_GLOSSARY_TERM_LENGTH} caractères"
+            )
+        return normalize_glossary_terms(value)
+
 
 class ProjectUpdate(ProjectCreate):
     pass
@@ -44,6 +59,7 @@ class ProjectResponse(BaseModel):
     id: str
     title: str
     description: str
+    glossary_terms: list[str]
     created_at: datetime
     updated_at: datetime
 
@@ -53,6 +69,7 @@ def project_response(project: Project) -> ProjectResponse:
         id=project.id,
         title=project.title,
         description=project.description,
+        glossary_terms=project.glossary_terms or [],
         created_at=project.created_at,
         updated_at=project.updated_at,
     )
@@ -76,6 +93,7 @@ def create_project(
         user_id=user.id,
         title=payload.title,
         description=payload.description,
+        glossary_terms=payload.glossary_terms,
     )
     db.add(project)
     db.commit()
@@ -111,6 +129,7 @@ def update_project(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     project.title = payload.title
     project.description = payload.description
+    project.glossary_terms = payload.glossary_terms
     db.commit()
     db.refresh(project)
     return project_response(project)
