@@ -132,6 +132,31 @@ class VideoExportRequest(AudioExportRequest):
         return value.strip()
 
 
+def normalize_subtitle_cues(
+    cues: list[SubtitleCue],
+    ranges: list[tuple[float, float]],
+) -> list[dict[str, Any]]:
+    """Clip legacy cues to the selected audio and remove timestamp overlaps."""
+    clipped: list[dict[str, Any]] = []
+    for cue in cues:
+        for range_start, range_end in ranges:
+            start = max(float(cue.start), range_start)
+            end = min(float(cue.end), range_end)
+            if end > start:
+                clipped.append({"start": start, "end": end, "text": cue.text})
+    clipped.sort(key=lambda item: (item["start"], item["end"]))
+    normalized: list[dict[str, Any]] = []
+    previous_end = 0.0
+    for cue in clipped:
+        start = max(float(cue["start"]), previous_end)
+        end = float(cue["end"])
+        if end - start < 0.01:
+            continue
+        normalized.append({**cue, "start": start, "end": end})
+        previous_end = end
+    return normalized
+
+
 class ImageGenerationRequest(BaseModel):
     template_id: str = Field(min_length=32, max_length=32)
     template_version: int = Field(ge=1)
@@ -397,15 +422,12 @@ def update_subtitles(
     ]
     if not ranges or len(ranges) != len(raw_ranges):
         raise HTTPException(status_code=422, detail="La sélection audio est invalide.")
-    previous_end = 0.0
-    for cue in update.cues:
-        if (
-            cue.end <= cue.start
-            or cue.start < previous_end - 0.1
-            or not any(cue.end > start and cue.start < end for start, end in ranges)
-        ):
-            raise HTTPException(status_code=422, detail="Les horodatages des sous-titres sont invalides.")
-        previous_end = cue.end
+    normalized_cues = normalize_subtitle_cues(update.cues, ranges)
+    if not normalized_cues:
+        raise HTTPException(
+            status_code=422,
+            detail="Aucun sous-titre ne correspond à l'audio sélectionné.",
+        )
     settings.workspace_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     with tempfile.TemporaryDirectory(dir=settings.workspace_root) as temporary:
         path = Path(temporary) / "analysis.json"
@@ -435,7 +457,7 @@ def update_subtitles(
             "font_size": update.font_size,
             "color": update.color,
             "position": update.position,
-            "cues": [cue.model_dump() for cue in update.cues],
+            "cues": normalized_cues,
             "created_at": existing.get("created_at", now) if existing else now,
             "updated_at": now,
         }

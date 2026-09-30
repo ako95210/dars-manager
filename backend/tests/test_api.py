@@ -1183,11 +1183,18 @@ class ApiTests(unittest.TestCase):
                     "color": "#ffffff",
                     "cues": [
                         {"start": 0.0, "end": 12.0, "text": "Première version."},
-                        {"start": 12.0, "end": 29.5, "text": "Suite en français."},
+                        {"start": 11.5, "end": 30.0, "text": "Suite en français."},
                     ],
                 },
             )
             self.assertEqual(first_track.status_code, 200, first_track.text)
+            self.assertEqual(
+                first_track.json()["subtitle_tracks"][0]["cues"],
+                [
+                    {"start": 0.0, "end": 12.0, "text": "Première version."},
+                    {"start": 12.0, "end": 29.5, "text": "Suite en français."},
+                ],
+            )
             second_track_id = "2" * 32
             second_track = client.put(
                 f"/api/jobs/{job.id}/analysis/subtitles",
