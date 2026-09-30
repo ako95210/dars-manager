@@ -29,7 +29,7 @@ from drsm_core import (
 )
 
 from .transcription import TranscriptionProvider, UsageCallback, transcribe_in_chunks
-from .semantic_analysis import SemanticAnalyzer, SemanticUsageCallback
+from .semantic_analysis import SemanticAnalyzer, SemanticUsageCallback, SubtitleProofreader
 
 
 ProgressCallback = Callable[[dict], None]
@@ -171,6 +171,8 @@ def run_pipeline(
     on_transcription_usage: UsageCallback | None = None,
     semantic_analyzer: SemanticAnalyzer | None = None,
     on_semantic_usage: SemanticUsageCallback | None = None,
+    proofreading_analyzer: SubtitleProofreader | None = None,
+    on_proofreading_usage: SemanticUsageCallback | None = None,
     chaptering_mode: str = "local",
     course_title: str | None = None,
     source_name: str | None = None,
@@ -241,6 +243,31 @@ def run_pipeline(
         if should_cancel and should_cancel():
             raise AnalysisCancelled("Analysis cancelled")
         control_point()
+        if proofreading_analyzer is not None:
+            corrected_segments: list[TranscriptSegment] = []
+            batch_size = 60
+            batch_count = math.ceil(len(segments) / batch_size)
+            for batch_index, offset in enumerate(range(0, len(segments), batch_size), start=1):
+                report(
+                    "subtitle_proofreading",
+                    f"Correction automatique de la transcription ({batch_index}/{batch_count})",
+                    0.60 + 0.02 * batch_index / batch_count,
+                )
+                control_point()
+                batch = segments[offset : offset + batch_size]
+                corrected, call = proofreading_analyzer.proofread_transcript(
+                    [segment.text for segment in batch],
+                    language,
+                )
+                if len(corrected) != len(batch):
+                    raise ValueError("Transcript proofreading changed the segment count")
+                corrected_segments.extend(
+                    TranscriptSegment(segment.start, segment.end, text)
+                    for segment, text in zip(batch, corrected, strict=True)
+                )
+                if on_proofreading_usage:
+                    on_proofreading_usage(call)
+            segments = corrected_segments
         if chaptering_mode == "none":
             duration = audio_duration(input_path)
             parts = [CoursePart(

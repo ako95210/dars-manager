@@ -1285,6 +1285,16 @@ class Worker:
                 semantic_input_tokens += call.input_tokens
                 semantic_output_tokens += call.output_tokens
 
+            def record_automatic_proofreading(call: SemanticAnalysisCall) -> None:
+                nonlocal semantic_input_tokens, semantic_output_tokens
+                self._record_semantic_analysis_call(
+                    job,
+                    call,
+                    "automatic_subtitle_proofreading",
+                )
+                semantic_input_tokens += call.input_tokens
+                semantic_output_tokens += call.output_tokens
+
             transcription_mode = str(
                 job.options.get("transcription_mode", settings.transcription_backend)
             )
@@ -1304,6 +1314,8 @@ class Worker:
                 raise ValueError("Cloud transcription provider is unavailable")
             if use_ai_chaptering and self.semantic_analyzer is None:
                 raise ValueError("AI chaptering provider is unavailable")
+            if use_cloud_transcription and self.semantic_analyzer is None:
+                raise ValueError("Automatic transcript proofreading is unavailable")
 
             provider = (
                 CheckpointingTranscriptionProvider(
@@ -1336,6 +1348,12 @@ class Worker:
                 semantic_analyzer=semantic_analyzer,
                 on_semantic_usage=(
                     record_semantic_analysis if semantic_analyzer else None
+                ),
+                proofreading_analyzer=(
+                    self.semantic_analyzer if use_cloud_transcription else None
+                ),
+                on_proofreading_usage=(
+                    record_automatic_proofreading if use_cloud_transcription else None
                 ),
                 chaptering_mode=chaptering_mode,
                 course_title=str(job.options.get("course_title") or "Cours audio"),

@@ -2217,11 +2217,11 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
                 <div className="mode-options">
                   <label className={transcriptionMode === "cloud" ? "mode-option active" : "mode-option"}>
                     <input checked={transcriptionMode === "cloud"} name="transcription-mode" onChange={() => setTranscriptionMode("cloud")} type="radio" />
-                    <span><strong>Cloud — recommandé</strong><small><b>Avantages :</b> meilleure précision, plus rapide, particulièrement sur les noms et les passages multilingues.</small><small><b>Inconvénient :</b> facturation selon la durée de l’audio.</small></span>
+                    <span><strong>Cloud — recommandé</strong><small><b>Avantages :</b> meilleure précision, plus rapide, avec correction automatique de l’orthographe, de la grammaire et de la syntaxe avant le chapitrage.</small><small><b>Inconvénient :</b> la transcription et cette passe de correction sont facturées.</small></span>
                   </label>
                   <label className={transcriptionMode === "local" ? "mode-option active" : "mode-option"}>
                     <input checked={transcriptionMode === "local"} name="transcription-mode" onChange={() => setTranscriptionMode("local")} type="radio" />
-                    <span><strong>Serveur local — économique</strong><small><b>Avantages :</b> aucun appel de transcription facturé, traitement sur le serveur Dars Manager.</small><small><b>Inconvénients :</b> le temps de transcription est plus long et la qualité peut varier. Si plusieurs utilisateurs choisissent ce mode, les traitements sont placés dans une file d’attente et exécutés l’un après l’autre.</small></span>
+                    <span><strong>Serveur local — économique</strong><small><b>Avantages :</b> aucun appel de transcription ni de correction facturé, traitement sur le serveur Dars Manager.</small><small><b>Inconvénients :</b> le temps est plus long, la qualité peut varier et la première transcription n’est pas corrigée automatiquement. Les traitements locaux sont placés dans une file d’attente.</small></span>
                   </label>
                 </div>
               </fieldset>
@@ -2261,8 +2261,10 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
                   <small>{formatDuration(quote.duration_seconds)} · transcription {quote.transcription_mode === "cloud" ? "cloud" : `locale (${quote.model})`} · {quote.chaptering_mode === "none" ? "sans chapitrage" : `chapitrage ${quote.chaptering_mode === "ai" ? "IA" : "local"}`}</small>
                   <small>
                     Transcription {Number(quote.transcription_amount).toFixed(4)} {quote.currency}
+                    {` · correction initiale ${Number(quote.subtitle_proofreading.amount).toFixed(4)} ${quote.currency}`}
                     {` · chapitrage ${Number(quote.semantic_analysis.amount).toFixed(4)} ${quote.currency}`}
                   </small>
+                  {quote.subtitle_proofreading.enabled && <small>Correction initiale automatique incluse : orthographe, grammaire, syntaxe et ponctuation, sans modifier les horodatages.</small>}
                   {quote.budget_state !== "disabled" && (
                     <small>Projection mensuelle : {formatCurrency(quote.monthly_projected, quote.currency)} / {formatCurrency(quote.monthly_budget, quote.currency)}</small>
                   )}

@@ -477,7 +477,9 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(quote.json()["billed_seconds"], 91)
             self.assertEqual(quote.json()["transcription_amount"], "0.009100")
             self.assertEqual(quote.json()["semantic_analysis"]["amount"], "0.000520")
-            self.assertEqual(quote.json()["amount"], "0.009620")
+            self.assertTrue(quote.json()["subtitle_proofreading"]["enabled"])
+            self.assertEqual(quote.json()["subtitle_proofreading"]["amount"], "0.001120")
+            self.assertEqual(quote.json()["amount"], "0.010740")
 
     def test_processing_modes_change_the_quote_independently(self) -> None:
         with TestClient(app) as client:
@@ -500,11 +502,12 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200, response.text)
                 quotes[(transcription_mode, chaptering_mode)] = response.json()
 
-            self.assertEqual(quotes[("cloud", "ai")]["amount"], "0.009620")
-            self.assertEqual(quotes[("cloud", "local")]["amount"], "0.009100")
+            self.assertEqual(quotes[("cloud", "ai")]["amount"], "0.010740")
+            self.assertEqual(quotes[("cloud", "local")]["amount"], "0.010220")
             self.assertEqual(quotes[("local", "ai")]["amount"], "0.000520")
             self.assertEqual(quotes[("local", "local")]["amount"], "0.000000")
             self.assertEqual(quotes[("local", "local")]["model"], "base")
+            self.assertFalse(quotes[("local", "ai")]["subtitle_proofreading"]["enabled"])
 
     def test_local_modes_are_saved_on_the_job_without_cloud_usage(self) -> None:
         content = b"local-processing-placeholder"
@@ -637,8 +640,8 @@ class ApiTests(unittest.TestCase):
             project_cost = next(
                 item for item in summary.json()["projects"] if item["project_id"] == project_id
             )
-            self.assertEqual(project_cost["estimated_cost"], "0.060960")
-            self.assertEqual(project_cost["operations"], 3)
+            self.assertEqual(project_cost["estimated_cost"], "0.065160")
+            self.assertEqual(project_cost["operations"], 5)
 
             with SessionLocal() as db:
                 owner = db.scalar(select(User).where(User.email == "pilot-b@example.com"))

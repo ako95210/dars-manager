@@ -130,6 +130,13 @@ export type TranscriptionQuote = {
     estimated_output_tokens: number;
     amount: string;
   };
+  subtitle_proofreading: {
+    enabled: boolean;
+    model: string;
+    estimated_input_tokens: number;
+    estimated_output_tokens: number;
+    amount: string;
+  };
   unit_amount: string;
   requires_confirmation: boolean;
   confirmation_reasons: ("approval_threshold" | "monthly_budget")[];

@@ -6,6 +6,7 @@ import unittest
 from backend.app.semantic_analysis import (
     OpenAISemanticAnalyzer,
     SemanticAnalysisError,
+    estimate_proofreading_tokens,
     estimate_semantic_tokens,
 )
 from drsm_core import TranscriptSegment
@@ -95,6 +96,44 @@ class SemanticAnalysisTests(unittest.TestCase):
         long = estimate_semantic_tokens(3600)
         self.assertGreater(long[0], short[0])
         self.assertGreater(long[1], short[1])
+
+        proofread_short = estimate_proofreading_tokens(60)
+        proofread_long = estimate_proofreading_tokens(3600)
+        self.assertGreater(proofread_long[0], proofread_short[0])
+        self.assertGreater(proofread_long[1], proofread_short[1])
+
+    def test_transcript_proofreading_preserves_order_without_translation(self) -> None:
+        class ProofreadResponses:
+            def __init__(self) -> None:
+                self.arguments = None
+
+            def create(self, **kwargs):
+                self.arguments = kwargs
+                return type(
+                    "Response",
+                    (),
+                    {
+                        "output_text": json.dumps({"items": [
+                            {"index": 0, "text": "Première phrase corrigée."},
+                            {"index": 1, "text": "Deuxième phrase corrigée."},
+                        ]}),
+                        "usage": type("Usage", (), {"input_tokens": 40, "output_tokens": 30})(),
+                        "_request_id": "req_proofread_test",
+                    },
+                )()
+
+        responses = ProofreadResponses()
+        client = type("ProofreadClient", (), {"responses": responses})()
+        analyzer = OpenAISemanticAnalyzer(api_key="", client=client)
+
+        corrected, call = analyzer.proofread_transcript(
+            ["Premiere phrase.", "Deuxieme phrase."],
+            "fr",
+        )
+
+        self.assertEqual(corrected[0], "Première phrase corrigée.")
+        self.assertEqual(call.request_id, "req_proofread_test")
+        self.assertIn("Ne traduis jamais", responses.arguments["instructions"])
 
 
 if __name__ == "__main__":

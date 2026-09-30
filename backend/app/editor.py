@@ -22,7 +22,7 @@ from .jobs import Job
 from .media_lifecycle import meter_media
 from .models import Artifact, BrandTemplate, BrandTemplateFile, Project, User, utc_now
 from .runtime import job_queue, manager, media_storage
-from .semantic_analysis import estimate_semantic_tokens
+from .semantic_analysis import estimate_proofreading_tokens, estimate_semantic_tokens
 
 
 router = APIRouter(prefix="/api/jobs", tags=["editor"])
@@ -522,8 +522,7 @@ def delete_subtitle_track(
 
 
 def subtitle_proofread_quote(db: Session, duration: float) -> tuple[int, int, int, str]:
-    input_tokens = max(800, round(duration * 5))
-    output_tokens = max(800, round(duration * 5))
+    input_tokens, output_tokens = estimate_proofreading_tokens(duration)
     prices = [quote_usage(db, provider="openai", service="content_analysis", model=settings.semantic_analysis_model, quantity=count, unit=unit) for count, unit in ((input_tokens, "input_token"), (output_tokens, "output_token"))]
     return input_tokens, output_tokens, sum(price.amount_nanos for price in prices), prices[0].currency
 

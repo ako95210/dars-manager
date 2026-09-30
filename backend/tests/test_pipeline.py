@@ -15,6 +15,50 @@ from drsm_core import CoursePart, TranscriptSegment, audio_duration, export_clip
 
 
 class PipelineTests(unittest.TestCase):
+    def test_automatic_proofreading_preserves_segment_timestamps(self) -> None:
+        class Proofreader:
+            provider = "openai"
+            model = "test-model"
+
+            def proofread_transcript(self, texts, _language):
+                from backend.app.semantic_analysis import SemanticAnalysisCall
+
+                return ["Texte corrigé." for _ in texts], SemanticAnalysisCall(
+                    provider=self.provider,
+                    model=self.model,
+                    input_tokens=10,
+                    output_tokens=8,
+                    request_id="req_pipeline_proofread",
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            audio = root / "course.wav"
+            with wave.open(str(audio), "wb") as output:
+                output.setnchannels(1)
+                output.setsampwidth(2)
+                output.setframerate(8000)
+                output.writeframes(b"\x00\x00" * 8000)
+            (root / "work").mkdir()
+            usage = []
+            with patch(
+                "backend.app.pipeline.transcribe_audio",
+                return_value=[TranscriptSegment(0.125, 0.875, "Texte male ecrit.")],
+            ):
+                result = run_pipeline(
+                    audio,
+                    root / "work",
+                    chaptering_mode="none",
+                    course_title="Cours corrigé",
+                    proofreading_analyzer=Proofreader(),
+                    on_proofreading_usage=usage.append,
+                )
+            analysis = json.loads(result.analysis_path.read_text(encoding="utf-8"))
+            self.assertEqual(analysis["segments"][0]["text"], "Texte corrigé.")
+            self.assertEqual(analysis["segments"][0]["start"], 0.125)
+            self.assertEqual(analysis["segments"][0]["end"], 0.875)
+            self.assertEqual(usage[0].request_id, "req_pipeline_proofread")
+
     def test_no_chaptering_preserves_full_audio_and_title(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

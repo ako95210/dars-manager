@@ -19,7 +19,7 @@ from .media_storage import LocalMediaStorage
 from .media_lifecycle import meter_media
 from .models import Asset, Project, User, utc_now
 from .runtime import job_queue, manager, media_storage
-from .semantic_analysis import estimate_semantic_tokens
+from .semantic_analysis import estimate_proofreading_tokens, estimate_semantic_tokens
 
 
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
@@ -277,6 +277,9 @@ def create_job_from_asset(
     analysis_input_tokens = 0
     analysis_output_tokens = 0
     analysis_amount_nanos = 0
+    proofreading_input_tokens = 0
+    proofreading_output_tokens = 0
+    proofreading_amount_nanos = 0
     if transcription_mode == "cloud":
         transcription_quote = quote_usage(
             db,
@@ -287,6 +290,23 @@ def create_job_from_asset(
             unit="audio_second",
         )
         transcription_amount_nanos = transcription_quote.amount_nanos
+        proofreading_input_tokens, proofreading_output_tokens = (
+            estimate_proofreading_tokens(payload.estimated_duration_seconds or 0)
+        )
+        proofreading_amount_nanos = sum(
+            quote_usage(
+                db,
+                provider="openai",
+                service="content_analysis",
+                model=settings.semantic_analysis_model,
+                quantity=quantity,
+                unit=unit,
+            ).amount_nanos
+            for quantity, unit in (
+                (proofreading_input_tokens, "input_token"),
+                (proofreading_output_tokens, "output_token"),
+            )
+        )
     if chaptering_mode == "ai":
         if payload.estimated_duration_seconds is None:
             raise HTTPException(status_code=422, detail="Audio duration estimate is required")
@@ -307,12 +327,14 @@ def create_job_from_asset(
                 (analysis_output_tokens, "output_token"),
             )
         )
-    if transcription_amount_nanos or analysis_amount_nanos:
+    if transcription_amount_nanos or analysis_amount_nanos or proofreading_amount_nanos:
         cost_decision = cost_control(
             db,
             user_id=user.id,
             proposed_amount_nanos=(
-                transcription_amount_nanos + analysis_amount_nanos
+                transcription_amount_nanos
+                + analysis_amount_nanos
+                + proofreading_amount_nanos
             ),
             lock_policy=True,
         )
@@ -365,6 +387,30 @@ def create_job_from_asset(
                         ),
                     },
                 )
+                for quantity, unit in (
+                    (proofreading_input_tokens, "input_token"),
+                    (proofreading_output_tokens, "output_token"),
+                ):
+                    record_usage(
+                        db,
+                        user_id=user.id,
+                        project_id=asset.project_id,
+                        job_id=job.id,
+                        provider="openai",
+                        service="content_analysis",
+                        model=settings.semantic_analysis_model,
+                        quantity=quantity,
+                        unit=unit,
+                        status="estimated",
+                        idempotency_key=(
+                            f"content-analysis:{job.id}:estimate:proofreading:{unit}"
+                        ),
+                        details={
+                            "source": "audio_duration_estimate",
+                            "purpose": "automatic_subtitle_proofreading",
+                            "cost_confirmed": payload.cost_confirmed,
+                        },
+                    )
             if chaptering_mode == "ai":
                 for quantity, unit in (
                     (analysis_input_tokens, "input_token"),
