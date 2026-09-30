@@ -27,6 +27,7 @@ from .semantic_analysis import estimate_semantic_tokens
 
 router = APIRouter(prefix="/api/jobs", tags=["editor"])
 CURRENT_AUDIO_EXPORT_VERSION = 2
+CURRENT_VIDEO_RENDER_VERSION = 2
 logger = logging.getLogger(__name__)
 
 
@@ -1363,6 +1364,7 @@ def create_video_export(
             raise HTTPException(status_code=422, detail="Cette piste ne contient aucun sous-titre.")
         subtitle_track_id = request.subtitle_track_id
     signature = {
+        "video_render_version": CURRENT_VIDEO_RENDER_VERSION,
         "source_job_id": source_job.id,
         "analysis_checksum": request.checksum_sha256,
         "part_indices": canonical_indices,
