@@ -50,6 +50,10 @@ class FakeTranscriptions:
                 "segments": [
                     {"start": 0.25, "end": 1.5, "text": " bonjour "},
                 ],
+                "words": [
+                    {"start": 0.25, "end": 0.7, "word": "Bonjour"},
+                    {"start": 0.8, "end": 1.5, "word": " le monde."},
+                ],
                 "_request_id": "req_openai_test",
             },
         )()
@@ -101,7 +105,7 @@ class TranscriptionTests(unittest.TestCase):
             ])
             self.assertFalse((root / "transcription-chunks").exists())
 
-    def test_openai_provider_requests_segment_timestamps(self) -> None:
+    def test_openai_provider_builds_cues_from_word_timestamps(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.wav"
             silent_wav(source, 2)
@@ -109,10 +113,13 @@ class TranscriptionTests(unittest.TestCase):
             provider = OpenAIWhisperProvider(api_key="", client=client)
             result = provider.transcribe(source, "fr")
             self.assertEqual(result.request_id, "req_openai_test")
-            self.assertEqual(result.segments[0], TranscriptSegment(0.25, 1.5, "bonjour"))
+            self.assertEqual(
+                result.segments[0],
+                TranscriptSegment(0.25, 1.5, "Bonjour le monde."),
+            )
             self.assertEqual(
                 client.audio.transcriptions.arguments["timestamp_granularities"],
-                ["segment"],
+                ["word", "segment"],
             )
             self.assertEqual(
                 client.audio.transcriptions.arguments["response_format"],

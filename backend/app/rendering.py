@@ -18,6 +18,7 @@ FORMAT_SIZES = {
     "1:1": (1080, 1080),
     "9:16": (720, 1280),
 }
+SUBTITLE_FRAME_RATE = 10
 
 
 def font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -393,7 +394,7 @@ def render_animated_video(
     size = FORMAT_SIZES[output_format]
     subtitles = prepare_subtitles(subtitles, size)
     duration = audio_duration(audio_path)
-    rate = 5
+    rate = SUBTITLE_FRAME_RATE
     output = av.open(str(output_path), mode="w", options={"movflags": "+faststart"})
     video_stream = output.add_stream("libx264", rate=rate)
     video_stream.width, video_stream.height = size

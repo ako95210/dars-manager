@@ -387,6 +387,9 @@ async function request<T>(path: string, options: ApiOptions = {}): Promise<T> {
 
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
+    if (response.status === 401) {
+      window.dispatchEvent(new CustomEvent("dars-auth-expired"));
+    }
     throw new Error(payload?.detail ?? "Une erreur inattendue est survenue.");
   }
   if (response.status === 204) return undefined as T;

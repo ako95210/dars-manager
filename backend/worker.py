@@ -832,7 +832,14 @@ class Worker:
                 "message": "Assemblage des passages sélectionnés",
                 "progress": 0.2,
             })
-            export_clips(audio_path, selection_path, ranges)
+            selection_key = str(job.options.get("selection_audio_storage_key") or "")
+            selection_checksum = str(job.options.get("selection_audio_checksum") or "")
+            if selection_key:
+                media_storage.download_file(selection_key, selection_path)
+                if selection_checksum and sha256_file(selection_path) != selection_checksum:
+                    raise ValueError("Selected audio artifact checksum mismatch")
+            else:
+                export_clips(audio_path, selection_path, ranges)
             subtitles = remap_subtitles(job.options.get("subtitles"), ranges)
             cover_path = job.workspace / "cover.png"
             self._save_progress(job, {
@@ -1332,6 +1339,7 @@ class Worker:
                 ),
                 chaptering_mode=chaptering_mode,
                 course_title=str(job.options.get("course_title") or "Cours audio"),
+                source_name=str(job.options.get("source_filename") or "") or None,
             )
             self._wait_if_paused(job)
             self._store_artifacts(job, result)

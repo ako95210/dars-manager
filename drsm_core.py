@@ -478,6 +478,26 @@ def export_clip(input_path: Path, output_path: Path, start: float, end: float) -
     export_clips(input_path, output_path, [(start, end)])
 
 
+def trim_audio_frame(av: object, frame: object, first_sample: int, last_sample: int) -> object:
+    """Return an audio frame cropped on exact sample boundaries."""
+    samples = int(frame.samples)
+    first_sample = max(0, min(first_sample, samples))
+    last_sample = max(first_sample, min(last_sample, samples))
+    values = frame.to_ndarray()
+    if frame.format.is_planar:
+        cropped = values[:, first_sample:last_sample]
+    else:
+        channels = max(1, len(frame.layout.channels))
+        cropped = values[:, first_sample * channels:last_sample * channels]
+    result = av.AudioFrame.from_ndarray(
+        cropped.copy(),
+        format=frame.format.name,
+        layout=frame.layout.name,
+    )
+    result.sample_rate = frame.sample_rate
+    return result
+
+
 def export_clips(input_path: Path, output_path: Path, ranges: list[tuple[float, float]]) -> None:
     if not ranges:
         raise ValueError("Aucune partie à exporter.")
@@ -502,10 +522,10 @@ def export_clips(input_path: Path, output_path: Path, ranges: list[tuple[float, 
     output = av.open(str(output_path), "w")
     out_stream = output.add_stream("pcm_s16le", rate=sample_rate)
     out_stream.layout = layout
-    resampler = AudioResampler(format="s16", layout=layout, rate=sample_rate)
 
     try:
         for start, end in ranges:
+            resampler = AudioResampler(format="s16", layout=layout, rate=sample_rate)
             seek_time = max(0.0, start - 1.0)
             try:
                 container.seek(int(seek_time * av.time_base), any_frame=False, backward=True)
@@ -514,14 +534,26 @@ def export_clips(input_path: Path, output_path: Path, ranges: list[tuple[float, 
             for frame in container.decode(audio_stream):
                 frame_start = float(frame.time or 0.0)
                 frame_end = frame_start + (frame.samples / float(frame.sample_rate or sample_rate))
-                if frame_end < start:
+                if frame_end <= start:
                     continue
-                if frame_start > end:
+                if frame_start >= end:
                     break
-                for converted in resampler.resample(frame):
+                frame_rate = float(frame.sample_rate or sample_rate)
+                first_sample = math.ceil(max(0.0, start - frame_start) * frame_rate - 1e-9)
+                last_sample = math.ceil(
+                    max(0.0, min(frame_end, end) - frame_start) * frame_rate - 1e-9
+                )
+                cropped = trim_audio_frame(av, frame, first_sample, last_sample)
+                if cropped.samples <= 0:
+                    continue
+                for converted in resampler.resample(cropped):
                     converted.pts = None
                     for packet in out_stream.encode(converted):
                         output.mux(packet)
+            for converted in resampler.resample(None):
+                converted.pts = None
+                for packet in out_stream.encode(converted):
+                    output.mux(packet)
         for packet in out_stream.encode(None):
             output.mux(packet)
     finally:

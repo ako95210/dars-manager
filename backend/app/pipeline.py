@@ -87,12 +87,12 @@ def generate_cover(output_path: Path, title: str, subtitle: str) -> None:
 def render_static_video(cover_path: Path, audio_path: Path, output_path: Path, subtitles: dict | None = None) -> None:
     """Render a lightweight one-frame-per-second H.264/AAC video."""
     duration = audio_duration(audio_path)
-    from .rendering import prepare_subtitles, subtitle_frame
+    from .rendering import SUBTITLE_FRAME_RATE, prepare_subtitles, subtitle_frame
 
     cover_image = Image.open(cover_path).convert("RGB")
     cover = np.asarray(cover_image)
     subtitles = prepare_subtitles(subtitles, cover_image.size)
-    rate = 5 if subtitles else 1
+    rate = SUBTITLE_FRAME_RATE if subtitles else 1
 
     output = av.open(str(output_path), mode="w", options={"movflags": "+faststart"})
     video_stream = output.add_stream("libx264", rate=rate)
@@ -141,11 +141,13 @@ def write_analysis(
     source_audio: Path,
     segments: list[TranscriptSegment],
     parts: list[CoursePart],
+    *,
+    source_name: str | None = None,
 ) -> None:
     payload = {
         "schema": 3,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "audio_name": source_audio.name,
+        "audio_name": source_name or source_audio.name,
         "segments": [asdict(segment) for segment in segments],
         "parts": [asdict(part) for part in parts],
     }
@@ -171,6 +173,7 @@ def run_pipeline(
     on_semantic_usage: SemanticUsageCallback | None = None,
     chaptering_mode: str = "local",
     course_title: str | None = None,
+    source_name: str | None = None,
 ) -> PipelineResult:
     started = time.monotonic()
 
@@ -265,7 +268,7 @@ def run_pipeline(
 
     duration = audio_duration(input_path)
     analysis_path = workspace / "analysis.json"
-    write_analysis(analysis_path, input_path, segments, parts)
+    write_analysis(analysis_path, input_path, segments, parts, source_name=source_name)
 
     control_point()
     report("audio_export", "Exporting WAV", 0.7)

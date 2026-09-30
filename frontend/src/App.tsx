@@ -287,6 +287,22 @@ const subtitleLanguages = [
   ["zh", "Chinois"],
 ] as const;
 
+function subtitleLanguageLabel(language: string) {
+  return subtitleLanguages.find(([code]) => code === language)?.[1] || language.toUpperCase();
+}
+
+function defaultSubtitleTrackName(language: string, audioTitle?: string, copy?: number) {
+  const title = audioTitle?.trim() || "Audio sélectionné";
+  const suffix = copy && copy > 1 ? ` (${copy})` : "";
+  return `${subtitleLanguageLabel(language)} — ${title}${suffix}`.slice(0, 180);
+}
+
+function userFacingAudioName(analysis: JobAnalysis) {
+  const stored = analysis.audio_name?.trim();
+  if (stored && !/^input(?:\.[a-z0-9]+)?$/i.test(stored)) return stored;
+  return analysis.parts[0]?.title?.trim() || "Audio du cours";
+}
+
 function analysisDrafts(analysis: JobAnalysis): PartDraft[] {
   return analysis.parts.map((part) => ({
     ...part,
@@ -593,7 +609,10 @@ function CourseEditor({ job }: { job: Job }) {
       return;
     }
     setSelectedSubtitleTrackId(crypto.randomUUID().replaceAll("-", ""));
-    setSubtitleTrackName(`Sous-titres ${analysis.subtitles.language.toUpperCase()}`);
+    setSubtitleTrackName(defaultSubtitleTrackName(
+      analysis.subtitles.language,
+      selectedAudio.content?.title,
+    ));
     setSubtitleDraft(subtitleSourceForAudio(
       analysis.subtitles,
       selectedAudio.content?.ranges || [],
@@ -952,7 +971,11 @@ function CourseEditor({ job }: { job: Job }) {
       (track) => track.audio_export_job_id === selectedAudio.id,
     ).length;
     setSelectedSubtitleTrackId(crypto.randomUUID().replaceAll("-", ""));
-    setSubtitleTrackName(`Sous-titres ${currentAnalysis.subtitles.language.toUpperCase()} ${existingCount + 1}`);
+    setSubtitleTrackName(defaultSubtitleTrackName(
+      currentAnalysis.subtitles.language,
+      selectedAudio.content?.title,
+      existingCount + 1,
+    ));
     setSubtitleDraft(subtitleSourceForAudio(
       currentAnalysis.subtitles,
       selectedAudio.content?.ranges || [],
@@ -1239,7 +1262,7 @@ function CourseEditor({ job }: { job: Job }) {
               {job.artifacts.includes("audio") && (
                 <div className="audio-review">
                   <span aria-hidden="true">▶</span>
-                  <div><strong>{analysis.audio_name || "Audio du cours"}</strong><small>{formatDuration(analysis.duration_seconds)} · source de travail</small></div>
+                  <div><strong>{userFacingAudioName(analysis)}</strong><small>{formatDuration(analysis.duration_seconds)} · source de travail</small></div>
                   <audio controls preload="metadata" src={api.artifactUrl(job.id, "audio")} />
                 </div>
               )}
@@ -1312,7 +1335,7 @@ function CourseEditor({ job }: { job: Job }) {
               </section>
               <div className="subtitle-options">
                 <label className="subtitle-name">Nom de la piste<input maxLength={180} onChange={(event) => { setSubtitleTrackName(event.target.value); markSubtitleDirty(); }} placeholder="Ex. Français corrigé" value={subtitleTrackName} /></label>
-                <label>Langue<select onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, language: event.target.value }); markSubtitleDirty(); }} value={subtitleDraft.language}>{!subtitleLanguages.some(([code]) => code === subtitleDraft.language) && <option value={subtitleDraft.language}>{subtitleDraft.language.toUpperCase()}</option>}{subtitleLanguages.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select></label>
+                <label>Langue<select onChange={(event) => { const language = event.target.value; const previousLabel = subtitleLanguageLabel(subtitleDraft.language); setSubtitleDraft({ ...subtitleDraft, language }); if (subtitleTrackName.startsWith(`${previousLabel} —`)) setSubtitleTrackName(`${subtitleLanguageLabel(language)}${subtitleTrackName.slice(previousLabel.length)}`.slice(0, 180)); markSubtitleDirty(); }} value={subtitleDraft.language}>{!subtitleLanguages.some(([code]) => code === subtitleDraft.language) && <option value={subtitleDraft.language}>{subtitleDraft.language.toUpperCase()}</option>}{subtitleLanguages.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select></label>
                 <label>Police<select onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, font: event.target.value as JobAnalysis["subtitles"]["font"] }); markSubtitleDirty(); }} value={subtitleDraft.font}><option value="sans">Sans serif</option><option value="serif">Serif</option><option value="mono">Monospace</option></select></label>
                 <label>Taille<input max={96} min={12} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, font_size: Number(event.target.value) }); markSubtitleDirty(); }} step={2} type="number" value={subtitleDraft.font_size} /></label>
                 <label>Couleur des caractères<input onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, color: event.target.value }); markSubtitleDirty(); }} type="color" value={subtitleDraft.color} /></label>
@@ -2593,6 +2616,12 @@ export default function App() {
 
   useEffect(() => {
     api.me().then(setUser).catch(() => setUser(null)).finally(() => setChecking(false));
+  }, []);
+
+  useEffect(() => {
+    const expired = () => setUser(null);
+    window.addEventListener("dars-auth-expired", expired);
+    return () => window.removeEventListener("dars-auth-expired", expired);
   }, []);
 
   async function logout() {

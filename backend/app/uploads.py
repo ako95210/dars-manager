@@ -337,6 +337,7 @@ def create_job_from_asset(
                 "transcription_mode": transcription_mode,
                 "chaptering_mode": chaptering_mode,
                 "course_title": payload.course_title if chaptering_mode == "none" else None,
+                "source_filename": asset.original_name,
             },
         )
     except ValueError as exc:

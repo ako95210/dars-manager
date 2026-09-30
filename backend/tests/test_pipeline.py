@@ -103,8 +103,28 @@ class PipelineTests(unittest.TestCase):
 
             self.assertTrue(selection.is_file())
             self.assertGreater(selection.stat().st_size, 1000)
+            with wave.open(str(selection), "rb") as rendered:
+                self.assertEqual(rendered.getnframes(), 8000)
             self.assertGreater(audio_duration(selection), 0.8)
             self.assertLess(audio_duration(selection), 1.3)
+
+    def test_audio_ranges_are_trimmed_on_exact_sample_boundaries(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.wav"
+            selection = root / "selection.wav"
+            with wave.open(str(source), "wb") as output:
+                output.setnchannels(1)
+                output.setsampwidth(2)
+                output.setframerate(8000)
+                output.writeframes(b"\x00\x00" * 8000 * 3)
+
+            export_clips(source, selection, [(0.123, 0.456), (1.111, 1.444)])
+
+            with wave.open(str(selection), "rb") as rendered:
+                self.assertEqual(rendered.getframerate(), 8000)
+                self.assertEqual(rendered.getnframes(), 5328)
+            self.assertAlmostEqual(audio_duration(selection), 0.666, places=3)
 
     def test_cover_and_static_video_are_valid(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

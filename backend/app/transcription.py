@@ -10,7 +10,7 @@ from typing import Callable, Protocol
 import av
 from av.audio.resampler import AudioResampler
 
-from drsm_core import TranscriptSegment, audio_duration, transcribe_audio
+from drsm_core import TranscriptSegment, audio_duration, transcribe_audio, trim_audio_frame
 
 
 @dataclass(frozen=True)
@@ -59,6 +59,61 @@ def _value(item: object, name: str, default: object = None) -> object:
     return getattr(item, name, default)
 
 
+def _join_word(previous: str, word: str) -> str:
+    raw = str(word)
+    stripped = raw.strip()
+    if not stripped:
+        return previous
+    if not previous:
+        return stripped
+    if raw[:1].isspace() or stripped[0] in ".,;:!?…،؛؟)]}»":
+        return previous + raw.rstrip()
+    return f"{previous} {stripped}"
+
+
+def _subtitle_segments_from_words(words: object) -> tuple[TranscriptSegment, ...]:
+    """Build short readable cues while retaining real word-level timestamps."""
+    if not isinstance(words, (list, tuple)):
+        return ()
+    prepared: list[tuple[float, float, str]] = []
+    for item in words:
+        text = str(_value(item, "word", "") or "")
+        start = max(0.0, float(_value(item, "start", 0.0) or 0.0))
+        end = max(start, float(_value(item, "end", start) or start))
+        if text.strip() and end > start:
+            prepared.append((start, end, text))
+    if not prepared:
+        return ()
+
+    cues: list[TranscriptSegment] = []
+    cue_start = prepared[0][0]
+    cue_end = cue_start
+    cue_text = ""
+    word_count = 0
+    for start, end, word in prepared:
+        if cue_text and start - cue_end >= 0.8:
+            cues.append(TranscriptSegment(cue_start, cue_end, cue_text.strip()))
+            cue_start, cue_text, word_count = start, "", 0
+        candidate = _join_word(cue_text, word)
+        would_overflow = bool(cue_text) and (
+            word_count >= 8
+            or len(candidate) > 72
+            or end - cue_start > 3.5
+        )
+        if would_overflow:
+            cues.append(TranscriptSegment(cue_start, cue_end, cue_text.strip()))
+            cue_start, cue_text, word_count = start, "", 0
+        cue_text = _join_word(cue_text, word)
+        cue_end = end
+        word_count += 1
+        if word_count >= 3 and cue_text.rstrip().endswith((".", "!", "?", "…", "؟")):
+            cues.append(TranscriptSegment(cue_start, cue_end, cue_text.strip()))
+            cue_text, word_count = "", 0
+    if cue_text:
+        cues.append(TranscriptSegment(cue_start, cue_end, cue_text.strip()))
+    return tuple(cues)
+
+
 class OpenAIWhisperProvider:
     provider = "openai"
 
@@ -88,9 +143,10 @@ class OpenAIWhisperProvider:
                 model=self.model,
                 language=language or None,
                 response_format="verbose_json",
-                timestamp_granularities=["segment"],
+                timestamp_granularities=["word", "segment"],
             )
         duration = float(_value(response, "duration", 0.0) or audio_duration(path))
+        word_segments = _subtitle_segments_from_words(_value(response, "words", ()) or ())
         raw_segments = _value(response, "segments", ()) or ()
         segments: list[TranscriptSegment] = []
         for raw in raw_segments:
@@ -100,6 +156,8 @@ class OpenAIWhisperProvider:
             start = max(0.0, float(_value(raw, "start", 0.0) or 0.0))
             end = max(start, float(_value(raw, "end", start) or start))
             segments.append(TranscriptSegment(start, end, text))
+        if word_segments:
+            segments = list(word_segments)
         if not segments:
             text = str(_value(response, "text", "")).strip()
             if text:
@@ -173,7 +231,15 @@ def _encode_wav_range(source_path: Path, output_path: Path, start: float, end: f
                 continue
             if frame_start >= end:
                 break
-            for converted in resampler.resample(frame):
+            frame_rate = float(frame.sample_rate or 48_000)
+            first_sample = math.ceil(max(0.0, start - frame_start) * frame_rate - 1e-9)
+            last_sample = math.ceil(
+                max(0.0, min(frame_end, end) - frame_start) * frame_rate - 1e-9
+            )
+            cropped = trim_audio_frame(av, frame, first_sample, last_sample)
+            if cropped.samples <= 0:
+                continue
+            for converted in resampler.resample(cropped):
                 converted.pts = None
                 for packet in output_stream.encode(converted):
                     output.mux(packet)

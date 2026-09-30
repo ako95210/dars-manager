@@ -26,6 +26,7 @@ from .semantic_analysis import estimate_semantic_tokens
 
 
 router = APIRouter(prefix="/api/jobs", tags=["editor"])
+CURRENT_AUDIO_EXPORT_VERSION = 2
 logger = logging.getLogger(__name__)
 
 
@@ -1167,6 +1168,7 @@ def create_audio_export(
             for job in previous_exports
             if job.options.get("analysis_checksum") == request.checksum_sha256
             and job.options.get("part_indices") == canonical_indices
+            and job.options.get("audio_export_version") == CURRENT_AUDIO_EXPORT_VERSION
             and job.state not in {"failed", "cancelled", "expired"}
         ),
         None,
@@ -1195,6 +1197,7 @@ def create_audio_export(
             "part_indices": canonical_indices,
             "ranges": ranges,
             "title": " · ".join(str(part.get("title", "")) for part in selected),
+            "audio_export_version": CURRENT_AUDIO_EXPORT_VERSION,
         },
     )
     try:
@@ -1302,13 +1305,10 @@ def create_video_export(
     subtitle_payload = None
     subtitle_track_id = None
     audio_export_job_id = None
-    if request.include_subtitles:
-        if not request.audio_export_job_id or not request.subtitle_track_id:
-            raise HTTPException(
-                status_code=422,
-                detail="Choisissez une piste de sous-titres pour cet audio.",
-            )
-        audio_export, _ = child_artifact(
+    audio_export = None
+    selection_artifact = None
+    if request.audio_export_job_id:
+        audio_export, selection_artifact = child_artifact(
             db,
             source_job,
             user.id,
@@ -1320,8 +1320,25 @@ def create_video_export(
         if audio_indices != sorted(canonical_indices):
             raise HTTPException(
                 status_code=422,
-                detail="La piste de sous-titres ne correspond pas à l'audio de cette vidéo.",
+                detail="L'audio sélectionné ne correspond pas aux parties de cette vidéo.",
             )
+        exported_ranges = audio_export.options.get("ranges", [])
+        if (
+            not isinstance(exported_ranges, list)
+            or not exported_ranges
+            or any(not isinstance(item, list) or len(item) != 2 for item in exported_ranges)
+        ):
+            raise HTTPException(status_code=422, detail="La sélection audio est invalide.")
+        ranges = [[float(item[0]), float(item[1])] for item in exported_ranges]
+        validate_export_ranges(source_job, analysis_payload, ranges)
+        audio_export_job_id = audio_export.id
+    if request.include_subtitles:
+        if not request.audio_export_job_id or not request.subtitle_track_id:
+            raise HTTPException(
+                status_code=422,
+                detail="Choisissez une piste de sous-titres pour cet audio.",
+            )
+        assert audio_export is not None
         track = next(
             (
                 item
@@ -1345,7 +1362,6 @@ def create_video_export(
         if not subtitle_payload["cues"]:
             raise HTTPException(status_code=422, detail="Cette piste ne contient aucun sous-titre.")
         subtitle_track_id = request.subtitle_track_id
-        audio_export_job_id = audio_export.id
     signature = {
         "source_job_id": source_job.id,
         "analysis_checksum": request.checksum_sha256,
@@ -1400,6 +1416,20 @@ def create_video_export(
             **signature,
             "ranges": ranges,
             "subtitles": subtitle_payload,
+            "selection_audio_storage_key": (
+                selection_artifact.storage_key
+                if selection_artifact
+                and audio_export
+                and audio_export.options.get("audio_export_version") == CURRENT_AUDIO_EXPORT_VERSION
+                else None
+            ),
+            "selection_audio_checksum": (
+                selection_artifact.checksum_sha256
+                if selection_artifact
+                and audio_export
+                and audio_export.options.get("audio_export_version") == CURRENT_AUDIO_EXPORT_VERSION
+                else None
+            ),
             "template_source_key": (
                 generated_image.storage_key if generated_image else template_source.storage_key
             ),
