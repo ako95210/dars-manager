@@ -297,6 +297,13 @@ function defaultSubtitleTrackName(language: string, audioTitle?: string, copy?: 
   return `${subtitleLanguageLabel(language)} — ${title}${suffix}`.slice(0, 180);
 }
 
+function upgradeLegacySubtitleTrackName(name: string, language: string, audioTitle?: string) {
+  const match = name.trim().match(/^Sous-titres\s+[a-z-]+(?:\s+(\d+))?$/i);
+  return match
+    ? defaultSubtitleTrackName(language, audioTitle, match[1] ? Number(match[1]) : undefined)
+    : name;
+}
+
 function userFacingAudioName(analysis: JobAnalysis) {
   const stored = analysis.audio_name?.trim();
   if (stored && !/^input(?:\.[a-z0-9]+)?$/i.test(stored)) return stored;
@@ -595,8 +602,13 @@ function CourseEditor({ job }: { job: Job }) {
     );
     const selected = tracks.find((track) => track.id === selectedSubtitleTrackId) || tracks[0];
     if (selected) {
+      const trackName = upgradeLegacySubtitleTrackName(
+        selected.name,
+        selected.language,
+        selectedAudio.content?.title,
+      );
       setSelectedSubtitleTrackId(selected.id);
-      setSubtitleTrackName(selected.name);
+      setSubtitleTrackName(trackName);
       setSubtitleDraft({
         language: selected.language,
         font: selected.font,
@@ -605,7 +617,8 @@ function CourseEditor({ job }: { job: Job }) {
         position: selected.position || "bottom",
         cues: selected.cues,
       });
-      setSubtitleDirty(false);
+      if (trackName === selected.name) setSubtitleDirty(false);
+      else markSubtitleDirty();
       return;
     }
     setSelectedSubtitleTrackId(crypto.randomUUID().replaceAll("-", ""));
