@@ -336,6 +336,8 @@ function subtitleCuesForAudio(
         start: offset + Math.max(rangeStart, cue.start) - rangeStart,
         end: offset + Math.min(rangeEnd, cue.end) - rangeStart,
         text: cue.text,
+        uncertain: cue.uncertain,
+        uncertainty_reason: cue.uncertainty_reason,
       });
     });
     offset += rangeEnd - rangeStart;
@@ -886,7 +888,7 @@ function CourseEditor({ job }: { job: Job }) {
     setError("");
     try {
       const quote = await api.subtitleProofreadQuote(job.id, exportJob.id);
-      if (!window.confirm(`Corriger l’orthographe et la grammaire avec ${quote.model} pour environ ${Number(quote.amount).toFixed(4)} ${quote.currency} ?`)) return;
+      if (!window.confirm(`Corriger ou traduire uniquement l’audio sélectionné avec ${quote.model} pour environ ${Number(quote.amount).toFixed(4)} ${quote.currency} ?`)) return;
       setProofreadJob(await api.createSubtitleProofread(
         job.id,
         saved.analysis.checksum_sha256,
@@ -1370,7 +1372,7 @@ function CourseEditor({ job }: { job: Job }) {
 
           {activeLab === "subtitles" && subtitleDraft && (
             <section className="studio-lab-panel subtitle-lab" role="tabpanel">
-              <header className="editor-heading"><div><span className="eyebrow">Sous-titres · optionnels</span><h2>Préparer le texte affiché dans la vidéo</h2><p>Créez et conservez plusieurs pistes pour un même audio. Chaque création et chaque modification sont enregistrées automatiquement.</p></div><div className="project-header-actions"><button className="button secondary compact" disabled={!selectedAudio || proofreadBusy || subtitleSaving} onClick={proofreadSubtitles}>{proofreadBusy ? "Correction en cours…" : "Corriger / traduire avec l’IA"}</button><button className="button primary compact" disabled={!subtitleDirty || subtitleSaving} onClick={() => void saveSubtitles()}>{subtitleSaving ? "Enregistrement…" : subtitleDirty ? "Enregistrer maintenant" : "Piste enregistrée"}</button></div></header>
+              <header className="editor-heading"><div><span className="eyebrow">Sous-titres · optionnels</span><h2>Préparer le texte affiché dans la vidéo</h2><p>La correction IA porte uniquement sur l’audio sélectionné, jamais sur le Dars complet. Créez et conservez plusieurs pistes ; chaque modification est enregistrée automatiquement.</p></div><div className="project-header-actions"><button className="button secondary compact" disabled={!selectedAudio || proofreadBusy || subtitleSaving} onClick={proofreadSubtitles}>{proofreadBusy ? "Correction en cours…" : "Corriger la sélection avec l’IA"}</button><button className="button primary compact" disabled={!subtitleDirty || subtitleSaving} onClick={() => void saveSubtitles()}>{subtitleSaving ? "Enregistrement…" : subtitleDirty ? "Enregistrer maintenant" : "Piste enregistrée"}</button></div></header>
               {proofreadJob && <p className="editor-feedback">{proofreadJob.error || proofreadJob.message}</p>}
               {selectedAudio && <div className="adjustment-source"><div><span>Audio sélectionné</span><strong>{selectedAudio.content?.title || "Extrait audio"}</strong><small>{scopedSubtitleCues.length} sous-titre{scopedSubtitleCues.length > 1 ? "s" : ""} · {formatDuration(selectedAudio.metrics.duration_seconds)}</small></div><audio controls preload="metadata" src={api.artifactUrl(selectedAudio.id, "selection_audio")} /></div>}
               <section className="subtitle-track-library">
@@ -1391,7 +1393,7 @@ function CourseEditor({ job }: { job: Job }) {
                 <label>Position de la barre<select onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, position: event.target.value as JobAnalysis["subtitles"]["position"] }); markSubtitleDirty(); }} value={subtitleDraft.position}><option value="top">En haut</option><option value="center">Au centre</option><option value="bottom">En bas</option></select></label>
               </div>
               <p className="subtitle-layout-note">Le texte est automatiquement ajusté sur deux lignes maximum. Toutes les pistes et leurs timecodes seront inclus dans la sauvegarde `.dars`.</p>
-              <div className="subtitle-cues">{scopedSubtitleCues.map((cue) => <label key={`${cue.sourceIndex}-${cue.start}`}><span>{formatDuration(cue.start)} → {formatDuration(cue.end)}</span><textarea rows={2} value={cue.text} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, cues: subtitleDraft.cues.map((item, position) => position === cue.sourceIndex ? { ...item, text: event.target.value } : item) }); markSubtitleDirty(); }} /></label>)}</div>
+              <div className="subtitle-cues">{scopedSubtitleCues.map((cue) => <label className={cue.uncertain ? "uncertain" : ""} key={`${cue.sourceIndex}-${cue.start}`}><span>{formatDuration(cue.start)} → {formatDuration(cue.end)}</span><div><textarea rows={2} value={cue.text} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, cues: subtitleDraft.cues.map((item, position) => position === cue.sourceIndex ? { start: item.start, end: item.end, text: event.target.value } : item) }); markSubtitleDirty(); }} />{cue.uncertain && <small>À vérifier à l’écoute : {cue.uncertainty_reason || "passage incertain"}</small>}</div></label>)}</div>
               <div className="lab-next-actions"><button className="button secondary" onClick={() => void changeLab("audio-creation")}>Retour à Création Audio</button><button className="button accent" onClick={() => void changeLab("video-creation")}>Passer à Création Vidéo</button></div>
             </section>
           )}
@@ -2271,11 +2273,11 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
                 <div className="mode-options">
                   <label className={transcriptionMode === "cloud" ? "mode-option active" : "mode-option"}>
                     <input checked={transcriptionMode === "cloud"} name="transcription-mode" onChange={() => setTranscriptionMode("cloud")} type="radio" />
-                    <span><strong>Cloud — recommandé</strong><small><b>Avantages :</b> meilleure précision, plus rapide, avec correction automatique de l’orthographe, de la grammaire et de la syntaxe avant le chapitrage.</small><small><b>Inconvénient :</b> la transcription et cette passe de correction sont facturées.</small></span>
+                    <span><strong>Cloud — recommandé</strong><small><b>Avantages :</b> meilleure précision, plus rapide, avec glossaire spécialisé et continuité entre les fragments.</small><small><b>Coût maîtrisé :</b> la correction grammaticale n’est proposée qu’après la sélection d’un extrait et ne porte que sur celui-ci.</small></span>
                   </label>
                   <label className={transcriptionMode === "local" ? "mode-option active" : "mode-option"}>
                     <input checked={transcriptionMode === "local"} name="transcription-mode" onChange={() => setTranscriptionMode("local")} type="radio" />
-                    <span><strong>Serveur local — économique</strong><small><b>Avantages :</b> aucun appel de transcription ni de correction facturé, traitement sur le serveur Dars Manager.</small><small><b>Inconvénients :</b> le temps est plus long, la qualité peut varier et la première transcription n’est pas corrigée automatiquement. Les traitements locaux sont placés dans une file d’attente.</small></span>
+                    <span><strong>Serveur local — économique</strong><small><b>Avantages :</b> aucun appel de transcription facturé, traitement sur le serveur Dars Manager.</small><small><b>Inconvénients :</b> le temps est plus long et la qualité peut varier. Une correction IA facultative et facturée reste disponible plus tard pour le seul extrait sélectionné.</small></span>
                   </label>
                 </div>
               </fieldset>
@@ -2315,10 +2317,9 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
                   <small>{formatDuration(quote.duration_seconds)} · transcription {quote.transcription_mode === "cloud" ? "cloud" : `locale (${quote.model})`} · {quote.chaptering_mode === "none" ? "sans chapitrage" : `chapitrage ${quote.chaptering_mode === "ai" ? "IA" : "local"}`}</small>
                   <small>
                     Transcription {Number(quote.transcription_amount).toFixed(4)} {quote.currency}
-                    {` · correction initiale ${Number(quote.subtitle_proofreading.amount).toFixed(4)} ${quote.currency}`}
                     {` · chapitrage ${Number(quote.semantic_analysis.amount).toFixed(4)} ${quote.currency}`}
                   </small>
-                  {quote.subtitle_proofreading.enabled && <small>Correction initiale automatique incluse : orthographe, grammaire, syntaxe et ponctuation, sans modifier les horodatages.</small>}
+                  <small>La correction grammaticale n’est pas incluse ici : elle sera estimée uniquement pour l’extrait que vous sauvegarderez.</small>
                   {quote.budget_state !== "disabled" && (
                     <small>Projection mensuelle : {formatCurrency(quote.monthly_projected, quote.currency)} / {formatCurrency(quote.monthly_budget, quote.currency)}</small>
                   )}

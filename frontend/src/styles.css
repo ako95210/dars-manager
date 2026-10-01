@@ -781,7 +781,10 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .subtitle-cues { display: grid; gap: .75rem; max-height: 36rem; overflow-y: auto; padding-right: .4rem; }
 .subtitle-cues label { display: grid; grid-template-columns: 8rem 1fr; align-items: start; gap: .75rem; }
 .subtitle-cues label span { color: #52627a; font-size: .85rem; padding-top: .7rem; }
+.subtitle-cues label > div { min-width: 0; }
 .subtitle-cues textarea { width: 100%; resize: vertical; }
+.subtitle-cues label.uncertain textarea { border-color: #d8a948; background: #fffaf0; }
+.subtitle-cues label.uncertain small { display: block; margin-top: .35rem; color: #8a6217; line-height: 1.4; }
 .subtitle-layout-note { margin: -.5rem 0 1rem; color: #64748b; font-size: .82rem; }
 .video-subtitle-choice { display: grid; gap: .65rem; min-width: min(100%, 290px); }
 .video-subtitle-select { display: grid; gap: .35rem; color: #52627a; font-size: .78rem; font-weight: 700; }

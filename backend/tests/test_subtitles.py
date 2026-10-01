@@ -8,11 +8,26 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
+from backend.app.editor import SubtitleCue, normalize_subtitle_cues
 from backend.app.rendering import FORMAT_SIZES, prepare_subtitles, remap_subtitles, subtitle_cue_indices, subtitle_frame, subtitle_layout
 from backend.app.semantic_analysis import OpenAISemanticAnalyzer, SemanticAnalysisError
 
 
 class SubtitleTests(unittest.TestCase):
+    def test_uncertain_review_marker_survives_subtitle_save(self) -> None:
+        cues = normalize_subtitle_cues(
+            [SubtitleCue(
+                start=2,
+                end=4,
+                text="Passage [inaudible].",
+                uncertain=True,
+                uncertainty_reason="Un mot reste ambigu.",
+            )],
+            [(0, 10)],
+        )
+        self.assertTrue(cues[0]["uncertain"])
+        self.assertEqual(cues[0]["uncertainty_reason"], "Un mot reste ambigu.")
+
     def test_remap_across_selected_audio_ranges(self) -> None:
         source = {"font": "sans", "color": "#ffffff", "cues": [
             {"start": 3, "end": 6, "text": "Un"},

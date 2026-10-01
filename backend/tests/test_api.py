@@ -8,7 +8,7 @@ import uuid
 import wave
 import zipfile
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -477,9 +477,9 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(quote.json()["billed_seconds"], 91)
             self.assertEqual(quote.json()["transcription_amount"], "0.009100")
             self.assertEqual(quote.json()["semantic_analysis"]["amount"], "0.000520")
-            self.assertTrue(quote.json()["subtitle_proofreading"]["enabled"])
-            self.assertEqual(quote.json()["subtitle_proofreading"]["amount"], "0.001120")
-            self.assertEqual(quote.json()["amount"], "0.010740")
+            self.assertFalse(quote.json()["subtitle_proofreading"]["enabled"])
+            self.assertEqual(quote.json()["subtitle_proofreading"]["amount"], "0.000000")
+            self.assertEqual(quote.json()["amount"], "0.009620")
 
     def test_processing_modes_change_the_quote_independently(self) -> None:
         with TestClient(app) as client:
@@ -502,8 +502,8 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200, response.text)
                 quotes[(transcription_mode, chaptering_mode)] = response.json()
 
-            self.assertEqual(quotes[("cloud", "ai")]["amount"], "0.010740")
-            self.assertEqual(quotes[("cloud", "local")]["amount"], "0.010220")
+            self.assertEqual(quotes[("cloud", "ai")]["amount"], "0.009620")
+            self.assertEqual(quotes[("cloud", "local")]["amount"], "0.009100")
             self.assertEqual(quotes[("local", "ai")]["amount"], "0.000520")
             self.assertEqual(quotes[("local", "local")]["amount"], "0.000000")
             self.assertEqual(quotes[("local", "local")]["model"], "base")
@@ -640,8 +640,8 @@ class ApiTests(unittest.TestCase):
             project_cost = next(
                 item for item in summary.json()["projects"] if item["project_id"] == project_id
             )
-            self.assertEqual(project_cost["estimated_cost"], "0.065160")
-            self.assertEqual(project_cost["operations"], 5)
+            self.assertEqual(project_cost["estimated_cost"], "0.060960")
+            self.assertEqual(project_cost["operations"], 3)
 
             with SessionLocal() as db:
                 owner = db.scalar(select(User).where(User.email == "pilot-b@example.com"))
@@ -1826,6 +1826,8 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual(confirmed.id, repeated.id)
                 self.assertEqual(estimated.amount_nanos, 60_000_000)
                 self.assertEqual(confirmed.amount_nanos, 50_000_000)
+                estimated.occurred_at = datetime(2026, 9, 15, tzinfo=timezone.utc)
+                confirmed.occurred_at = datetime(2026, 9, 15, tzinfo=timezone.utc)
                 db.commit()
                 billed_user_id = billed_user.id
 
@@ -1959,6 +1961,7 @@ class ApiTests(unittest.TestCase):
                         amount_nanos=50_000_000,
                         status="confirmed",
                         idempotency_key=f"community-{suffix}-{TEST_ID}",
+                        occurred_at=datetime(2026, 9, 15, tzinfo=timezone.utc),
                     )
                     db.add(event)
                     self.assertEqual(event.amount_nanos, 50_000_000)

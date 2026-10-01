@@ -12,7 +12,7 @@ from .config import settings
 from .costs import cost_control, money_string, quote_usage
 from .database import get_db
 from .models import User
-from .semantic_analysis import estimate_proofreading_tokens, estimate_semantic_tokens
+from .semantic_analysis import estimate_semantic_tokens
 
 
 router = APIRouter(prefix="/api/transcription", tags=["transcription"])
@@ -71,32 +71,7 @@ def quote_transcription(
                 (analysis_output_tokens, "output_token"),
             )
         )
-    proofreading_amount_nanos = 0
-    proofreading_input_tokens = 0
-    proofreading_output_tokens = 0
-    if transcription_mode == "cloud":
-        proofreading_input_tokens, proofreading_output_tokens = (
-            estimate_proofreading_tokens(payload.duration_seconds)
-        )
-        proofreading_amount_nanos = sum(
-            quote_usage(
-                db,
-                provider="openai",
-                service="content_analysis",
-                model=settings.semantic_analysis_model,
-                quantity=quantity,
-                unit=unit,
-            ).amount_nanos
-            for quantity, unit in (
-                (proofreading_input_tokens, "input_token"),
-                (proofreading_output_tokens, "output_token"),
-            )
-        )
-    total_amount_nanos = (
-        transcription_amount_nanos
-        + analysis_amount_nanos
-        + proofreading_amount_nanos
-    )
+    total_amount_nanos = transcription_amount_nanos + analysis_amount_nanos
     control = cost_control(
         db,
         user_id=user.id,
@@ -123,11 +98,11 @@ def quote_transcription(
             "amount": money_string(analysis_amount_nanos),
         },
         "subtitle_proofreading": {
-            "enabled": transcription_mode == "cloud",
+            "enabled": False,
             "model": settings.semantic_analysis_model,
-            "estimated_input_tokens": proofreading_input_tokens,
-            "estimated_output_tokens": proofreading_output_tokens,
-            "amount": money_string(proofreading_amount_nanos),
+            "estimated_input_tokens": 0,
+            "estimated_output_tokens": 0,
+            "amount": money_string(0),
         },
         "unit_amount": money_string(transcription_unit_amount_nanos),
         "requires_confirmation": control.requires_confirmation,

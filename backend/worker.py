@@ -288,20 +288,58 @@ class Worker:
             if not selected_indices:
                 raise ValueError("The selected audio has no subtitles")
             corrected_by_index: dict[int, str] = {}
+            uncertainty_by_index: dict[int, str] = {}
+            target_language = str(subtitles.get("language") or job.language)
+            source_language = str(job.options.get("source_language") or job.language)
+            glossary_terms = [
+                str(term)
+                for term in job.options.get("glossary_terms", [])
+                if str(term).strip()
+            ]
             for offset in range(0, len(selected_indices), 20):
                 self._wait_if_paused(job)
                 if self._control_state(job) in {"cancelled", "cancelling"}:
                     raise AnalysisCancelled("Job cancelled")
                 chunk_indices = selected_indices[offset:offset + 20]
                 chunk = [cues[index] for index in chunk_indices]
-                texts, call = self.semantic_analyzer.proofread_subtitles([str(item["text"]) for item in chunk], str(subtitles.get("language") or job.language))
-                self._record_semantic_analysis_call(job, call, "subtitle_proofread")
-                corrected_by_index.update(zip(chunk_indices, texts))
+                if target_language == source_language:
+                    before_indices = selected_indices[max(0, offset - 8) : offset]
+                    after_indices = selected_indices[
+                        offset + len(chunk_indices) : offset + len(chunk_indices) + 8
+                    ]
+                    proofreading = self.semantic_analyzer.proofread_transcript(
+                        [str(item["text"]) for item in chunk],
+                        target_language,
+                        glossary_terms=glossary_terms,
+                        context_before=" ".join(str(cues[index]["text"]) for index in before_indices),
+                        context_after=" ".join(str(cues[index]["text"]) for index in after_indices),
+                    )
+                    corrected_by_index.update(zip(chunk_indices, proofreading.texts))
+                    for uncertainty in proofreading.uncertainties:
+                        uncertainty_by_index[chunk_indices[uncertainty.index]] = uncertainty.reason
+                    call = proofreading.call
+                    purpose = "selected_transcript_proofread"
+                else:
+                    texts, call = self.semantic_analyzer.proofread_subtitles(
+                        [str(item["text"]) for item in chunk],
+                        target_language,
+                    )
+                    corrected_by_index.update(zip(chunk_indices, texts))
+                    purpose = "subtitle_translation"
+                self._record_semantic_analysis_call(job, call, purpose)
                 self._save_progress(job, {"stage": "subtitle_proofread", "message": "Correction des sous-titres", "progress": min(0.9, (offset + len(chunk)) / len(selected_indices) * 0.9)})
-            corrected_cues = [
-                {**cue, "text": corrected_by_index.get(index, str(cue["text"]))}
-                for index, cue in enumerate(cues)
-            ]
+            corrected_cues = []
+            for index, cue in enumerate(cues):
+                corrected = {
+                    key: value
+                    for key, value in cue.items()
+                    if key not in {"uncertain", "uncertainty_reason"}
+                }
+                corrected["text"] = corrected_by_index.get(index, str(cue["text"]))
+                if index in uncertainty_by_index:
+                    corrected["uncertain"] = True
+                    corrected["uncertainty_reason"] = uncertainty_by_index[index]
+                corrected_cues.append(corrected)
             output_path = job.workspace / "subtitle-suggestions.json"
             output_path.write_text(json.dumps({"analysis_checksum": checksum, "cues": corrected_cues}, ensure_ascii=False), encoding="utf-8")
             output_key = f"users/{job.user_id}/projects/{job.project_id}/jobs/{job.id}/subtitle-suggestions.json"
@@ -1285,16 +1323,6 @@ class Worker:
                 semantic_input_tokens += call.input_tokens
                 semantic_output_tokens += call.output_tokens
 
-            def record_automatic_proofreading(call: SemanticAnalysisCall) -> None:
-                nonlocal semantic_input_tokens, semantic_output_tokens
-                self._record_semantic_analysis_call(
-                    job,
-                    call,
-                    "automatic_subtitle_proofreading",
-                )
-                semantic_input_tokens += call.input_tokens
-                semantic_output_tokens += call.output_tokens
-
             transcription_mode = str(
                 job.options.get("transcription_mode", settings.transcription_backend)
             )
@@ -1314,9 +1342,6 @@ class Worker:
                 raise ValueError("Cloud transcription provider is unavailable")
             if use_ai_chaptering and self.semantic_analyzer is None:
                 raise ValueError("AI chaptering provider is unavailable")
-            if use_cloud_transcription and self.semantic_analyzer is None:
-                raise ValueError("Automatic transcript proofreading is unavailable")
-
             provider = (
                 CheckpointingTranscriptionProvider(
                     self.transcription_provider,
@@ -1348,12 +1373,6 @@ class Worker:
                 semantic_analyzer=semantic_analyzer,
                 on_semantic_usage=(
                     record_semantic_analysis if semantic_analyzer else None
-                ),
-                proofreading_analyzer=(
-                    self.semantic_analyzer if use_cloud_transcription else None
-                ),
-                on_proofreading_usage=(
-                    record_automatic_proofreading if use_cloud_transcription else None
                 ),
                 chaptering_mode=chaptering_mode,
                 course_title=str(job.options.get("course_title") or "Cours audio"),
