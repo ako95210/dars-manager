@@ -1592,7 +1592,7 @@ function ProjectEditor({
           <label>
             Glossaire de transcription
             <textarea maxLength={8000} onChange={(event) => setGlossary(event.target.value)} placeholder={"Ex. nom d’un intervenant\nNom propre\nTerme technique"} rows={7} value={glossary} />
-            <small>Une expression par ligne. Elle complète le vocabulaire intégré et aide le moteur à reconnaître les noms propres et termes spécialisés sans les inventer.</small>
+            <small>Une expression par ligne. Elle complète un glossaire religieux intégré de plus de 90 termes et formules arabes : Allah, Coran, Sunna, hadith, inchallah, al-hamdulillah, sallallahu 'alayhi wa sallam… Les formules sont retranscrites en alphabet latin sans être traduites.</small>
           </label>
           {error && <p className="form-error notice">{error}</p>}
           <div className="modal-actions">
@@ -2263,8 +2263,8 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
               <section className="glossary-summary">
                 <div>
                   <span className="eyebrow">Glossaire de transcription</span>
-                  <strong>{project.glossary_terms.length ? `${project.glossary_terms.length} expression${project.glossary_terms.length > 1 ? "s" : ""} personnalisée${project.glossary_terms.length > 1 ? "s" : ""}` : "Vocabulaire intégré actif"}</strong>
-                  <small>Les termes spécialisés et le contexte précédent aideront la reconnaissance. Le glossaire ne remplace jamais ce qui est réellement prononcé.</small>
+                  <strong>Glossaire religieux intégré · 90+ termes{project.glossary_terms.length ? ` · ${project.glossary_terms.length} personnalisé${project.glossary_terms.length > 1 ? "s" : ""}` : ""}</strong>
+                  <small>Les formules arabes sont conservées en alphabet latin sans traduction. « Allah » garde toujours sa majuscule ; les termes personnalisés complètent le glossaire sans faire apparaître de mots absents de l’audio.</small>
                 </div>
                 <button className="button secondary compact" onClick={onEdit} type="button">Modifier le glossaire</button>
               </section>

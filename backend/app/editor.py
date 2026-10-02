@@ -23,6 +23,7 @@ from .media_lifecycle import meter_media
 from .models import Artifact, BrandTemplate, BrandTemplateFile, Project, User, utc_now
 from .runtime import job_queue, manager, media_storage
 from .semantic_analysis import estimate_proofreading_tokens, estimate_semantic_tokens
+from .terminology import effective_glossary
 
 
 router = APIRouter(prefix="/api/jobs", tags=["editor"])
@@ -609,7 +610,7 @@ def create_subtitle_proofread(job_id: str, request: SubtitleProofreadRequest, us
     control = cost_control(db, user_id=user.id, proposed_amount_nanos=amount_nanos, lock_policy=True)
     if control.requires_confirmation and not request.cost_confirmed:
         raise HTTPException(status_code=409, detail="Cette correction dépasse un seuil financier et doit être confirmée.")
-    child = manager.create(user.id, source.project_id, "subtitle-suggestions.json", settings.semantic_analysis_model, source.language, settings.whisper_cpu_threads, execution_backend="worker", allocate_workspace=False, tool="subtitle_proofread", options={"source_job_id": source.id, "analysis_storage_key": analysis.storage_key, "analysis_checksum": request.checksum_sha256, "audio_export_job_id": audio_export.id, "subtitle_track_id": request.subtitle_track_id, "part_indices": part_indices, "ranges": ranges, "source_language": source.language, "glossary_terms": list(source.options.get("glossary_terms", []))})
+    child = manager.create(user.id, source.project_id, "subtitle-suggestions.json", settings.semantic_analysis_model, source.language, settings.whisper_cpu_threads, execution_backend="worker", allocate_workspace=False, tool="subtitle_proofread", options={"source_job_id": source.id, "analysis_storage_key": analysis.storage_key, "analysis_checksum": request.checksum_sha256, "audio_export_job_id": audio_export.id, "subtitle_track_id": request.subtitle_track_id, "part_indices": part_indices, "ranges": ranges, "source_language": source.language, "glossary_terms": effective_glossary(source.options.get("glossary_terms", []))})
     try:
         for quantity, unit in ((input_tokens, "input_token"), (output_tokens, "output_token")):
             record_usage(db, user_id=user.id, project_id=source.project_id, job_id=child.id, provider="openai", service="content_analysis", model=settings.semantic_analysis_model, quantity=quantity, unit=unit, status="estimated", idempotency_key=f"content-analysis:{child.id}:estimate:{unit}", details={"purpose": "subtitle_proofread", "cost_confirmed": request.cost_confirmed})

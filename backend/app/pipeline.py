@@ -30,6 +30,7 @@ from drsm_core import (
 
 from .transcription import TranscriptionProvider, UsageCallback, transcribe_in_chunks
 from .semantic_analysis import SemanticAnalyzer, SemanticUsageCallback, SubtitleProofreader
+from .terminology import normalize_religious_style
 
 
 ProgressCallback = Callable[[dict], None]
@@ -258,6 +259,14 @@ def run_pipeline(
             )
         if not segments:
             raise ValueError("Whisper did not return any transcript segment")
+        segments = [
+            TranscriptSegment(
+                segment.start,
+                segment.end,
+                normalize_religious_style(segment.text),
+            )
+            for segment in segments
+        ]
         if should_cancel and should_cancel():
             raise AnalysisCancelled("Analysis cancelled")
         control_point()
