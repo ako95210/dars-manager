@@ -137,7 +137,7 @@ class SemanticAnalysisTests(unittest.TestCase):
         self.assertEqual(result.call.request_id, "req_proofread_test")
         self.assertEqual(result.uncertainties[0].index, 1)
         self.assertIn("Ne traduis jamais", responses.arguments["instructions"])
-        self.assertIn("Il, Lui, Son, Sa et Ses", responses.arguments["instructions"])
+        self.assertIn("Il, Lui, Celui, Son, Sa, Ses", responses.arguments["instructions"])
         self.assertIn("Sunna", responses.arguments["input"])
 
 

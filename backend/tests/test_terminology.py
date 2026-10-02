@@ -18,6 +18,8 @@ class TerminologyTests(unittest.TestCase):
             "Coran",
             "Sunna",
             "inchallah",
+            "soubhanahu wa ta'ala",
+            "'azza wa jall",
             "sallallahu 'alayhi wa sallam",
             "radiyallahu 'anhu",
         ):
