@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .archive_format import ARCHIVE_SCHEMA
 from .auth import require_client
 from .config import settings
 from .costs import cost_control, money_string, quote_usage, record_usage
@@ -331,7 +332,12 @@ def queue_auto_archive(db: Session, source_job: Job, *, audio_job_id: str | None
                 item = db.scalar(select(Artifact).where(Artifact.job_id == child_id, Artifact.kind == artifact_kind))
                 if item:
                     references[artifact_kind] = archive_reference(item)
-    signature = {"source_job_id": source_job.id, "analysis_checksum": analysis.checksum_sha256, "archive_files": references}
+    signature = {
+        "source_job_id": source_job.id,
+        "analysis_checksum": analysis.checksum_sha256,
+        "archive_files": references,
+        "archive_schema": ARCHIVE_SCHEMA,
+    }
     if any(item.tool == "archive_export" and item.options.get("automatic") and all(item.options.get(key) == value for key, value in signature.items()) and item.state not in {"failed", "cancelled", "expired"} for item in manager.list_for_user(source_job.user_id, source_job.project_id)):
         return
     child = manager.create(source_job.user_id, source_job.project_id, "cours-auto.dars", "", source_job.language, settings.whisper_cpu_threads, execution_backend="worker", allocate_workspace=False, tool="archive_export", options={**signature, "project_title": project.title, "automatic": True})
@@ -610,7 +616,13 @@ def create_subtitle_proofread(job_id: str, request: SubtitleProofreadRequest, us
     control = cost_control(db, user_id=user.id, proposed_amount_nanos=amount_nanos, lock_policy=True)
     if control.requires_confirmation and not request.cost_confirmed:
         raise HTTPException(status_code=409, detail="Cette correction dépasse un seuil financier et doit être confirmée.")
-    child = manager.create(user.id, source.project_id, "subtitle-suggestions.json", settings.semantic_analysis_model, source.language, settings.whisper_cpu_threads, execution_backend="worker", allocate_workspace=False, tool="subtitle_proofread", options={"source_job_id": source.id, "analysis_storage_key": analysis.storage_key, "analysis_checksum": request.checksum_sha256, "audio_export_job_id": audio_export.id, "subtitle_track_id": request.subtitle_track_id, "part_indices": part_indices, "ranges": ranges, "source_language": source.language, "glossary_terms": effective_glossary(source.options.get("glossary_terms", []))})
+    project = db.scalar(
+        select(Project).where(Project.id == source.project_id, Project.user_id == user.id)
+    )
+    glossary_terms = effective_glossary(
+        project.glossary_terms if project is not None else source.options.get("glossary_terms", [])
+    )
+    child = manager.create(user.id, source.project_id, "subtitle-suggestions.json", settings.semantic_analysis_model, source.language, settings.whisper_cpu_threads, execution_backend="worker", allocate_workspace=False, tool="subtitle_proofread", options={"source_job_id": source.id, "analysis_storage_key": analysis.storage_key, "analysis_checksum": request.checksum_sha256, "audio_export_job_id": audio_export.id, "subtitle_track_id": request.subtitle_track_id, "part_indices": part_indices, "ranges": ranges, "source_language": source.language, "glossary_terms": glossary_terms})
     try:
         for quantity, unit in ((input_tokens, "input_token"), (output_tokens, "output_token")):
             record_usage(db, user_id=user.id, project_id=source.project_id, job_id=child.id, provider="openai", service="content_analysis", model=settings.semantic_analysis_model, quantity=quantity, unit=unit, status="estimated", idempotency_key=f"content-analysis:{child.id}:estimate:{unit}", details={"purpose": "subtitle_proofread", "cost_confirmed": request.cost_confirmed})
@@ -1588,6 +1600,7 @@ def create_archive_export(
         "analysis_checksum": request.checksum_sha256,
         "archive_files": references,
         "render": render_snapshot,
+        "archive_schema": ARCHIVE_SCHEMA,
     }
     previous = [
         job

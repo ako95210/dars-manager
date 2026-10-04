@@ -589,7 +589,7 @@ export const api = {
     }),
   subtitleProofreadQuote: (jobId: string, audioExportJobId: string) => request<{ model: string; amount: string; currency: string }>(`/api/jobs/${jobId}/analysis/subtitles/proofread-quote?audio_export_job_id=${encodeURIComponent(audioExportJobId)}`),
   createSubtitleProofread: (jobId: string, checksumSha256: string, audioExportJobId: string, subtitleTrackId: string) => request<Job>(`/api/jobs/${jobId}/analysis/subtitles/proofread`, { method: "POST", body: JSON.stringify({ checksum_sha256: checksumSha256, audio_export_job_id: audioExportJobId, subtitle_track_id: subtitleTrackId, cost_confirmed: true }) }),
-  subtitleSuggestions: (jobId: string, childId: string) => request<{ analysis_checksum: string; cues: AnalysisSegment[] }>(`/api/jobs/${jobId}/analysis/subtitles/proofread/${childId}`),
+  subtitleSuggestions: (jobId: string, childId: string) => request<{ analysis_checksum: string; cues: AnalysisSegment[]; learned_glossary_terms: string[] }>(`/api/jobs/${jobId}/analysis/subtitles/proofread/${childId}`),
   semanticReanalysisQuote: (jobId: string) =>
     request<SemanticReanalysisQuote>(`/api/jobs/${jobId}/analysis/reanalysis-quote`),
   createSemanticReanalysis: (

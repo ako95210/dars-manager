@@ -6,7 +6,7 @@ from typing import Callable, Protocol
 
 from drsm_core import CoursePart, TranscriptSegment
 
-from .terminology import normalize_religious_style
+from .terminology import normalize_glossary_terms, normalize_religious_style
 
 
 class SemanticAnalysisError(RuntimeError):
@@ -39,6 +39,7 @@ class TranscriptProofreadingResult:
     texts: tuple[str, ...]
     uncertainties: tuple[TranscriptUncertainty, ...]
     call: SemanticAnalysisCall
+    learned_glossary_terms: tuple[str, ...] = ()
 
 
 class SemanticAnalyzer(Protocol):
@@ -300,7 +301,8 @@ class OpenAISemanticAnalyzer:
                 store=False,
                 text={"format": {"type": "json_schema", "name": "subtitle_proofreading", "strict": True, "schema": schema}},
             )
-            items = json.loads(str(_value(response, "output_text", ""))).get("items")
+            output_payload = json.loads(str(_value(response, "output_text", "")))
+            items = output_payload.get("items")
             if not isinstance(items, list) or len(items) != len(texts) or sorted(item.get("index") for item in items) != list(range(len(texts))):
                 raise SemanticAnalysisError("La correction n'a pas conservé tous les sous-titres.")
             corrected = [
@@ -362,9 +364,14 @@ class OpenAISemanticAnalyzer:
                         ],
                         "additionalProperties": False,
                     },
-                }
+                },
+                "glossary_terms": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 20,
+                },
             },
-            "required": ["items"],
+            "required": ["items", "glossary_terms"],
             "additionalProperties": False,
         }
         input_payload = {
@@ -393,7 +400,10 @@ class OpenAISemanticAnalyzer:
                     "Allah avec une majuscule. Lorsque le contexte établit sans ambiguïté "
                     "qu'un pronom, un possessif ou un titre se rapporte à Allah, conserve "
                     "la majuscule, notamment pour Il, Lui, Celui, Son, Sa, Ses, Seigneur "
-                    "et Créateur. N'invente jamais "
+                    "et Créateur. Repère aussi les termes ou formules arabes effectivement "
+                    "prononcés dont la bonne graphie n'est pas encore dans le glossaire et "
+                    "renvoie-les dans glossary_terms, en alphabet latin, sans traduction. "
+                    "N'y mets ni phrase française, ni doublon, ni terme incertain. N'invente jamais "
                     "un mot manquant, une citation, un nom, un fait ou une doctrine. Si un "
                     "passage reste incomplet, incohérent ou impossible à rétablir avec "
                     "confiance, conserve au maximum les mots fiables, ajoute [inaudible] à "
@@ -415,7 +425,8 @@ class OpenAISemanticAnalyzer:
                     }
                 },
             )
-            items = json.loads(str(_value(response, "output_text", ""))).get("items")
+            output_payload = json.loads(str(_value(response, "output_text", "")))
+            items = output_payload.get("items")
             if (
                 not isinstance(items, list)
                 or len(items) != len(texts)
@@ -442,6 +453,19 @@ class OpenAISemanticAnalyzer:
                 for item in ordered
                 if item.get("uncertain")
             )
+            known_terms = {
+                str(term).strip().casefold()
+                for term in (glossary_terms or [])
+                if str(term).strip()
+            }
+            learned_glossary_terms = tuple(
+                term
+                for term in normalize_glossary_terms(
+                    output_payload.get("glossary_terms", []),
+                    limit=20,
+                )
+                if term.casefold() not in known_terms
+            )
         except SemanticAnalysisError:
             raise
         except Exception as exc:
@@ -456,7 +480,12 @@ class OpenAISemanticAnalyzer:
             output_tokens=max(0, int(_value(usage, "output_tokens", 0) or 0)),
             request_id=str(_value(response, "_request_id", "") or "") or None,
         )
-        return TranscriptProofreadingResult(corrected, uncertainties, call)
+        return TranscriptProofreadingResult(
+            corrected,
+            uncertainties,
+            call,
+            learned_glossary_terms,
+        )
 
 
 SemanticUsageCallback = Callable[[SemanticAnalysisCall], None]

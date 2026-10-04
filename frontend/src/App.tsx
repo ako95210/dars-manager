@@ -502,7 +502,9 @@ function CourseEditor({ job }: { job: Job }) {
   const [subtitleSaving, setSubtitleSaving] = useState(false);
   const subtitleRevision = useRef(0);
   const sourceAudioRef = useRef<HTMLAudioElement | null>(null);
+  const subtitleAudioRef = useRef<HTMLAudioElement | null>(null);
   const reviewStopTimer = useRef<number | null>(null);
+  const subtitleReviewStopTimer = useRef<number | null>(null);
   const [proofreadJob, setProofreadJob] = useState<Job | null>(null);
   const [includeSubtitles, setIncludeSubtitles] = useState(false);
   const [parts, setParts] = useState<PartDraft[]>([]);
@@ -543,6 +545,20 @@ function CourseEditor({ job }: { job: Job }) {
     }, Math.max(800, (segment.end - segment.start + 0.8) * 1000));
   }
 
+  function playSubtitleCue(cue: AnalysisSegment) {
+    const audio = subtitleAudioRef.current;
+    if (!audio) return;
+    if (subtitleReviewStopTimer.current !== null) {
+      window.clearTimeout(subtitleReviewStopTimer.current);
+    }
+    audio.currentTime = Math.max(0, cue.start - 0.3);
+    void audio.play().catch(() => setError("La lecture audio n’a pas pu démarrer."));
+    subtitleReviewStopTimer.current = window.setTimeout(() => {
+      audio.pause();
+      subtitleReviewStopTimer.current = null;
+    }, Math.max(800, (cue.end - cue.start + 0.6) * 1000));
+  }
+
   function markSubtitleDirty() {
     subtitleRevision.current += 1;
     setSubtitleDirty(true);
@@ -551,6 +567,7 @@ function CourseEditor({ job }: { job: Job }) {
   useEffect(() => { window.sessionStorage.setItem(`dars-course-visited:${job.id}`, "1"); }, [job.id]);
   useEffect(() => () => {
     if (reviewStopTimer.current !== null) window.clearTimeout(reviewStopTimer.current);
+    if (subtitleReviewStopTimer.current !== null) window.clearTimeout(subtitleReviewStopTimer.current);
   }, []);
 
   function load() {
@@ -764,7 +781,10 @@ function CourseEditor({ job }: { job: Job }) {
         } else if (subtitleDraft && result.cues.length === subtitleDraft.cues.length) {
           setSubtitleDraft({ ...subtitleDraft, cues: result.cues });
           markSubtitleDirty();
-          setNotice("Corrections proposées. Relisez-les puis enregistrez-les.");
+          const learned = result.learned_glossary_terms?.length || 0;
+          setNotice(learned
+            ? `Corrections proposées et ${learned} nouvelle${learned > 1 ? "s" : ""} expression${learned > 1 ? "s" : ""} arabe${learned > 1 ? "s" : ""} ajoutée${learned > 1 ? "s" : ""} au glossaire du projet.`
+            : "Corrections proposées. Relisez-les puis enregistrez-les.");
         }
         setProofreadJob(null);
       }).catch((reason) => { setError(reason instanceof Error ? reason.message : "Suggestions indisponibles."); setProofreadJob(null); });
@@ -1372,9 +1392,9 @@ function CourseEditor({ job }: { job: Job }) {
 
           {activeLab === "subtitles" && subtitleDraft && (
             <section className="studio-lab-panel subtitle-lab" role="tabpanel">
-              <header className="editor-heading"><div><span className="eyebrow">Sous-titres · optionnels</span><h2>Préparer le texte affiché dans la vidéo</h2><p>La correction IA porte uniquement sur l’audio sélectionné, jamais sur le Dars complet. Créez et conservez plusieurs pistes ; chaque modification est enregistrée automatiquement.</p></div><div className="project-header-actions"><button className="button secondary compact" disabled={!selectedAudio || proofreadBusy || subtitleSaving} onClick={proofreadSubtitles}>{proofreadBusy ? "Correction en cours…" : "Corriger la sélection avec l’IA"}</button><button className="button primary compact" disabled={!subtitleDirty || subtitleSaving} onClick={() => void saveSubtitles()}>{subtitleSaving ? "Enregistrement…" : subtitleDirty ? "Enregistrer maintenant" : "Piste enregistrée"}</button></div></header>
+              <header className="editor-heading"><div><span className="eyebrow">Sous-titres · optionnels</span><h2>Préparer le texte affiché dans la vidéo</h2><p>La correction IA porte uniquement sur l’audio sélectionné. Les nouvelles expressions arabes fiables enrichissent automatiquement le glossaire du projet pour les traitements suivants.</p></div><div className="project-header-actions"><button className="button secondary compact" disabled={!selectedAudio || proofreadBusy || subtitleSaving} onClick={proofreadSubtitles}>{proofreadBusy ? "Correction en cours…" : "Corriger la sélection avec l’IA"}</button><button className="button primary compact" disabled={!subtitleDirty || subtitleSaving} onClick={() => void saveSubtitles()}>{subtitleSaving ? "Enregistrement…" : subtitleDirty ? "Enregistrer maintenant" : "Piste enregistrée"}</button></div></header>
               {proofreadJob && <p className="editor-feedback">{proofreadJob.error || proofreadJob.message}</p>}
-              {selectedAudio && <div className="adjustment-source"><div><span>Audio sélectionné</span><strong>{selectedAudio.content?.title || "Extrait audio"}</strong><small>{scopedSubtitleCues.length} sous-titre{scopedSubtitleCues.length > 1 ? "s" : ""} · {formatDuration(selectedAudio.metrics.duration_seconds)}</small></div><audio controls preload="metadata" src={api.artifactUrl(selectedAudio.id, "selection_audio")} /></div>}
+              {selectedAudio && <div className="adjustment-source"><div><span>Audio sélectionné</span><strong>{selectedAudio.content?.title || "Extrait audio"}</strong><small>{scopedSubtitleCues.length} sous-titre{scopedSubtitleCues.length > 1 ? "s" : ""} · {formatDuration(selectedAudio.metrics.duration_seconds)}</small></div><audio controls preload="metadata" ref={subtitleAudioRef} src={api.artifactUrl(selectedAudio.id, "selection_audio")} /></div>}
               <section className="subtitle-track-library">
                 <header><div><span className="eyebrow">Pistes sauvegardées</span><h3>Versions disponibles pour cet audio</h3></div><button className="button secondary compact" disabled={proofreadBusy || subtitleSaving} onClick={() => void createSubtitleTrack()} type="button">＋ Nouvelle piste</button></header>
                 {subtitleTracks.length ? <div>{subtitleTracks.map((track) => <article className={selectedSubtitleTrackId === track.id ? "active" : ""} key={track.id}><button className="subtitle-track-select" disabled={proofreadBusy || subtitleSaving} onClick={() => void selectSubtitleTrack(track.id)} type="button"><strong>{track.name}</strong><small>{track.language.toUpperCase()} · {track.cues.length} sous-titre{track.cues.length > 1 ? "s" : ""}</small></button><button aria-label={`Supprimer la piste ${track.name}`} className="subtitle-track-delete" disabled={proofreadBusy || subtitleSaving} onClick={() => void deleteSubtitleTrack(track.id)} title="Supprimer cette piste" type="button">×</button></article>)}</div> : <p>La première piste est en cours d’enregistrement automatique.</p>}
@@ -1393,7 +1413,7 @@ function CourseEditor({ job }: { job: Job }) {
                 <label>Position de la barre<select onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, position: event.target.value as JobAnalysis["subtitles"]["position"] }); markSubtitleDirty(); }} value={subtitleDraft.position}><option value="top">En haut</option><option value="center">Au centre</option><option value="bottom">En bas</option></select></label>
               </div>
               <p className="subtitle-layout-note">Le texte est automatiquement ajusté sur deux lignes maximum. Toutes les pistes et leurs timecodes seront inclus dans la sauvegarde `.dars`.</p>
-              <div className="subtitle-cues">{scopedSubtitleCues.map((cue) => <label className={cue.uncertain ? "uncertain" : ""} key={`${cue.sourceIndex}-${cue.start}`}><span>{formatDuration(cue.start)} → {formatDuration(cue.end)}</span><div><textarea rows={2} value={cue.text} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, cues: subtitleDraft.cues.map((item, position) => position === cue.sourceIndex ? { start: item.start, end: item.end, text: event.target.value } : item) }); markSubtitleDirty(); }} />{cue.uncertain && <small>À vérifier à l’écoute : {cue.uncertainty_reason || "passage incertain"}</small>}</div></label>)}</div>
+              <div className="subtitle-cues">{scopedSubtitleCues.map((cue) => <label className={cue.uncertain ? "uncertain" : ""} key={`${cue.sourceIndex}-${cue.start}`}><div className="subtitle-cue-time"><span>{formatDuration(cue.start)} → {formatDuration(cue.end)}</span><button aria-label={`Écouter le passage à ${formatDuration(cue.start)}`} onClick={() => playSubtitleCue(cue)} type="button">▶ Écouter</button></div><div><textarea rows={2} value={cue.text} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, cues: subtitleDraft.cues.map((item, position) => position === cue.sourceIndex ? { start: item.start, end: item.end, text: event.target.value } : item) }); markSubtitleDirty(); }} />{cue.uncertain && <small>À vérifier à l’écoute : {cue.uncertainty_reason || "passage incertain"}</small>}</div></label>)}</div>
               <div className="lab-next-actions"><button className="button secondary" onClick={() => void changeLab("audio-creation")}>Retour à Création Audio</button><button className="button accent" onClick={() => void changeLab("video-creation")}>Passer à Création Vidéo</button></div>
             </section>
           )}
@@ -1592,7 +1612,7 @@ function ProjectEditor({
           <label>
             Glossaire de transcription
             <textarea maxLength={8000} onChange={(event) => setGlossary(event.target.value)} placeholder={"Ex. nom d’un intervenant\nNom propre\nTerme technique"} rows={7} value={glossary} />
-            <small>Une expression par ligne. Elle complète un glossaire religieux intégré de plus de 90 termes et formules arabes : Allah, Coran, Sunna, hadith, inchallah, al-hamdulillah, sallallahu 'alayhi wa sallam… Les formules sont retranscrites en alphabet latin sans être traduites.</small>
+            <small>Une expression par ligne. Elle complète un glossaire religieux intégré de plus de 100 termes et formules arabes. Lors des corrections IA en français, les nouvelles expressions arabes fiables sont automatiquement ajoutées au glossaire de ce projet pour les traitements suivants.</small>
           </label>
           {error && <p className="form-error notice">{error}</p>}
           <div className="modal-actions">
@@ -2263,8 +2283,8 @@ function ProjectWorkspace({ project, onBack, onEdit }: { project: Project; onBac
               <section className="glossary-summary">
                 <div>
                   <span className="eyebrow">Glossaire de transcription</span>
-                  <strong>Glossaire religieux intégré · 90+ termes{project.glossary_terms.length ? ` · ${project.glossary_terms.length} personnalisé${project.glossary_terms.length > 1 ? "s" : ""}` : ""}</strong>
-                  <small>Les formules arabes sont conservées en alphabet latin sans traduction. « Allah » garde toujours sa majuscule ; les termes personnalisés complètent le glossaire sans faire apparaître de mots absents de l’audio.</small>
+                  <strong>Glossaire religieux intégré · 100+ termes{project.glossary_terms.length ? ` · ${project.glossary_terms.length} appris ou personnalisés` : ""}</strong>
+                  <small>Les formules arabes sont conservées en alphabet latin sans traduction. Les corrections IA enrichissent progressivement le glossaire de ce projet avec les nouvelles expressions fiables.</small>
                 </div>
                 <button className="button secondary compact" onClick={onEdit} type="button">Modifier le glossaire</button>
               </section>

@@ -113,10 +113,13 @@ class SemanticAnalysisTests(unittest.TestCase):
                     "Response",
                     (),
                     {
-                        "output_text": json.dumps({"items": [
-                            {"index": 0, "text": "Première phrase corrigée.", "uncertain": False, "uncertainty_reason": ""},
-                            {"index": 1, "text": "Deuxième phrase [inaudible].", "uncertain": True, "uncertainty_reason": "Mot manquant."},
-                        ]}),
+                        "output_text": json.dumps({
+                            "items": [
+                                {"index": 0, "text": "Première phrase corrigée.", "uncertain": False, "uncertainty_reason": ""},
+                                {"index": 1, "text": "Deuxième phrase [inaudible].", "uncertain": True, "uncertainty_reason": "Mot manquant."},
+                            ],
+                            "glossary_terms": ["ahl as-Sunna", "Sunna"],
+                        }),
                         "usage": type("Usage", (), {"input_tokens": 40, "output_tokens": 30})(),
                         "_request_id": "req_proofread_test",
                     },
@@ -136,6 +139,7 @@ class SemanticAnalysisTests(unittest.TestCase):
         self.assertEqual(result.texts[0], "Première phrase corrigée.")
         self.assertEqual(result.call.request_id, "req_proofread_test")
         self.assertEqual(result.uncertainties[0].index, 1)
+        self.assertEqual(result.learned_glossary_terms, ("ahl as-Sunna",))
         self.assertIn("Ne traduis jamais", responses.arguments["instructions"])
         self.assertIn("Il, Lui, Celui, Son, Sa, Ses", responses.arguments["instructions"])
         self.assertIn("Sunna", responses.arguments["input"])

@@ -18,7 +18,15 @@ from sqlalchemy import select
 
 from drsm_core import AnalysisCancelled, TranscriptSegment, audio_duration, export_clips
 
-from .app.archive_format import ALLOWED_FILES, InvalidArchive, build_archive, extract_archive, validate_analysis_duration
+from .app.archive_format import (
+    ALLOWED_FILES,
+    InvalidArchive,
+    archive_files_for_schema,
+    build_archive,
+    compress_audio_for_archive,
+    extract_archive,
+    validate_analysis_duration,
+)
 from .app.config import settings
 from .app.costs import reconcile_job_estimates, record_usage, seed_default_rates
 from .app.editor import queue_auto_archive
@@ -28,7 +36,7 @@ from .app.jobs import Job
 from .app.impact import record_impact
 from .app.image_generation import ImageGenerationCall, OpenAIReferenceImageGenerator
 from .app.media_lifecycle import meter_media
-from .app.models import Artifact, Asset, BrandTemplateFile, utc_now
+from .app.models import Artifact, Asset, BrandTemplateFile, Project, utc_now
 from .app.observability import configure_logging
 from .app.pipeline import PipelineResult, render_static_video, run_pipeline
 from .app.rendering import compose_cover, remap_subtitles, render_animated_video, subtitle_cue_indices
@@ -39,6 +47,7 @@ from .app.transcription import (
     TranscriptionCall,
 )
 from .app.transcription_checkpoint import CheckpointingTranscriptionProvider
+from .app.terminology import normalize_glossary_terms
 
 
 ARTIFACTS = {
@@ -289,6 +298,7 @@ class Worker:
                 raise ValueError("The selected audio has no subtitles")
             corrected_by_index: dict[int, str] = {}
             uncertainty_by_index: dict[int, str] = {}
+            learned_glossary_terms: list[str] = []
             target_language = str(subtitles.get("language") or job.language)
             source_language = str(job.options.get("source_language") or job.language)
             glossary_terms = [
@@ -315,6 +325,7 @@ class Worker:
                         context_after=" ".join(str(cues[index]["text"]) for index in after_indices),
                     )
                     corrected_by_index.update(zip(chunk_indices, proofreading.texts))
+                    learned_glossary_terms.extend(proofreading.learned_glossary_terms)
                     for uncertainty in proofreading.uncertainties:
                         uncertainty_by_index[chunk_indices[uncertainty.index]] = uncertainty.reason
                     call = proofreading.call
@@ -340,8 +351,35 @@ class Worker:
                     corrected["uncertain"] = True
                     corrected["uncertainty_reason"] = uncertainty_by_index[index]
                 corrected_cues.append(corrected)
+            learned_glossary_terms = normalize_glossary_terms(learned_glossary_terms)
+            if learned_glossary_terms:
+                with SessionLocal() as db:
+                    project = db.scalar(
+                        select(Project)
+                        .where(
+                            Project.id == job.project_id,
+                            Project.user_id == job.user_id,
+                        )
+                        .with_for_update()
+                    )
+                    if project is not None:
+                        existing_terms = project.glossary_terms or []
+                        project.glossary_terms = normalize_glossary_terms(
+                            [*existing_terms, *learned_glossary_terms]
+                        )
+                        db.commit()
             output_path = job.workspace / "subtitle-suggestions.json"
-            output_path.write_text(json.dumps({"analysis_checksum": checksum, "cues": corrected_cues}, ensure_ascii=False), encoding="utf-8")
+            output_path.write_text(
+                json.dumps(
+                    {
+                        "analysis_checksum": checksum,
+                        "cues": corrected_cues,
+                        "learned_glossary_terms": learned_glossary_terms,
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
             output_key = f"users/{job.user_id}/projects/{job.project_id}/jobs/{job.id}/subtitle-suggestions.json"
             media_storage.upload_file(output_key, output_path, "application/json")
             with SessionLocal() as db:
@@ -1041,13 +1079,29 @@ class Worker:
 
             self._save_progress(job, {
                 "stage": "archive_build",
-                "message": "Création de l'archive portable",
-                "progress": 0.68,
+                "message": "Compression de l'audio de l'archive",
+                "progress": 0.52,
+            })
+            archive_files = dict(files)
+            for kind in ("audio", "selection_audio"):
+                source_path = files.get(kind)
+                if source_path is None:
+                    continue
+                compressed_path = job.workspace / (
+                    "audio.m4a" if kind == "audio" else "selection-audio.m4a"
+                )
+                compress_audio_for_archive(source_path, compressed_path)
+                archive_files[kind] = compressed_path
+                self._wait_if_paused(job)
+            self._save_progress(job, {
+                "stage": "archive_build",
+                "message": "Création de l'archive portable compressée",
+                "progress": 0.76,
             })
             output_path = job.workspace / "cours.dars"
             manifest = build_archive(
                 output_path,
-                files,
+                archive_files,
                 project_title=str(job.options.get("project_title", "Cours")),
                 source_job_id=str(job.options.get("source_job_id", "")),
                 analysis_checksum=str(job.options.get("analysis_checksum", "")),
@@ -1165,8 +1219,9 @@ class Worker:
             expiration = utc_now() + timedelta(seconds=settings.media_retention_seconds)
             rows: list[Artifact] = []
             keys: dict[str, str] = {}
+            archive_files = archive_files_for_schema(int(manifest["schema"]))
             for kind, path in extracted.items():
-                filename, mime_type = ALLOWED_FILES[kind]
+                filename, mime_type = archive_files[kind]
                 key = f"users/{job.user_id}/projects/{job.project_id}/jobs/{job.id}/{filename}"
                 media_storage.upload_file(key, path, mime_type)
                 keys[kind] = key

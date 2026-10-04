@@ -89,7 +89,7 @@ app.include_router(brand_router)
 app.include_router(archives_router)
 
 
-def artifact_filename(job: Job, artifact: str) -> str:
+def artifact_filename(job: Job, artifact: str, mime_type: str | None = None) -> str:
     title = ""
     if job.tool == "audio_selection":
         title = str(job.options.get("title", ""))
@@ -108,10 +108,11 @@ def artifact_filename(job: Job, artifact: str) -> str:
         if isinstance(part_indices, list) and len(part_indices) == 1
         else ""
     )
+    audio_extension = "m4a" if mime_type == "audio/mp4" else "wav"
     defaults = {
         "analysis": "analyse.json",
-        "audio": "audio-normalise.wav",
-        "selection_audio": f"{prefix}{slug or 'extrait-audio'}.wav",
+        "audio": f"audio-normalise.{audio_extension}",
+        "selection_audio": f"{prefix}{slug or 'extrait-audio'}.{audio_extension}",
         "generated_image": f"{slug or 'image-generee'}.png",
         "cover": f"{slug or 'couverture'}.png",
         "video": f"{slug or 'video'}.mp4",
@@ -305,7 +306,7 @@ def download_artifact(
         )
         if row is None or not row.storage_key:
             raise HTTPException(status_code=404, detail="Artifact not found")
-        filename = artifact_filename(job, artifact)
+        filename = artifact_filename(job, artifact, row.mime_type)
         if isinstance(media_storage, LocalMediaStorage):
             path = media_storage.path_for(row.storage_key)
             if not path.is_file():

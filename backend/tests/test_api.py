@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import hashlib
+import json
 import shutil
 import unittest
 import uuid
@@ -1407,7 +1408,14 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(archive_requested.status_code, 202, archive_requested.text)
             archive_job_id = archive_requested.json()["id"]
             self.assertEqual(archive_requested.json()["tool"], "archive_export")
-            self.assertTrue(Worker("archive-worker").process(archive_job_id))
+            def fake_archive_compression(source: Path, destination: Path) -> None:
+                destination.write_bytes(source.read_bytes())
+
+            with patch(
+                "backend.worker.compress_audio_for_archive",
+                side_effect=fake_archive_compression,
+            ):
+                self.assertTrue(Worker("archive-worker").process(archive_job_id))
             archived = manager.get(user_id, archive_job_id)
             self.assertIsNotNone(archived)
             self.assertEqual(archived.state, "completed")
@@ -1416,8 +1424,9 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(archive_download.status_code, 200, archive_download.text)
             self.assertGreater(len(archive_download.content), 100)
             with zipfile.ZipFile(BytesIO(archive_download.content)) as content:
-                self.assertEqual(content.read("audio.wav"), b"audio")
-                self.assertEqual(content.read("selection-audio.wav"), b"selected-audio")
+                self.assertEqual(content.read("audio.m4a"), b"audio")
+                self.assertEqual(content.read("selection-audio.m4a"), b"selected-audio")
+                self.assertEqual(json.loads(content.read("manifest.json"))["schema"], 2)
 
             restored_project = client.post(
                 "/api/projects", json={"title": "Cours restauré"}

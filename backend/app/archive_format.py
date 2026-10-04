@@ -8,23 +8,77 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+import av
+from av.audio.resampler import AudioResampler
 
-ARCHIVE_SCHEMA = 1
+
+ARCHIVE_SCHEMA = 2
+SUPPORTED_ARCHIVE_SCHEMAS = {1, ARCHIVE_SCHEMA}
 MAX_ARCHIVE_ENTRIES = 12
 MAX_UNCOMPRESSED_BYTES = 2_000_000_000
 MAX_MANIFEST_BYTES = 1_000_000
 MAX_ANALYSIS_BYTES = 50_000_000
-ALLOWED_FILES = {
+LEGACY_ARCHIVE_FILES = {
     "analysis": ("analysis.json", "application/json"),
     "audio": ("audio.wav", "audio/wav"),
     "selection_audio": ("selection-audio.wav", "audio/wav"),
     "cover": ("cover.png", "image/png"),
     "video": ("video.mp4", "video/mp4"),
 }
+COMPRESSED_ARCHIVE_FILES = {
+    **LEGACY_ARCHIVE_FILES,
+    "audio": ("audio.m4a", "audio/mp4"),
+    "selection_audio": ("selection-audio.m4a", "audio/mp4"),
+}
+# Working names used while collecting the current WAV artifacts before encoding.
+ALLOWED_FILES = LEGACY_ARCHIVE_FILES
 
 
 class InvalidArchive(ValueError):
     pass
+
+
+def archive_files_for_schema(schema: int) -> dict[str, tuple[str, str]]:
+    if schema == 1:
+        return LEGACY_ARCHIVE_FILES
+    if schema == ARCHIVE_SCHEMA:
+        return COMPRESSED_ARCHIVE_FILES
+    raise InvalidArchive("Version d'archive non prise en charge.")
+
+
+def compress_audio_for_archive(
+    source_path: Path,
+    output_path: Path,
+    *,
+    bit_rate: int = 64_000,
+) -> None:
+    """Encode speech audio as mono AAC for a compact, portable .dars archive."""
+    source = av.open(str(source_path))
+    source_audio = next((stream for stream in source.streams if stream.type == "audio"), None)
+    if source_audio is None:
+        source.close()
+        raise ValueError("L'audio à archiver ne contient aucune piste audio.")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output = av.open(str(output_path), mode="w", options={"movflags": "+faststart"})
+    encoded_audio = output.add_stream("aac", rate=48_000)
+    encoded_audio.layout = "mono"
+    encoded_audio.bit_rate = bit_rate
+    resampler = AudioResampler(format="fltp", layout="mono", rate=48_000)
+    try:
+        for frame in source.decode(source_audio):
+            for converted in resampler.resample(frame):
+                converted.pts = None
+                for packet in encoded_audio.encode(converted):
+                    output.mux(packet)
+        for converted in resampler.resample(None):
+            converted.pts = None
+            for packet in encoded_audio.encode(converted):
+                output.mux(packet)
+        for packet in encoded_audio.encode(None):
+            output.mux(packet)
+    finally:
+        source.close()
+        output.close()
 
 
 def validate_analysis_duration(payload: dict[str, Any], audio_seconds: float) -> None:
@@ -73,11 +127,20 @@ def build_archive(
 ) -> dict[str, Any]:
     if "analysis" not in files or "audio" not in files:
         raise ValueError("An archive requires analysis and audio files")
+    compressed_audio = files["audio"].suffix.lower() == ".m4a"
+    schema = ARCHIVE_SCHEMA if compressed_audio else 1
+    archive_files = archive_files_for_schema(schema)
+    if compressed_audio and any(
+        path.suffix.lower() != ".m4a"
+        for kind, path in files.items()
+        if kind in {"audio", "selection_audio"}
+    ):
+        raise ValueError("Compressed archive audio files must use the M4A format")
     entries: list[dict[str, Any]] = []
     for kind, path in files.items():
-        if kind not in ALLOWED_FILES or not path.is_file():
+        if kind not in archive_files or not path.is_file():
             continue
-        archive_name, mime_type = ALLOWED_FILES[kind]
+        archive_name, mime_type = archive_files[kind]
         entries.append({
             "kind": kind,
             "path": archive_name,
@@ -91,7 +154,7 @@ def build_archive(
     if analysis_entry["checksum_sha256"] != analysis_checksum:
         raise ValueError("The analysis checksum does not match the archived file")
     manifest = {
-        "schema": ARCHIVE_SCHEMA,
+        "schema": schema,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "generator": "Dars Manager",
         "project_title": project_title,
@@ -136,12 +199,13 @@ def extract_archive(archive_path: Path, destination: Path) -> tuple[dict[str, An
             manifest = json.loads(archive.read(manifest_info))
         except (KeyError, json.JSONDecodeError, UnicodeError) as exc:
             raise InvalidArchive("Le manifeste de l'archive est invalide.") from exc
-        if not isinstance(manifest, dict) or manifest.get("schema") != ARCHIVE_SCHEMA:
+        if not isinstance(manifest, dict) or manifest.get("schema") not in SUPPORTED_ARCHIVE_SCHEMAS:
             raise InvalidArchive("Version d'archive non prise en charge.")
+        archive_files = archive_files_for_schema(int(manifest["schema"]))
         entries = manifest.get("files")
         if not isinstance(entries, list):
             raise InvalidArchive("La liste des fichiers est invalide.")
-        if len(entries) > len(ALLOWED_FILES):
+        if len(entries) > len(archive_files):
             raise InvalidArchive("Le manifeste contient trop de fichiers.")
         declared_paths = {
             str(entry.get("path", "")) for entry in entries if isinstance(entry, dict)
@@ -156,7 +220,7 @@ def extract_archive(archive_path: Path, destination: Path) -> tuple[dict[str, An
             if not isinstance(entry, dict):
                 raise InvalidArchive("Une entrée du manifeste est invalide.")
             kind = str(entry.get("kind", ""))
-            expected = ALLOWED_FILES.get(kind)
+            expected = archive_files.get(kind)
             if expected is None or kind in seen or entry.get("path") != expected[0]:
                 raise InvalidArchive("Le manifeste contient un fichier non autorisé.")
             seen.add(kind)
