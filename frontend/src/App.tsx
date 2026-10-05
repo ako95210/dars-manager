@@ -1094,15 +1094,21 @@ function CourseEditor({ job }: { job: Job }) {
 
   async function createExport() {
     if (!analysis || selectedParts.length === 0) return;
+    let currentAnalysis = analysis;
     if (dirty) {
-      setError("Enregistrez d’abord vos corrections avant de générer l’audio.");
-      return;
+      const saved = await save();
+      if (!saved) return;
+      currentAnalysis = saved;
     }
     setExporting(true);
     setError("");
     setNotice("");
     try {
-      const created = await api.createAudioExport(job.id, analysis.checksum_sha256, selectedParts);
+      const created = await api.createAudioExport(
+        job.id,
+        currentAnalysis.checksum_sha256,
+        selectedParts,
+      );
       setExportJob(created);
       setAudioExports((current) => [created, ...current.filter((item) => item.id !== created.id)]);
     } catch (reason) {
@@ -1346,7 +1352,7 @@ function CourseEditor({ job }: { job: Job }) {
                 <div><span className="eyebrow">Sélection audio</span><strong>{selectedParts.length} partie{selectedParts.length > 1 ? "s" : ""} · {formatDuration(selectedDuration)}</strong></div>
                 <div>
                   <button className="button secondary" onClick={() => setSelectedParts(selectedParts.length === parts.length ? [] : parts.map((part) => part.index))}>{selectedParts.length === parts.length ? "Tout désélectionner" : "Tout sélectionner"}</button>
-                  <button className="button accent" disabled={selectedParts.length === 0 || exporting || dirty || exportBusy} onClick={createExport}>{exporting ? "Préparation…" : exportBusy ? "Sauvegarde en cours…" : "Sauvegarder l’audio sélectionné"}</button>
+                  <button className="button accent" disabled={selectedParts.length === 0 || exporting || saving || exportBusy} onClick={createExport}>{saving ? "Enregistrement des corrections…" : exporting ? "Préparation…" : exportBusy ? "Sauvegarde en cours…" : "Sauvegarder l’audio sélectionné"}</button>
                 </div>
               </div>
 
