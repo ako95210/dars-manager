@@ -83,6 +83,13 @@ class SubtitleTests(unittest.TestCase):
         top = subtitle_frame(image, 1, {"position": "top", "font_size": 32, "cues": [cue]})
         bottom = subtitle_frame(image, 1, {"position": "bottom", "font_size": 32, "cues": [cue]})
         self.assertNotEqual(top.tobytes(), bottom.tobytes())
+        dark_background = subtitle_frame(image, 1, {
+            "background_color": "#101820", "font_size": 32, "cues": [cue],
+        })
+        colored_background = subtitle_frame(image, 1, {
+            "background_color": "#7f1d1d", "font_size": 32, "cues": [cue],
+        })
+        self.assertNotEqual(dark_background.tobytes(), colored_background.tobytes())
 
     def test_long_cues_are_split_without_changing_font_size(self) -> None:
         text = " ".join(f"mot-{index}" for index in range(80))

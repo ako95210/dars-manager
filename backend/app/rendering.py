@@ -244,7 +244,11 @@ def subtitle_frame(image: Image.Image, at_seconds: float, subtitles: dict[str, A
         y = height - caption_height - margin - padding
     y = max(padding, min(y, height - caption_height - padding))
     x = (width - caption_width) // 2
-    draw.rounded_rectangle((x - padding, y - padding, x + caption_width + padding, y + caption_height + padding), radius=12, fill="#101820")
+    draw.rounded_rectangle(
+        (x - padding, y - padding, x + caption_width + padding, y + caption_height + padding),
+        radius=12,
+        fill=str(subtitles.get("background_color", "#101820")),
+    )
     draw.multiline_text((x, y - bounds[1]), caption, font=selected_font, fill=str(subtitles.get("color", "#ffffff")), spacing=spacing, align="center")
     return output
 

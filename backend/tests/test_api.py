@@ -1218,6 +1218,7 @@ class ApiTests(unittest.TestCase):
                     "language": "ar",
                     "font": "serif",
                     "color": "#fef3c7",
+                    "background_color": "#312e81",
                     "cues": [
                         {"start": 0.0, "end": 14.0, "text": "نسخة عربية أولى"},
                         {"start": 14.0, "end": 29.5, "text": "تكملة عربية"},
@@ -1352,6 +1353,7 @@ class ApiTests(unittest.TestCase):
                     "subtitle_track_id": second_track_id,
                     "subtitle_font_size": 44,
                     "subtitle_color": "#00ffcc",
+                    "subtitle_background_color": "#334155",
                     "subtitle_position": "top",
                 },
             )
@@ -1372,6 +1374,7 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual(kwargs["subtitles"]["font"], "serif")
                 self.assertEqual(kwargs["subtitles"]["font_size"], 44)
                 self.assertEqual(kwargs["subtitles"]["color"], "#00ffcc")
+                self.assertEqual(kwargs["subtitles"]["background_color"], "#334155")
                 self.assertEqual(kwargs["subtitles"]["position"], "top")
                 self.assertEqual(
                     [cue["text"] for cue in kwargs["subtitles"]["cues"]],
@@ -1395,6 +1398,28 @@ class ApiTests(unittest.TestCase):
             self.assertIn(
                 "titre-du-rendu.mp4",
                 rendered_video.headers["content-disposition"],
+            )
+            video_backups = client.get("/api/jobs/video-backups")
+            self.assertEqual(video_backups.status_code, 200, video_backups.text)
+            backup = next(
+                item for item in video_backups.json()
+                if item["job_id"] == video_job_id
+            )
+            self.assertEqual(backup["title"], "Titre du rendu")
+            self.assertEqual(backup["size_bytes"], len(b"rendered-video"))
+            self.assertIsNone(backup["downloaded_at"])
+            downloaded = client.post(
+                f"/api/jobs/video-backups/{video_job_id}/downloaded"
+            )
+            self.assertEqual(downloaded.status_code, 200, downloaded.text)
+            self.assertTrue(downloaded.json()["downloaded_at"])
+            refreshed_backups = client.get("/api/jobs/video-backups").json()
+            refreshed = next(
+                item for item in refreshed_backups
+                if item["job_id"] == video_job_id
+            )
+            self.assertEqual(
+                refreshed["downloaded_at"], downloaded.json()["downloaded_at"]
             )
 
             archive_requested = client.post(

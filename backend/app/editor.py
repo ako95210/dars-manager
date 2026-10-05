@@ -79,6 +79,7 @@ class SubtitleUpdate(BaseModel):
     font: str = Field(pattern=r"^(sans|serif|mono)$")
     font_size: int = Field(default=32, ge=12, le=96)
     color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
+    background_color: str = Field(default="#101820", pattern=r"^#[0-9a-fA-F]{6}$")
     position: str = Field(default="bottom", pattern=r"^(top|center|bottom)$")
     cues: list[SubtitleCue] = Field(min_length=1, max_length=10000)
 
@@ -120,6 +121,9 @@ class VideoExportRequest(AudioExportRequest):
     subtitle_track_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     subtitle_font_size: int | None = Field(default=None, ge=12, le=96)
     subtitle_color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    subtitle_background_color: str | None = Field(
+        default=None, pattern=r"^#[0-9a-fA-F]{6}$"
+    )
     subtitle_position: str | None = Field(default=None, pattern=r"^(top|center|bottom)$")
     template_id: str = Field(min_length=32, max_length=32)
     template_version: int = Field(ge=1)
@@ -192,6 +196,83 @@ class ArchiveExportRequest(BaseModel):
     checksum_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     video_job_id: str | None = Field(default=None, min_length=32, max_length=32)
     audio_export_job_id: str | None = Field(default=None, min_length=32, max_length=32)
+
+
+@router.get("/video-backups")
+def list_video_backups(
+    user: User = Depends(require_client),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """List unexpired rendered videos so users can recover an earlier render."""
+    now = utc_now()
+    artifacts = db.scalars(
+        select(Artifact).where(
+            Artifact.user_id == user.id,
+            Artifact.kind == "video",
+            Artifact.storage_key.is_not(None),
+            Artifact.expires_at > now,
+        ).order_by(Artifact.expires_at)
+    ).all()
+    jobs = {job.id: job for job in manager.list_for_user(user.id)}
+    project_ids = {artifact.project_id for artifact in artifacts}
+    projects = (
+        {
+            project.id: project.title
+            for project in db.scalars(
+                select(Project).where(
+                    Project.user_id == user.id,
+                    Project.id.in_(project_ids),
+                )
+            ).all()
+        }
+        if project_ids
+        else {}
+    )
+    backups: list[dict[str, Any]] = []
+    for artifact in artifacts:
+        job = jobs.get(artifact.job_id)
+        if job is None or job.tool != "video_render" or job.state != "completed":
+            continue
+        content = job.public().get("content") or {}
+        backups.append({
+            "job_id": job.id,
+            "source_job_id": job.options.get("source_job_id"),
+            "project_id": artifact.project_id,
+            "project_title": projects.get(artifact.project_id, "Projet"),
+            "title": content.get("title") or "Vidéo du cours",
+            "created_at": job.created_at,
+            "expires_at": artifact.expires_at.isoformat(),
+            "size_bytes": artifact.size_bytes,
+            "downloaded_at": job.options.get("video_downloaded_at"),
+        })
+    return backups
+
+
+@router.post("/video-backups/{video_job_id}/downloaded")
+def mark_video_backup_downloaded(
+    video_job_id: str,
+    user: User = Depends(require_client),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    job = owned_completed_job(user.id, video_job_id)
+    if job.tool != "video_render":
+        raise HTTPException(status_code=422, detail="Cette sauvegarde n'est pas une vidéo.")
+    artifact = db.scalar(
+        select(Artifact).where(
+            Artifact.job_id == job.id,
+            Artifact.user_id == user.id,
+            Artifact.kind == "video",
+            Artifact.storage_key.is_not(None),
+            Artifact.expires_at > utc_now(),
+        )
+    )
+    if artifact is None:
+        raise HTTPException(status_code=410, detail="Cette vidéo temporaire a expiré.")
+    downloaded_at = utc_now().isoformat(timespec="seconds")
+    job.options["video_downloaded_at"] = downloaded_at
+    job.updated_at = utc_now().timestamp()
+    manager.state_store.save(job.record())
+    return {"downloaded_at": downloaded_at}
 
 
 @router.get("/{job_id}/exports/recovery")
@@ -397,12 +478,14 @@ def response_payload(
     subtitles = {
         **subtitles,
         "font_size": int(subtitles.get("font_size", 32)),
+        "background_color": subtitles.get("background_color", "#101820"),
         "position": subtitles.get("position", "bottom"),
     }
     subtitle_tracks = [
         {
             **track,
             "font_size": int(track.get("font_size", 32)),
+            "background_color": track.get("background_color", "#101820"),
             "position": track.get("position", "bottom"),
         }
         for track in (payload.get("subtitle_tracks") or [])
@@ -478,6 +561,7 @@ def update_subtitles(
             "font": update.font,
             "font_size": update.font_size,
             "color": update.color,
+            "background_color": update.background_color,
             "position": update.position,
             "cues": normalized_cues,
             "created_at": existing.get("created_at", now) if existing else now,
@@ -1406,6 +1490,11 @@ def create_video_export(
             "font": track.get("font") or "sans",
             "font_size": request.subtitle_font_size or int(track.get("font_size", 32)),
             "color": request.subtitle_color or track.get("color") or "#ffffff",
+            "background_color": (
+                request.subtitle_background_color
+                or track.get("background_color")
+                or "#101820"
+            ),
             "position": request.subtitle_position or track.get("position") or "bottom",
             "cues": track.get("cues") or [],
         }
@@ -1429,6 +1518,7 @@ def create_video_export(
             {
                 "font_size": subtitle_payload["font_size"],
                 "color": subtitle_payload["color"],
+                "background_color": subtitle_payload["background_color"],
                 "position": subtitle_payload["position"],
             }
             if subtitle_payload else None

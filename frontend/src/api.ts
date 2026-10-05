@@ -186,6 +186,7 @@ export type SubtitleTrack = {
   font: "sans" | "serif" | "mono";
   font_size: number;
   color: string;
+  background_color: string;
   position: "top" | "center" | "bottom";
   cues: AnalysisSegment[];
   created_at: string;
@@ -205,6 +206,7 @@ export type JobAnalysis = {
     font: "sans" | "serif" | "mono";
     font_size: number;
     color: string;
+    background_color: string;
     position: "top" | "center" | "bottom";
     cues: AnalysisSegment[];
   };
@@ -327,6 +329,18 @@ export type ImpactSummary = {
   current_storage_bytes: number;
   cost: string;
   channels: Record<string, number>;
+};
+
+export type VideoBackup = {
+  job_id: string;
+  source_job_id: string | null;
+  project_id: string;
+  project_title: string;
+  title: string;
+  created_at: number;
+  expires_at: string;
+  size_bytes: number;
+  downloaded_at: string | null;
 };
 
 export type ProviderInvoice = {
@@ -700,7 +714,7 @@ export const api = {
     includeSubtitles = false,
     audioExportJobId?: string,
     subtitleTrackId?: string,
-    subtitleStyle?: { font_size: number; color: string; position: "top" | "center" | "bottom" },
+    subtitleStyle?: { font_size: number; color: string; background_color: string; position: "top" | "center" | "bottom" },
   ) => request<Job>(`/api/jobs/${jobId}/exports/video`, {
     method: "POST",
     body: JSON.stringify({
@@ -715,6 +729,7 @@ export const api = {
       subtitle_track_id: subtitleTrackId || null,
       subtitle_font_size: subtitleStyle?.font_size || null,
       subtitle_color: subtitleStyle?.color || null,
+      subtitle_background_color: subtitleStyle?.background_color || null,
       subtitle_position: subtitleStyle?.position || null,
       ...values,
     }),
@@ -733,6 +748,11 @@ export const api = {
     }),
   }),
   recoveryArchive: (jobId: string) => request<Job | null>(`/api/jobs/${jobId}/exports/recovery`),
+  videoBackups: () => request<VideoBackup[]>("/api/jobs/video-backups"),
+  markVideoBackupDownloaded: (jobId: string) =>
+    request<{ downloaded_at: string }>(`/api/jobs/video-backups/${jobId}/downloaded`, {
+      method: "POST",
+    }),
   importArchive: async (
     projectId: string,
     file: File,

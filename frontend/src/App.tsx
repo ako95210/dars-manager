@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { api, AnalysisSegment, BillingSummary, CommunityAllocation, CommunityContribution, ImpactSummary, InvitationDetails, Job, JobAnalysis, Project, ProviderInvoice, TranscriptionQuote, User } from "./api";
+import { api, AnalysisSegment, BillingSummary, CommunityAllocation, CommunityContribution, ImpactSummary, InvitationDetails, Job, JobAnalysis, Project, ProviderInvoice, TranscriptionQuote, User, VideoBackup } from "./api";
 import { TemplateLibrary } from "./TemplateLibrary";
 import type { VisualMode } from "./TemplateLibrary";
 import { UserAdministration } from "./UserAdministration";
@@ -495,8 +495,9 @@ function CourseEditor({ job }: { job: Job }) {
   const [videoSubtitleStyle, setVideoSubtitleStyle] = useState<{
     font_size: number;
     color: string;
+    background_color: string;
     position: "top" | "center" | "bottom";
-  }>({ font_size: 32, color: "#ffffff", position: "bottom" });
+  }>({ font_size: 32, color: "#ffffff", background_color: "#101820", position: "bottom" });
   const [subtitleImportOffset, setSubtitleImportOffset] = useState("0");
   const [subtitleDirty, setSubtitleDirty] = useState(false);
   const [subtitleSaving, setSubtitleSaving] = useState(false);
@@ -650,6 +651,7 @@ function CourseEditor({ job }: { job: Job }) {
         font: selected.font,
         font_size: selected.font_size || 32,
         color: selected.color,
+        background_color: selected.background_color || "#101820",
         position: selected.position || "bottom",
         cues: selected.cues,
       });
@@ -691,6 +693,7 @@ function CourseEditor({ job }: { job: Job }) {
     setVideoSubtitleStyle({
       font_size: track.font_size || 32,
       color: track.color || "#ffffff",
+      background_color: track.background_color || "#101820",
       position: track.position || "bottom",
     });
   }, [analysis?.checksum_sha256, selectedAudio?.id, selectedVideoSubtitleTrackId]);
@@ -863,7 +866,7 @@ function CourseEditor({ job }: { job: Job }) {
       const unchanged = subtitleRevision.current === savedRevision;
       if (unchanged) setSubtitleDirty(false);
       setNotice(unchanged
-        ? "Piste de sous-titres enregistrée automatiquement."
+        ? "Piste enregistrée dans le projet. La sauvegarde temporaire .dars est mise à jour en arrière-plan."
         : "Une nouvelle modification reste à enregistrer.");
       if (!unchanged) return false;
       return { analysis: updated, trackId };
@@ -972,6 +975,7 @@ function CourseEditor({ job }: { job: Job }) {
       font: track.font,
       font_size: track.font_size || 32,
       color: track.color,
+      background_color: track.background_color || "#101820",
       position: track.position || "bottom",
       cues: track.cues,
     });
@@ -1393,6 +1397,7 @@ function CourseEditor({ job }: { job: Job }) {
           {activeLab === "subtitles" && subtitleDraft && (
             <section className="studio-lab-panel subtitle-lab" role="tabpanel">
               <header className="editor-heading"><div><span className="eyebrow">Sous-titres · optionnels</span><h2>Préparer le texte affiché dans la vidéo</h2><p>La correction IA porte uniquement sur l’audio sélectionné. Les nouvelles expressions arabes fiables enrichissent automatiquement le glossaire du projet pour les traitements suivants.</p></div><div className="project-header-actions"><button className="button secondary compact" disabled={!selectedAudio || proofreadBusy || subtitleSaving} onClick={proofreadSubtitles}>{proofreadBusy ? "Correction en cours…" : "Corriger la sélection avec l’IA"}</button><button className="button primary compact" disabled={!subtitleDirty || subtitleSaving} onClick={() => void saveSubtitles()}>{subtitleSaving ? "Enregistrement…" : subtitleDirty ? "Enregistrer maintenant" : "Piste enregistrée"}</button></div></header>
+              <div className={`subtitle-save-status ${subtitleSaving ? "saving" : subtitleDirty ? "dirty" : "saved"}`} role="status"><span aria-hidden="true">{subtitleSaving ? "↻" : subtitleDirty ? "●" : "✓"}</span><div><strong>{subtitleSaving ? "Enregistrement sur le serveur…" : subtitleDirty ? "Modifications en attente" : "Toutes les modifications sont enregistrées"}</strong><small>{subtitleDirty ? "La sauvegarde automatique démarre après quelques secondes, ou utilisez « Enregistrer maintenant »." : "La piste est conservée dans ce projet et intégrée à la sauvegarde temporaire .dars."}</small></div></div>
               {proofreadJob && <p className="editor-feedback">{proofreadJob.error || proofreadJob.message}</p>}
               {selectedAudio && <div className="adjustment-source"><div><span>Audio sélectionné</span><strong>{selectedAudio.content?.title || "Extrait audio"}</strong><small>{scopedSubtitleCues.length} sous-titre{scopedSubtitleCues.length > 1 ? "s" : ""} · {formatDuration(selectedAudio.metrics.duration_seconds)}</small></div><audio controls preload="metadata" ref={subtitleAudioRef} src={api.artifactUrl(selectedAudio.id, "selection_audio")} /></div>}
               <section className="subtitle-track-library">
@@ -1410,6 +1415,7 @@ function CourseEditor({ job }: { job: Job }) {
                 <label>Police<select onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, font: event.target.value as JobAnalysis["subtitles"]["font"] }); markSubtitleDirty(); }} value={subtitleDraft.font}><option value="sans">Sans serif</option><option value="serif">Serif</option><option value="mono">Monospace</option></select></label>
                 <label>Taille<input max={96} min={12} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, font_size: Number(event.target.value) }); markSubtitleDirty(); }} step={2} type="number" value={subtitleDraft.font_size} /></label>
                 <label>Couleur des caractères<input onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, color: event.target.value }); markSubtitleDirty(); }} type="color" value={subtitleDraft.color} /></label>
+                <label>Couleur du fond<input onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, background_color: event.target.value }); markSubtitleDirty(); }} type="color" value={subtitleDraft.background_color || "#101820"} /></label>
                 <label>Position de la barre<select onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, position: event.target.value as JobAnalysis["subtitles"]["position"] }); markSubtitleDirty(); }} value={subtitleDraft.position}><option value="top">En haut</option><option value="center">Au centre</option><option value="bottom">En bas</option></select></label>
               </div>
               <p className="subtitle-layout-note">Le texte est automatiquement ajusté sur deux lignes maximum. Toutes les pistes et leurs timecodes seront inclus dans la sauvegarde `.dars`.</p>
@@ -1492,12 +1498,13 @@ function CourseEditor({ job }: { job: Job }) {
                   <div className="video-subtitle-settings">
                     <div><span className="eyebrow">Aperçu avant rendu</span><h3>Placement des sous-titres</h3><p>Ces réglages s’appliquent uniquement à cette vidéo et ne modifient pas la piste sauvegardée.</p></div>
                     <label>Taille des caractères<input max={96} min={12} onChange={(event) => setVideoSubtitleStyle((current) => ({ ...current, font_size: Number(event.target.value) }))} step={2} type="number" value={videoSubtitleStyle.font_size} /></label>
-                    <label>Couleur<input onChange={(event) => setVideoSubtitleStyle((current) => ({ ...current, color: event.target.value }))} type="color" value={videoSubtitleStyle.color} /></label>
+                    <label>Couleur du texte<input onChange={(event) => setVideoSubtitleStyle((current) => ({ ...current, color: event.target.value }))} type="color" value={videoSubtitleStyle.color} /></label>
+                    <label>Couleur du fond<input onChange={(event) => setVideoSubtitleStyle((current) => ({ ...current, background_color: event.target.value }))} type="color" value={videoSubtitleStyle.background_color} /></label>
                     <label>Position de la barre<select onChange={(event) => setVideoSubtitleStyle((current) => ({ ...current, position: event.target.value as JobAnalysis["subtitles"]["position"] }))} value={videoSubtitleStyle.position}><option value="top">En haut</option><option value="center">Au centre</option><option value="bottom">En bas</option></select></label>
                   </div>
                   <div className={`video-subtitle-preview preview-${videoFormat.replace(":", "-")}`}>
                     {subtitlePreviewImageUrl ? <img alt="Aperçu du visuel avec sous-titres" src={subtitlePreviewImageUrl} /> : <div className="video-subtitle-preview-placeholder">Sélectionnez le visuel pour afficher l’aperçu</div>}
-                    {subtitlePreviewImageUrl && <span className={`video-subtitle-overlay ${videoSubtitleStyle.position}`} style={{ color: videoSubtitleStyle.color, fontFamily: subtitlePreviewFont, fontSize: `${Math.max(8, Math.round(videoSubtitleStyle.font_size * 0.45))}px` }}>{subtitlePreviewText}</span>}
+                    {subtitlePreviewImageUrl && <span className={`video-subtitle-overlay ${videoSubtitleStyle.position}`} style={{ backgroundColor: videoSubtitleStyle.background_color, color: videoSubtitleStyle.color, fontFamily: subtitlePreviewFont, fontSize: `${Math.max(8, Math.round(videoSubtitleStyle.font_size * 0.45))}px` }}>{subtitlePreviewText}</span>}
                   </div>
                 </section>
               )}
@@ -1513,7 +1520,7 @@ function CourseEditor({ job }: { job: Job }) {
           {activeLab === "distribution" && videoReady && videoJob && (
             <section className="studio-lab-panel distribution-lab" role="tabpanel">
               <header className="editor-heading"><div><span className="eyebrow">Diffusion</span><h2>Publier ou récupérer le contenu final</h2><p>Téléchargez la vidéo immédiatement. Les connexions YouTube et Telegram seront configurées ici.</p></div></header>
-              <section className="final-content-card"><video controls preload="metadata" src={api.artifactUrl(videoJob.id, "video")} /><div><span>Contenu prêt</span><h3>{videoJob.content?.title || "Vidéo du cours"}</h3><p>Conservez le fichier ou préparez sa publication sur un canal connecté.</p><div>{videoJob.artifacts.includes("video") && <a className="button accent" download href={api.artifactUrl(videoJob.id, "video")}>Télécharger la vidéo</a>}{videoJob.artifacts.includes("cover") && <a className="button secondary" download href={api.artifactUrl(videoJob.id, "cover")}>Télécharger l’image</a>}</div></div></section>
+              <section className="final-content-card"><video controls preload="metadata" src={api.artifactUrl(videoJob.id, "video")} /><div><span>Contenu prêt</span><h3>{videoJob.content?.title || "Vidéo du cours"}</h3><p>Conservez le fichier ou préparez sa publication sur un canal connecté.</p><div>{videoJob.artifacts.includes("video") && <a className="button accent" download href={api.artifactUrl(videoJob.id, "video")} onClick={() => void api.markVideoBackupDownloaded(videoJob.id)}>Télécharger la vidéo</a>}{videoJob.artifacts.includes("cover") && <a className="button secondary" download href={api.artifactUrl(videoJob.id, "cover")}>Télécharger l’image</a>}</div></div></section>
               <div className="distribution-connectors">
                 <article><span className="connector-mark youtube">▶</span><div><strong>YouTube</strong><p>Connecter une chaîne, choisir la visibilité et publier la vidéo.</p></div><button className="button secondary" disabled>À configurer</button></article>
                 <article><span className="connector-mark telegram">➤</span><div><strong>Telegram</strong><p>Connecter un bot administrateur et publier dans une chaîne.</p></div><button className="button secondary" disabled>À configurer</button></article>
@@ -2476,6 +2483,8 @@ function Dashboard({ user, onLogout, onUserUpdated }: { user: User; onLogout: ()
     user.role === "admin" ? "admin-users" : "dashboard",
   );
   const [impact, setImpact] = useState<ImpactSummary | null>(null);
+  const [videoBackups, setVideoBackups] = useState<VideoBackup[]>([]);
+  const [videoBackupReminder, setVideoBackupReminder] = useState<VideoBackup | null>(null);
 
   useEffect(() => {
     if (user.role !== "client") {
@@ -2492,6 +2501,42 @@ function Dashboard({ user, onLogout, onUserUpdated }: { user: User; onLogout: ()
     if (user.role !== "client" || selectedProject || view !== "dashboard") return;
     api.impactSummary().then(setImpact).catch(() => setImpact(null));
   }, [selectedProject, user.role, view]);
+
+  useEffect(() => {
+    if (user.role !== "client") return;
+    let active = true;
+    const loadVideoBackups = () => {
+      api.videoBackups().then((items) => {
+        if (!active) return;
+        setVideoBackups(items);
+        if (
+          !window.sessionStorage.getItem("dars-video-backup-reminder-shown")
+        ) {
+          const pending = items.find((item) => !item.downloaded_at);
+          if (pending) {
+            window.sessionStorage.setItem("dars-video-backup-reminder-shown", pending.job_id);
+            setVideoBackupReminder(pending);
+          }
+        }
+      }).catch(() => { if (active) setVideoBackups([]); });
+    };
+    loadVideoBackups();
+    const timer = window.setInterval(loadVideoBackups, 60_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [user.role]);
+
+  function markVideoDownloaded(backup: VideoBackup) {
+    const downloadedAt = new Date().toISOString();
+    setVideoBackups((current) => current.map((item) => (
+      item.job_id === backup.job_id ? { ...item, downloaded_at: downloadedAt } : item
+    )));
+    setVideoBackupReminder((current) => current?.job_id === backup.job_id ? null : current);
+    void api.markVideoBackupDownloaded(backup.job_id).then(({ downloaded_at }) => {
+      setVideoBackups((current) => current.map((item) => (
+        item.job_id === backup.job_id ? { ...item, downloaded_at } : item
+      )));
+    }).catch(() => undefined);
+  }
 
   useEffect(() => {
     if (loading) return;
@@ -2571,6 +2616,17 @@ function Dashboard({ user, onLogout, onUserUpdated }: { user: User; onLogout: ()
 
   return (
     <div className="app-shell">
+      {videoBackupReminder && (
+        <div className="recovery-overlay" role="dialog" aria-modal="true" aria-label="Vidéo temporaire à télécharger">
+          <div className="recovery-card video-backup-reminder">
+            <span className="eyebrow">Sauvegarde temporaire</span>
+            <h2>Téléchargez votre vidéo avant sa suppression</h2>
+            <p>« {videoBackupReminder.title} » est encore conservée sur le serveur pour vous protéger d’une mauvaise manipulation.</p>
+            <dl><div><dt>Projet</dt><dd>{videoBackupReminder.project_title}</dd></div><div><dt>Expiration</dt><dd>{new Intl.DateTimeFormat("fr", { dateStyle: "medium", timeStyle: "short" }).format(new Date(videoBackupReminder.expires_at))}</dd></div><div><dt>Taille</dt><dd>{formatBytes(videoBackupReminder.size_bytes)}</dd></div></dl>
+            <div><a className="button accent" download href={api.artifactUrl(videoBackupReminder.job_id, "video")} onClick={() => markVideoDownloaded(videoBackupReminder)}>Télécharger maintenant</a><button className="button secondary" onClick={() => setVideoBackupReminder(null)}>Me le rappeler à la prochaine connexion</button></div>
+          </div>
+        </div>
+      )}
       <aside className="sidebar">
         <Brand />
         <nav>
@@ -2626,6 +2682,13 @@ function Dashboard({ user, onLogout, onUserUpdated }: { user: User; onLogout: ()
               <article><span>Stockage cloud</span><strong>{formatBytes(impact.current_storage_bytes)}</strong><small>{formatBytes(impact.generated_storage_bytes)} générés cette semaine</small></article>
               <article><span>Coût de la semaine</span><strong>{formatCurrency(impact.cost, impact.currency)}</strong><small>confirmé + encore estimé</small></article>
             </div>
+          </section>
+        )}
+
+        {videoBackups.length > 0 && (
+          <section className="video-backup-panel">
+            <header><div><span className="eyebrow">Sauvegardes vidéo</span><h2>Vidéos encore récupérables</h2><p>Ces rendus restent temporairement sur le serveur et sont également intégrés aux sauvegardes `.dars` automatiques.</p></div><span>{videoBackups.length} disponible{videoBackups.length > 1 ? "s" : ""}</span></header>
+            <div>{videoBackups.map((backup) => <article key={backup.job_id}><div><strong>{backup.title}</strong><small>{backup.project_title} · {formatBytes(backup.size_bytes)}</small></div><div className="video-backup-expiry"><span>Suppression prévue</span><strong>{new Intl.DateTimeFormat("fr", { dateStyle: "medium", timeStyle: "short" }).format(new Date(backup.expires_at))}</strong></div><span className={`video-backup-state ${backup.downloaded_at ? "downloaded" : "pending"}`}>{backup.downloaded_at ? "✓ Téléchargée" : "À télécharger"}</span><a className="button secondary compact" download href={api.artifactUrl(backup.job_id, "video")} onClick={() => markVideoDownloaded(backup)}>Télécharger</a></article>)}</div>
           </section>
         )}
 
