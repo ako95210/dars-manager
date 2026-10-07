@@ -485,7 +485,6 @@ function subtitleTimelineToSource(
 }
 
 function CourseEditor({ job }: { job: Job }) {
-  const [returningToCourse] = useState(() => window.sessionStorage.getItem(`dars-course-visited:${job.id}`) === "1");
   const [activeLab, setActiveLab] = useState<StudioLab>("audio-creation");
   const [analysis, setAnalysis] = useState<JobAnalysis | null>(null);
   const [subtitleDraft, setSubtitleDraft] = useState<JobAnalysis["subtitles"] | null>(null);
@@ -568,7 +567,6 @@ function CourseEditor({ job }: { job: Job }) {
     setSubtitleDirty(true);
   }
 
-  useEffect(() => { window.sessionStorage.setItem(`dars-course-visited:${job.id}`, "1"); }, [job.id]);
   useEffect(() => () => {
     if (reviewStopTimer.current !== null) window.clearTimeout(reviewStopTimer.current);
     if (subtitleReviewStopTimer.current !== null) window.clearTimeout(subtitleReviewStopTimer.current);
@@ -706,15 +704,20 @@ function CourseEditor({ job }: { job: Job }) {
   }, [analysis?.checksum_sha256, selectedAudio?.id, selectedVideoSubtitleTrackId]);
 
   useEffect(() => {
-    function checkRecovery() {
-      api.recoveryArchive(job.id).then((latest) => {
-        if (latest && (returningToCourse || latest.created_at < pageOpenedAt) && window.localStorage.getItem(`dars-archive-seen:${job.id}`) !== latest.id && window.sessionStorage.getItem(`dars-archive-deferred:${job.id}`) !== latest.id) setRecoveryArchive(latest);
-      }).catch(() => {});
-    }
-    checkRecovery();
-    const timer = window.setInterval(checkRecovery, 15000);
-    return () => window.clearInterval(timer);
-  }, [job.id, job.project_id, returningToCourse]);
+    let active = true;
+    api.recoveryArchive(job.id).then((latest) => {
+      if (
+        active
+        && latest
+        && latest.created_at < pageOpenedAt
+        && window.localStorage.getItem(`dars-archive-seen:${job.id}`) !== latest.id
+        && window.sessionStorage.getItem(`dars-archive-deferred:${job.id}`) !== latest.id
+      ) {
+        setRecoveryArchive(latest);
+      }
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [job.id]);
 
   useEffect(() => {
     if (!exportJob || terminalStates.has(exportJob.state)) return;
