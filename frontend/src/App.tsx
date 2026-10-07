@@ -945,21 +945,24 @@ function CourseEditor({ job }: { job: Job }) {
     setError("");
     try {
       const quote = await api.subtitleProofreadQuote(job.id, exportJob.id);
-      if (!automatic && !window.confirm(`Corriger ou traduire uniquement l’audio sélectionné avec ${quote.model} pour environ ${Number(quote.amount).toFixed(4)} ${quote.currency} ?`)) return;
-      if (automatic) setNotice(`Correction automatique recommandée lancée · coût estimé ${Number(quote.amount).toFixed(4)} ${quote.currency}.`);
+      const estimatedAmount = `${Number(quote.amount).toFixed(4)} ${quote.currency}`;
+      const confirmation = automatic
+        ? `La correction IA est recommandée pour obtenir des sous-titres fiables, notamment avec les expressions françaises et arabes.\n\nMontant estimé : ${estimatedAmount}\n\nAutoriser cette correction ?`
+        : `Corriger ou traduire uniquement l’audio sélectionné avec ${quote.model} ?\n\nMontant estimé : ${estimatedAmount}\n\nAutoriser cette correction ?`;
+      if (!window.confirm(confirmation)) {
+        if (automatic) setNotice("Correction IA non lancée : aucun coût n’a été engagé. Vous pourrez l’autoriser plus tard avec le bouton « Améliorer avec l’IA ».");
+        return;
+      }
+      setNotice(`Correction IA autorisée · montant estimé ${estimatedAmount}.`);
       setProofreadJob(await api.createSubtitleProofread(
         job.id,
         saved.analysis.checksum_sha256,
         exportJob.id,
         saved.trackId,
-        !automatic,
+        true,
       ));
     } catch (reason) {
-      if (automatic) {
-        setNotice("La correction automatique nécessite une confirmation. Utilisez « Améliorer avec l’IA » pour la lancer.");
-      } else {
-        setError(reason instanceof Error ? reason.message : "Correction impossible.");
-      }
+      setError(reason instanceof Error ? reason.message : "Correction impossible.");
     }
   }
 
