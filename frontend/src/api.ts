@@ -714,7 +714,7 @@ export const api = {
     includeSubtitles = false,
     audioExportJobId?: string,
     subtitleTrackId?: string,
-    subtitleStyle?: { font_size: number; color: string; background_color: string; position: "top" | "center" | "bottom" },
+    subtitleStyle?: { font: "sans" | "serif" | "mono"; font_size: number; color: string; background_color: string; position: "top" | "center" | "bottom" },
   ) => request<Job>(`/api/jobs/${jobId}/exports/video`, {
     method: "POST",
     body: JSON.stringify({
@@ -727,6 +727,7 @@ export const api = {
       include_subtitles: includeSubtitles,
       audio_export_job_id: audioExportJobId || null,
       subtitle_track_id: subtitleTrackId || null,
+      subtitle_font: subtitleStyle?.font || null,
       subtitle_font_size: subtitleStyle?.font_size || null,
       subtitle_color: subtitleStyle?.color || null,
       subtitle_background_color: subtitleStyle?.background_color || null,

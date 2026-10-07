@@ -493,11 +493,12 @@ function CourseEditor({ job }: { job: Job }) {
   const [selectedSubtitleTrackId, setSelectedSubtitleTrackId] = useState<string | null>(null);
   const [selectedVideoSubtitleTrackId, setSelectedVideoSubtitleTrackId] = useState("");
   const [videoSubtitleStyle, setVideoSubtitleStyle] = useState<{
+    font: "sans" | "serif" | "mono";
     font_size: number;
     color: string;
     background_color: string;
     position: "top" | "center" | "bottom";
-  }>({ font_size: 32, color: "#ffffff", background_color: "#101820", position: "bottom" });
+  }>({ font: "sans", font_size: 32, color: "#ffffff", background_color: "#101820", position: "bottom" });
   const [subtitleImportOffset, setSubtitleImportOffset] = useState("0");
   const [subtitleDirty, setSubtitleDirty] = useState(false);
   const [subtitleSaving, setSubtitleSaving] = useState(false);
@@ -691,6 +692,7 @@ function CourseEditor({ job }: { job: Job }) {
     );
     if (!track) return;
     setVideoSubtitleStyle({
+      font: track.font || "sans",
       font_size: track.font_size || 32,
       color: track.color || "#ffffff",
       background_color: track.background_color || "#101820",
@@ -880,7 +882,7 @@ function CourseEditor({ job }: { job: Job }) {
 
   useEffect(() => {
     if (!analysis || !selectedAudio || !subtitleDraft || !subtitleDirty || subtitleSaving || saving) return;
-    const timer = window.setTimeout(() => { void saveSubtitles(); }, 1200);
+    const timer = window.setTimeout(() => { void saveSubtitles(); }, 3000);
     return () => window.clearTimeout(timer);
   }, [
     analysis?.checksum_sha256,
@@ -1246,9 +1248,9 @@ function CourseEditor({ job }: { job: Job }) {
   const subtitlePreviewText = selectedVideoSubtitleTrack
     ? subtitleCuesForAudio(selectedVideoSubtitleTrack, subtitleRanges)[0]?.text || "Aperçu des sous-titres"
     : "Aperçu des sous-titres";
-  const subtitlePreviewFont = selectedVideoSubtitleTrack?.font === "serif"
+  const subtitlePreviewFont = videoSubtitleStyle.font === "serif"
     ? "Georgia, serif"
-    : selectedVideoSubtitleTrack?.font === "mono"
+    : videoSubtitleStyle.font === "mono"
       ? "ui-monospace, monospace"
       : "Arial, sans-serif";
   const videoSubtitleStyleValid = Number.isFinite(videoSubtitleStyle.font_size)
@@ -1402,7 +1404,7 @@ function CourseEditor({ job }: { job: Job }) {
 
           {activeLab === "subtitles" && subtitleDraft && (
             <section className="studio-lab-panel subtitle-lab" role="tabpanel">
-              <header className="editor-heading"><div><span className="eyebrow">Sous-titres · optionnels</span><h2>Préparer le texte affiché dans la vidéo</h2><p>La correction IA porte uniquement sur l’audio sélectionné. Les nouvelles expressions arabes fiables enrichissent automatiquement le glossaire du projet pour les traitements suivants.</p></div><div className="project-header-actions"><button className="button secondary compact" disabled={!selectedAudio || proofreadBusy || subtitleSaving} onClick={proofreadSubtitles}>{proofreadBusy ? "Correction en cours…" : "Corriger la sélection avec l’IA"}</button><button className="button primary compact" disabled={!subtitleDirty || subtitleSaving} onClick={() => void saveSubtitles()}>{subtitleSaving ? "Enregistrement…" : subtitleDirty ? "Enregistrer maintenant" : "Piste enregistrée"}</button></div></header>
+              <header className="editor-heading"><div><span className="eyebrow">Sous-titres · optionnels</span><h2>Préparer le texte affiché dans la vidéo</h2><p>La correction IA porte uniquement sur l’audio sélectionné. Les nouvelles expressions arabes fiables enrichissent automatiquement le glossaire du projet pour les traitements suivants.</p></div><div className="project-header-actions"><button className="button secondary compact" disabled={!selectedAudio || proofreadBusy || subtitleSaving} onClick={proofreadSubtitles}>{proofreadBusy ? "Correction en cours…" : "Corriger la sélection avec l’IA"}</button></div></header>
               <div className={`subtitle-save-status ${subtitleSaving ? "saving" : subtitleDirty ? "dirty" : "saved"}`} role="status"><span aria-hidden="true">{subtitleSaving ? "↻" : subtitleDirty ? "●" : "✓"}</span><div><strong>{subtitleSaving ? "Enregistrement sur le serveur…" : subtitleDirty ? "Modifications en attente" : "Toutes les modifications sont enregistrées"}</strong><small>{subtitleDirty ? "La sauvegarde automatique démarre après quelques secondes, ou utilisez « Enregistrer maintenant »." : "La piste est conservée dans ce projet et intégrée à la sauvegarde temporaire .dars."}</small></div></div>
               {proofreadJob && <p className="editor-feedback">{proofreadJob.error || proofreadJob.message}</p>}
               {selectedAudio && <div className="adjustment-source"><div><span>Audio sélectionné</span><strong>{selectedAudio.content?.title || "Extrait audio"}</strong><small>{scopedSubtitleCues.length} sous-titre{scopedSubtitleCues.length > 1 ? "s" : ""} · {formatDuration(selectedAudio.metrics.duration_seconds)}</small></div><audio controls preload="metadata" ref={subtitleAudioRef} src={api.artifactUrl(selectedAudio.id, "selection_audio")} /></div>}
@@ -1418,11 +1420,7 @@ function CourseEditor({ job }: { job: Job }) {
               <div className="subtitle-options">
                 <label className="subtitle-name">Nom de la piste<input maxLength={180} onChange={(event) => { setSubtitleTrackName(event.target.value); markSubtitleDirty(); }} placeholder="Ex. Français corrigé" value={subtitleTrackName} /></label>
                 <label>Langue<select onChange={(event) => { const language = event.target.value; const previousLabel = subtitleLanguageLabel(subtitleDraft.language); setSubtitleDraft({ ...subtitleDraft, language }); if (subtitleTrackName.startsWith(`${previousLabel} —`)) setSubtitleTrackName(`${subtitleLanguageLabel(language)}${subtitleTrackName.slice(previousLabel.length)}`.slice(0, 180)); markSubtitleDirty(); }} value={subtitleDraft.language}>{!subtitleLanguages.some(([code]) => code === subtitleDraft.language) && <option value={subtitleDraft.language}>{subtitleDraft.language.toUpperCase()}</option>}{subtitleLanguages.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select></label>
-                <label>Police<select onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, font: event.target.value as JobAnalysis["subtitles"]["font"] }); markSubtitleDirty(); }} value={subtitleDraft.font}><option value="sans">Sans serif</option><option value="serif">Serif</option><option value="mono">Monospace</option></select></label>
-                <label>Taille<input max={96} min={12} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, font_size: Number(event.target.value) }); markSubtitleDirty(); }} step={2} type="number" value={subtitleDraft.font_size} /></label>
-                <label>Couleur des caractères<input onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, color: event.target.value }); markSubtitleDirty(); }} type="color" value={subtitleDraft.color} /></label>
-                <label>Couleur du fond<input onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, background_color: event.target.value }); markSubtitleDirty(); }} type="color" value={subtitleDraft.background_color || "#101820"} /></label>
-                <label>Position de la barre<select onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, position: event.target.value as JobAnalysis["subtitles"]["position"] }); markSubtitleDirty(); }} value={subtitleDraft.position}><option value="top">En haut</option><option value="center">Au centre</option><option value="bottom">En bas</option></select></label>
+                <button className="button accent subtitle-save-button" disabled={!subtitleDirty || subtitleSaving} onClick={() => void saveSubtitles()} type="button">{subtitleSaving ? "Enregistrement…" : subtitleDirty ? "Sauvegarder la piste" : "Piste enregistrée"}</button>
               </div>
               <p className="subtitle-layout-note">Le texte est automatiquement ajusté sur deux lignes maximum. Toutes les pistes et leurs timecodes seront inclus dans la sauvegarde `.dars`.</p>
               <div className="subtitle-cues">{scopedSubtitleCues.map((cue) => <label className={cue.uncertain ? "uncertain" : ""} key={`${cue.sourceIndex}-${cue.start}`}><div className="subtitle-cue-time"><span>{formatDuration(cue.start)} → {formatDuration(cue.end)}</span><button aria-label={`Écouter le passage à ${formatDuration(cue.start)}`} onClick={() => playSubtitleCue(cue)} type="button">▶ Écouter</button></div><div><textarea rows={2} value={cue.text} onChange={(event) => { setSubtitleDraft({ ...subtitleDraft, cues: subtitleDraft.cues.map((item, position) => position === cue.sourceIndex ? { start: item.start, end: item.end, text: event.target.value } : item) }); markSubtitleDirty(); }} />{cue.uncertain && <small>À vérifier à l’écoute : {cue.uncertainty_reason || "passage incertain"}</small>}</div></label>)}</div>
@@ -1503,6 +1501,7 @@ function CourseEditor({ job }: { job: Job }) {
                 <section className="video-subtitle-editor">
                   <div className="video-subtitle-settings">
                     <div><span className="eyebrow">Aperçu avant rendu</span><h3>Placement des sous-titres</h3><p>Ces réglages s’appliquent uniquement à cette vidéo et ne modifient pas la piste sauvegardée.</p></div>
+                    <label>Police<select onChange={(event) => setVideoSubtitleStyle((current) => ({ ...current, font: event.target.value as JobAnalysis["subtitles"]["font"] }))} value={videoSubtitleStyle.font}><option value="sans">Sans serif</option><option value="serif">Serif</option><option value="mono">Monospace</option></select></label>
                     <label>Taille des caractères<input max={96} min={12} onChange={(event) => setVideoSubtitleStyle((current) => ({ ...current, font_size: Number(event.target.value) }))} step={2} type="number" value={videoSubtitleStyle.font_size} /></label>
                     <label>Couleur du texte<input onChange={(event) => setVideoSubtitleStyle((current) => ({ ...current, color: event.target.value }))} type="color" value={videoSubtitleStyle.color} /></label>
                     <label>Couleur du fond<input onChange={(event) => setVideoSubtitleStyle((current) => ({ ...current, background_color: event.target.value }))} type="color" value={videoSubtitleStyle.background_color} /></label>

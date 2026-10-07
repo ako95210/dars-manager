@@ -760,6 +760,7 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .subtitle-options label { display: grid; gap: .4rem; min-width: 130px; }
 .subtitle-options .subtitle-name { flex: 1 1 260px; }
 .subtitle-options input, .subtitle-options select, .subtitle-cues textarea { border: 1px solid #cbd5e1; border-radius: .6rem; padding: .65rem; background: #fff; color: #14233b; }
+.subtitle-save-button { align-self: end; min-height: 2.85rem; }
 .subtitle-track-library { margin: 1rem 0 1.25rem; padding: 1rem; border: 1px solid #dbe4ec; border-radius: .8rem; background: #f8fafc; }
 .subtitle-track-library > header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
 .subtitle-track-library h3 { margin: .2rem 0 0; font-size: 1rem; }

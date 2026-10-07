@@ -119,6 +119,7 @@ class VideoExportRequest(AudioExportRequest):
     include_subtitles: bool = False
     audio_export_job_id: str | None = Field(default=None, min_length=32, max_length=32)
     subtitle_track_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    subtitle_font: str | None = Field(default=None, pattern=r"^(sans|serif|mono)$")
     subtitle_font_size: int | None = Field(default=None, ge=12, le=96)
     subtitle_color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
     subtitle_background_color: str | None = Field(
@@ -1487,7 +1488,7 @@ def create_video_export(
             raise HTTPException(status_code=404, detail="Piste de sous-titres introuvable.")
         subtitle_payload = {
             "language": track.get("language") or source_job.language or "fr",
-            "font": track.get("font") or "sans",
+            "font": request.subtitle_font or track.get("font") or "sans",
             "font_size": request.subtitle_font_size or int(track.get("font_size", 32)),
             "color": request.subtitle_color or track.get("color") or "#ffffff",
             "background_color": (

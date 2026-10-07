@@ -1351,6 +1351,7 @@ class ApiTests(unittest.TestCase):
                     "include_subtitles": True,
                     "audio_export_job_id": export_id,
                     "subtitle_track_id": second_track_id,
+                    "subtitle_font": "mono",
                     "subtitle_font_size": 44,
                     "subtitle_color": "#00ffcc",
                     "subtitle_background_color": "#334155",
@@ -1371,7 +1372,7 @@ class ApiTests(unittest.TestCase):
 
             def fake_video(_cover, _audio, output, **kwargs) -> None:
                 self.assertEqual(kwargs["subtitles"]["language"], "ar")
-                self.assertEqual(kwargs["subtitles"]["font"], "serif")
+                self.assertEqual(kwargs["subtitles"]["font"], "mono")
                 self.assertEqual(kwargs["subtitles"]["font_size"], 44)
                 self.assertEqual(kwargs["subtitles"]["color"], "#00ffcc")
                 self.assertEqual(kwargs["subtitles"]["background_color"], "#334155")
