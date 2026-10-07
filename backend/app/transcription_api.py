@@ -13,6 +13,7 @@ from .costs import cost_control, money_string, quote_usage
 from .database import get_db
 from .models import User
 from .semantic_analysis import estimate_semantic_tokens
+from .transcription import estimated_transcription_billed_seconds
 
 
 router = APIRouter(prefix="/api/transcription", tags=["transcription"])
@@ -36,7 +37,11 @@ def quote_transcription(
     chaptering_mode = payload.chaptering_mode or (
         "ai" if settings.semantic_analysis_backend == "openai" else "local"
     )
-    quantity = math.ceil(payload.duration_seconds)
+    quantity = estimated_transcription_billed_seconds(
+        payload.duration_seconds,
+        settings.transcription_chunk_seconds,
+        settings.transcription_chunk_overlap_seconds,
+    )
     transcription_amount_nanos = 0
     transcription_unit_amount_nanos = 0
     if transcription_mode == "cloud":

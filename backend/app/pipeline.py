@@ -183,6 +183,7 @@ def run_pipeline(
     cpu_threads: int = 1,
     transcription_provider: TranscriptionProvider | None = None,
     transcription_chunk_seconds: int = 540,
+    transcription_chunk_overlap_seconds: float = 5.0,
     transcription_chunk_max_bytes: int = 24_000_000,
     on_transcription_usage: UsageCallback | None = None,
     semantic_analyzer: SemanticAnalyzer | None = None,
@@ -249,6 +250,7 @@ def run_pipeline(
                 transcription_provider,
                 language,
                 chunk_seconds=transcription_chunk_seconds,
+                overlap_seconds=transcription_chunk_overlap_seconds,
                 max_bytes=transcription_chunk_max_bytes,
                 progress=lambda message, fraction: report(
                     "transcription", message, 0.05 + 0.55 * fraction

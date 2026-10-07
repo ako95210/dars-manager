@@ -1443,6 +1443,7 @@ class Worker:
                 in {"cancelled", "cancelling"},
                 transcription_provider=provider,
                 transcription_chunk_seconds=settings.transcription_chunk_seconds,
+                transcription_chunk_overlap_seconds=settings.transcription_chunk_overlap_seconds,
                 transcription_chunk_max_bytes=settings.transcription_chunk_max_bytes,
                 on_transcription_usage=(
                     record_transcription if provider else None

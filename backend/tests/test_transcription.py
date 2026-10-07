@@ -9,6 +9,7 @@ from backend.app.transcription import (
     OpenAIWhisperProvider,
     ProviderTranscription,
     create_audio_chunks,
+    estimated_transcription_billed_seconds,
     transcribe_in_chunks,
 )
 from drsm_core import TranscriptSegment
@@ -46,13 +47,12 @@ class FakeTranscriptions:
             (),
             {
                 "duration": 2.0,
-                "text": "bonjour",
+                "text": "Bonjour le monde complet.",
                 "segments": [
-                    {"start": 0.25, "end": 1.5, "text": " bonjour "},
+                    {"start": 0.25, "end": 1.5, "text": " Bonjour le monde complet. "},
                 ],
                 "words": [
                     {"start": 0.25, "end": 0.7, "word": "Bonjour"},
-                    {"start": 0.8, "end": 1.5, "word": " le monde."},
                 ],
                 "_request_id": "req_openai_test",
             },
@@ -63,6 +63,20 @@ class FakeOpenAIClient:
     def __init__(self) -> None:
         self.audio = type("Audio", (), {})()
         self.audio.transcriptions = FakeTranscriptions()
+
+
+class BoundaryProvider:
+    provider = "fake"
+    model = "boundary-test"
+
+    def transcribe(self, path: Path, _language: str, *, prompt: str | None = None) -> ProviderTranscription:
+        index = int(path.stem.split("-")[-1])
+        segment = (
+            TranscriptSegment(0.9, 1.1, "phrase frontière")
+            if index == 1
+            else TranscriptSegment(0.1, 0.3, "phrase frontière")
+        )
+        return ProviderTranscription(segments=(segment,), duration_seconds=1.2)
 
 
 class TranscriptionTests(unittest.TestCase):
@@ -83,6 +97,36 @@ class TranscriptionTests(unittest.TestCase):
                 with wave.open(str(chunk.path), "rb") as encoded:
                     self.assertEqual(encoded.getnchannels(), 1)
                     self.assertEqual(encoded.getframerate(), 16_000)
+
+    def test_audio_chunks_include_context_around_fixed_boundaries(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.wav"
+            silent_wav(source, 2.2)
+            chunks = create_audio_chunks(
+                source,
+                root / "chunks",
+                chunk_seconds=1,
+                overlap_seconds=0.2,
+                max_bytes=1_000_000,
+            )
+
+            self.assertEqual(
+                [round(item.start_seconds, 1) for item in chunks],
+                [0.0, 0.8, 1.8],
+            )
+            self.assertEqual(
+                [round(item.end_seconds, 1) for item in chunks],
+                [1.2, 2.2, 2.2],
+            )
+            self.assertEqual(
+                [round(item.core_start_seconds, 1) for item in chunks],
+                [0.0, 1.0, 2.0],
+            )
+            self.assertEqual(
+                [round(item.core_end_seconds, 1) for item in chunks],
+                [1.0, 2.0, 2.2],
+            )
 
     def test_fragment_timestamps_and_usage_are_merged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -105,6 +149,30 @@ class TranscriptionTests(unittest.TestCase):
             ])
             self.assertFalse((root / "transcription-chunks").exists())
 
+    def test_overlap_keeps_boundary_phrase_exactly_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.wav"
+            silent_wav(source, 2)
+            segments = transcribe_in_chunks(
+                source,
+                root,
+                BoundaryProvider(),
+                "fr",
+                chunk_seconds=1,
+                overlap_seconds=0.2,
+                max_bytes=1_000_000,
+            )
+
+            self.assertEqual(len(segments), 1)
+            self.assertEqual(segments[0].text, "phrase frontière")
+            self.assertAlmostEqual(segments[0].start, 0.9)
+            self.assertAlmostEqual(segments[0].end, 1.1)
+
+    def test_billed_duration_includes_chunk_overlap(self) -> None:
+        self.assertEqual(estimated_transcription_billed_seconds(540, 540, 5), 540)
+        self.assertEqual(estimated_transcription_billed_seconds(541, 540, 5), 551)
+
     def test_openai_provider_builds_cues_from_word_timestamps(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.wav"
@@ -115,11 +183,11 @@ class TranscriptionTests(unittest.TestCase):
             self.assertEqual(result.request_id, "req_openai_test")
             self.assertEqual(
                 result.segments[0],
-                TranscriptSegment(0.25, 1.5, "Bonjour le monde."),
+                TranscriptSegment(0.25, 1.5, "Bonjour le monde complet."),
             )
             self.assertEqual(
                 client.audio.transcriptions.arguments["timestamp_granularities"],
-                ["word", "segment"],
+                ["segment"],
             )
             self.assertEqual(
                 client.audio.transcriptions.arguments["response_format"],

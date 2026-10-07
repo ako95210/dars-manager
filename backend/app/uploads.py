@@ -21,6 +21,7 @@ from .models import Asset, Project, User, utc_now
 from .runtime import job_queue, manager, media_storage
 from .semantic_analysis import estimate_semantic_tokens
 from .terminology import effective_glossary
+from .transcription import estimated_transcription_billed_seconds
 
 
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
@@ -289,7 +290,11 @@ def create_job_from_asset(
             provider="openai",
             service="transcription",
             model=settings.transcription_model,
-            quantity=math.ceil(payload.estimated_duration_seconds or 0),
+            quantity=estimated_transcription_billed_seconds(
+                payload.estimated_duration_seconds or 0,
+                settings.transcription_chunk_seconds,
+                settings.transcription_chunk_overlap_seconds,
+            ),
             unit="audio_second",
         )
         transcription_amount_nanos = transcription_quote.amount_nanos

@@ -42,6 +42,8 @@ class AudioChunk:
     path: Path
     start_seconds: float
     end_seconds: float
+    core_start_seconds: float
+    core_end_seconds: float
     duration_seconds: float
     checksum_sha256: str
 
@@ -59,6 +61,19 @@ class TranscriptionCall:
 
 
 UsageCallback = Callable[[TranscriptionCall], None]
+
+
+def estimated_transcription_billed_seconds(
+    duration_seconds: float,
+    chunk_seconds: int,
+    overlap_seconds: float,
+) -> int:
+    duration = max(0.0, float(duration_seconds))
+    if duration == 0:
+        return 0
+    chunks = max(1, math.ceil(duration / chunk_seconds))
+    overlap = max(0.0, min(float(overlap_seconds), chunk_seconds / 4))
+    return math.ceil(duration + 2 * overlap * max(0, chunks - 1))
 
 
 def _value(item: object, name: str, default: object = None) -> object:
@@ -157,7 +172,7 @@ class OpenAIWhisperProvider:
                 model=self.model,
                 language=language or None,
                 response_format="verbose_json",
-                timestamp_granularities=["word", "segment"],
+                timestamp_granularities=["segment"],
             )
             if prompt:
                 request["prompt"] = prompt
@@ -173,7 +188,10 @@ class OpenAIWhisperProvider:
             start = max(0.0, float(_value(raw, "start", 0.0) or 0.0))
             end = max(start, float(_value(raw, "end", start) or start))
             segments.append(TranscriptSegment(start, end, text))
-        if word_segments:
+        # Provider segments carry the complete transcript. Word timestamp lists
+        # can omit short words and contractions on difficult or multilingual
+        # recordings, so they are only a fallback when no segment was returned.
+        if not segments and word_segments:
             segments = list(word_segments)
         if not segments:
             text = str(_value(response, "text", "")).strip()
@@ -283,6 +301,7 @@ def create_audio_chunks(
     *,
     chunk_seconds: int,
     max_bytes: int,
+    overlap_seconds: float = 0.0,
 ) -> list[AudioChunk]:
     total = audio_duration(source_path)
     if total <= 0:
@@ -292,32 +311,37 @@ def create_audio_chunks(
         (start, min(start + chunk_seconds, total))
         for start in range(0, int(math.ceil(total)), chunk_seconds)
     ]
-    encoded: list[tuple[Path, float, float]] = []
+    overlap = max(0.0, min(float(overlap_seconds), chunk_seconds / 4))
+    encoded: list[tuple[Path, float, float, float, float]] = []
     sequence = 0
     while pending:
-        start, end = pending.pop(0)
+        core_start, core_end = pending.pop(0)
+        start = max(0.0, core_start - overlap)
+        end = min(total, core_end + overlap)
         sequence += 1
         path = output_dir / f"chunk-{sequence:04d}.wav"
         _encode_wav_range(source_path, path, start, end)
         if path.stat().st_size > max_bytes:
             path.unlink(missing_ok=True)
-            if end - start <= 30:
+            if core_end - core_start <= 30:
                 raise ValueError("Transcription fragment remains too large after compression")
-            middle = start + (end - start) / 2
-            pending[0:0] = [(start, middle), (middle, end)]
+            middle = core_start + (core_end - core_start) / 2
+            pending[0:0] = [(core_start, middle), (middle, core_end)]
             continue
-        encoded.append((path, start, end))
-    encoded.sort(key=lambda item: item[1])
+        encoded.append((path, start, end, core_start, core_end))
+    encoded.sort(key=lambda item: item[3])
     return [
         AudioChunk(
             index=index,
             path=path,
             start_seconds=start,
             end_seconds=end,
+            core_start_seconds=core_start,
+            core_end_seconds=core_end,
             duration_seconds=audio_duration(path),
             checksum_sha256=_sha256(path),
         )
-        for index, (path, start, end) in enumerate(encoded)
+        for index, (path, start, end, core_start, core_end) in enumerate(encoded)
     ]
 
 
@@ -329,6 +353,7 @@ def transcribe_in_chunks(
     *,
     chunk_seconds: int,
     max_bytes: int,
+    overlap_seconds: float = 0.0,
     progress: Callable[[str, float], None] | None = None,
     control_point: Callable[[], None] | None = None,
     on_usage: UsageCallback | None = None,
@@ -341,6 +366,7 @@ def transcribe_in_chunks(
             chunk_dir,
             chunk_seconds=chunk_seconds,
             max_bytes=max_bytes,
+            overlap_seconds=overlap_seconds,
         )
         merged: list[TranscriptSegment] = []
         for position, chunk in enumerate(chunks, start=1):
@@ -368,12 +394,26 @@ def transcribe_in_chunks(
                     )
                 )
             for segment in result.segments:
-                start = chunk.start_seconds + max(0.0, segment.start)
-                end = chunk.start_seconds + max(segment.start, segment.end)
+                start = min(
+                    chunk.start_seconds + max(0.0, segment.start),
+                    chunk.end_seconds,
+                )
+                end = min(
+                    chunk.start_seconds + max(segment.start, segment.end),
+                    chunk.end_seconds,
+                )
+                if end <= start:
+                    continue
+                midpoint = start + (end - start) / 2
+                if (
+                    midpoint < chunk.core_start_seconds
+                    or midpoint >= chunk.core_end_seconds
+                ):
+                    continue
                 merged.append(
                     TranscriptSegment(
-                        min(start, chunk.end_seconds),
-                        min(max(start, end), chunk.end_seconds),
+                        start,
+                        end,
                         segment.text,
                     )
                 )

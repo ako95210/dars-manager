@@ -58,6 +58,7 @@ class Settings:
     transcription_model: str
     local_whisper_model: str
     transcription_chunk_seconds: int
+    transcription_chunk_overlap_seconds: float
     transcription_chunk_max_bytes: int
     semantic_analysis_backend: str
     semantic_analysis_model: str
@@ -217,11 +218,15 @@ def load_settings() -> Settings:
         local_whisper_model=os.environ.get(
             "DARSM_LOCAL_WHISPER_MODEL", "base"
         ).strip(),
-        # Nine-minute mono/16 kHz WAV fragments stay comfortably small while
-        # keeping enough context for Whisper. Oversized fragments are split
-        # again after encoding.
+        # Nine-minute mono/16 kHz WAV fragments stay comfortably small. A short
+        # overlap preserves complete phrases around fixed chunk boundaries;
+        # oversized fragments are split again after encoding.
         transcription_chunk_seconds=max(
             30, int(os.environ.get("DARSM_TRANSCRIPTION_CHUNK_SECONDS", "540"))
+        ),
+        transcription_chunk_overlap_seconds=max(
+            0.0,
+            float(os.environ.get("DARSM_TRANSCRIPTION_CHUNK_OVERLAP_SECONDS", "5")),
         ),
         transcription_chunk_max_bytes=max(
             1_000_000,
