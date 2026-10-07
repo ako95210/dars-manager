@@ -116,7 +116,7 @@ class SemanticAnalysisTests(unittest.TestCase):
                         "output_text": json.dumps({
                             "items": [
                                 {"index": 0, "text": "Première phrase corrigée.", "uncertain": False, "uncertainty_reason": ""},
-                                {"index": 1, "text": "Deuxième phrase [inaudible].", "uncertain": True, "uncertainty_reason": "Mot manquant."},
+                                {"index": 1, "text": "Deuxième phrase [inaudible].", "uncertain": False, "uncertainty_reason": ""},
                             ],
                             "glossary_terms": ["ahl as-Sunna", "Sunna"],
                         }),
@@ -137,12 +137,44 @@ class SemanticAnalysisTests(unittest.TestCase):
         )
 
         self.assertEqual(result.texts[0], "Première phrase corrigée.")
+        self.assertEqual(result.texts[1], "Deuxieme phrase.")
         self.assertEqual(result.call.request_id, "req_proofread_test")
         self.assertEqual(result.uncertainties[0].index, 1)
         self.assertEqual(result.learned_glossary_terms, ("ahl as-Sunna",))
         self.assertIn("Ne traduis jamais", responses.arguments["instructions"])
+        self.assertIn("N'ajoute jamais [inaudible]", responses.arguments["instructions"])
         self.assertIn("Il, Lui, Celui, Son, Sa, Ses", responses.arguments["instructions"])
         self.assertIn("Sunna", responses.arguments["input"])
+
+    def test_transcript_proofreading_preserves_existing_inaudible_marker(self) -> None:
+        class ProofreadResponses:
+            @staticmethod
+            def create(**_kwargs):
+                return type(
+                    "Response",
+                    (),
+                    {
+                        "output_text": json.dumps({
+                            "items": [{
+                                "index": 0,
+                                "text": "Passage [inaudible].",
+                                "uncertain": True,
+                                "uncertainty_reason": "Marqueur présent dans la source.",
+                            }],
+                            "glossary_terms": [],
+                        }),
+                        "usage": type("Usage", (), {"input_tokens": 10, "output_tokens": 10})(),
+                        "_request_id": "req-existing-marker",
+                    },
+                )()
+
+        client = type("ProofreadClient", (), {"responses": ProofreadResponses()})()
+        result = OpenAISemanticAnalyzer(api_key="", client=client).proofread_transcript(
+            ["Passage [inaudible]."],
+            "fr",
+        )
+
+        self.assertEqual(result.texts, ("Passage [inaudible].",))
 
 
 if __name__ == "__main__":
