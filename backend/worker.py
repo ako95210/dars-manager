@@ -256,6 +256,11 @@ class Worker:
         try:
             if self.semantic_analyzer is None:
                 raise ValueError("Subtitle proofreader is unavailable")
+            self._save_progress(job, {
+                "stage": "subtitle_proofread_prepare",
+                "message": "Préparation de la correction",
+                "progress": 0.03,
+            })
             key = str(job.options.get("analysis_storage_key", ""))
             checksum = str(job.options.get("analysis_checksum", ""))
             analysis_path = job.workspace / "analysis.json"
@@ -306,6 +311,11 @@ class Worker:
                 for term in job.options.get("glossary_terms", [])
                 if str(term).strip()
             ]
+            self._save_progress(job, {
+                "stage": "subtitle_proofread",
+                "message": "Analyse contextuelle des sous-titres",
+                "progress": 0.1,
+            })
             for offset in range(0, len(selected_indices), 20):
                 self._wait_if_paused(job)
                 if self._control_state(job) in {"cancelled", "cancelling"}:
@@ -338,7 +348,14 @@ class Worker:
                     corrected_by_index.update(zip(chunk_indices, texts))
                     purpose = "subtitle_translation"
                 self._record_semantic_analysis_call(job, call, purpose)
-                self._save_progress(job, {"stage": "subtitle_proofread", "message": "Correction des sous-titres", "progress": min(0.9, (offset + len(chunk)) / len(selected_indices) * 0.9)})
+                self._save_progress(job, {
+                    "stage": "subtitle_proofread",
+                    "message": "Correction contextuelle des sous-titres",
+                    "progress": min(
+                        0.9,
+                        0.1 + (offset + len(chunk)) / len(selected_indices) * 0.8,
+                    ),
+                })
             corrected_cues = []
             for index, cue in enumerate(cues):
                 corrected = {
@@ -368,6 +385,11 @@ class Worker:
                             [*existing_terms, *learned_glossary_terms]
                         )
                         db.commit()
+            self._save_progress(job, {
+                "stage": "subtitle_proofread_finalize",
+                "message": "Finalisation des corrections",
+                "progress": 0.94,
+            })
             output_path = job.workspace / "subtitle-suggestions.json"
             output_path.write_text(
                 json.dumps(

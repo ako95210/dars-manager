@@ -799,6 +799,11 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .subtitle-save-status.dirty > span { background: #c38a16; }
 .subtitle-save-status.dirty strong { color: #805b12; }
 .subtitle-save-status.saving > span { animation: spin .8s linear infinite; }
+.subtitle-quality-note { display: flex; gap: .75rem; align-items: flex-start; margin: 1rem 0; padding: .85rem 1rem; border: 1px solid #cfe3dc; border-radius: .75rem; background: #f4fbf8; }
+.subtitle-quality-note > span { width: 1.7rem; height: 1.7rem; display: grid; flex: 0 0 auto; place-items: center; border-radius: 50%; color: #0f684f; background: #d9f5ea; font-weight: 800; }
+.subtitle-quality-note strong { color: #164d3d; font-size: .9rem; }
+.subtitle-quality-note p { margin: .15rem 0 0; color: #64748b; font-size: .8rem; line-height: 1.45; }
+.subtitle-proofread-progress { margin: 1rem 0; }
 .video-subtitle-choice { display: grid; gap: .65rem; min-width: min(100%, 290px); }
 .video-subtitle-select { display: grid; gap: .35rem; color: #52627a; font-size: .78rem; font-weight: 700; }
 .video-subtitle-select select { width: 100%; border: 1px solid #cbd5e1; border-radius: .6rem; padding: .6rem .7rem; background: #fff; color: #14233b; }
