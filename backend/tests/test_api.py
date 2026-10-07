@@ -1219,6 +1219,7 @@ class ApiTests(unittest.TestCase):
                     "font": "serif",
                     "color": "#fef3c7",
                     "background_color": "#312e81",
+                    "proofread_at": "2026-10-07T10:15:00+00:00",
                     "cues": [
                         {"start": 0.0, "end": 14.0, "text": "نسخة عربية أولى"},
                         {"start": 14.0, "end": 29.5, "text": "تكملة عربية"},
@@ -1228,6 +1229,10 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(second_track.status_code, 200, second_track.text)
             updated = second_track
             self.assertEqual(len(updated.json()["subtitle_tracks"]), 2)
+            self.assertEqual(
+                updated.json()["subtitle_tracks"][1]["proofread_at"],
+                "2026-10-07T10:15:00+00:00",
+            )
             self.assertEqual(
                 [track["name"] for track in updated.json()["subtitle_tracks"]],
                 ["Français corrigé", "Arabe relu"],

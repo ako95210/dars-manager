@@ -5,7 +5,7 @@ import json
 import logging
 import re
 import tempfile
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -81,6 +81,7 @@ class SubtitleUpdate(BaseModel):
     color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
     background_color: str = Field(default="#101820", pattern=r"^#[0-9a-fA-F]{6}$")
     position: str = Field(default="bottom", pattern=r"^(top|center|bottom)$")
+    proofread_at: datetime | None = None
     cues: list[SubtitleCue] = Field(min_length=1, max_length=10000)
 
     @field_validator("name", "language", mode="before")
@@ -488,6 +489,7 @@ def response_payload(
             "font_size": int(track.get("font_size", 32)),
             "background_color": track.get("background_color", "#101820"),
             "position": track.get("position", "bottom"),
+            "proofread_at": track.get("proofread_at"),
         }
         for track in (payload.get("subtitle_tracks") or [])
         if isinstance(track, dict)
@@ -564,6 +566,7 @@ def update_subtitles(
             "color": update.color,
             "background_color": update.background_color,
             "position": update.position,
+            "proofread_at": update.proofread_at.isoformat(timespec="seconds") if update.proofread_at else None,
             "cues": normalized_cues,
             "created_at": existing.get("created_at", now) if existing else now,
             "updated_at": now,

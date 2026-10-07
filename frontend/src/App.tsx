@@ -490,6 +490,8 @@ function CourseEditor({ job }: { job: Job }) {
   const [analysis, setAnalysis] = useState<JobAnalysis | null>(null);
   const [subtitleDraft, setSubtitleDraft] = useState<JobAnalysis["subtitles"] | null>(null);
   const [subtitleTrackName, setSubtitleTrackName] = useState("");
+  const [subtitleProofreadAt, setSubtitleProofreadAt] = useState<string | null>(null);
+  const [autoProofreadPending, setAutoProofreadPending] = useState(false);
   const [selectedSubtitleTrackId, setSelectedSubtitleTrackId] = useState<string | null>(null);
   const [selectedVideoSubtitleTrackId, setSelectedVideoSubtitleTrackId] = useState("");
   const [videoSubtitleStyle, setVideoSubtitleStyle] = useState<{
@@ -647,6 +649,7 @@ function CourseEditor({ job }: { job: Job }) {
       );
       setSelectedSubtitleTrackId(selected.id);
       setSubtitleTrackName(trackName);
+      setSubtitleProofreadAt(selected.proofread_at || null);
       setSubtitleDraft({
         language: selected.language,
         font: selected.font,
@@ -661,6 +664,8 @@ function CourseEditor({ job }: { job: Job }) {
       return;
     }
     setSelectedSubtitleTrackId(crypto.randomUUID().replaceAll("-", ""));
+    setSubtitleProofreadAt(null);
+    setAutoProofreadPending(true);
     setSubtitleTrackName(defaultSubtitleTrackName(
       analysis.subtitles.language,
       selectedAudio.content?.title,
@@ -785,6 +790,7 @@ function CourseEditor({ job }: { job: Job }) {
           setError("Le texte a changé depuis la correction. Enregistrez ou rechargez avant de relancer.");
         } else if (subtitleDraft && result.cues.length === subtitleDraft.cues.length) {
           setSubtitleDraft({ ...subtitleDraft, cues: result.cues });
+          setSubtitleProofreadAt(new Date().toISOString());
           markSubtitleDirty();
           const learned = result.learned_glossary_terms?.length || 0;
           setNotice(learned
@@ -799,6 +805,31 @@ function CourseEditor({ job }: { job: Job }) {
     const timer = window.setInterval(() => api.job(proofreadJob.id).then(setProofreadJob).catch(() => {}), 1500);
     return () => window.clearInterval(timer);
   }, [proofreadJob?.id, proofreadJob?.state, analysis?.checksum_sha256, subtitleDirty]);
+
+  useEffect(() => {
+    if (
+      !autoProofreadPending
+      || !analysis
+      || !selectedAudio
+      || !selectedSubtitleTrackId
+      || subtitleDirty
+      || subtitleSaving
+      || Boolean(proofreadJob && !terminalStates.has(proofreadJob.state))
+      || subtitleProofreadAt
+    ) return;
+    setAutoProofreadPending(false);
+    void proofreadSubtitles(true);
+  }, [
+    autoProofreadPending,
+    analysis?.checksum_sha256,
+    selectedAudio?.id,
+    selectedSubtitleTrackId,
+    subtitleDirty,
+    subtitleSaving,
+    proofreadJob?.id,
+    proofreadJob?.state,
+    subtitleProofreadAt,
+  ]);
 
   function changePart(index: number, field: keyof PartDraft, value: string) {
     setParts((current) => current.map((part, position) => (
@@ -861,6 +892,7 @@ function CourseEditor({ job }: { job: Job }) {
         selectedAudio.id,
         subtitleTrackName.trim(),
         subtitleDraft,
+        subtitleProofreadAt,
       );
       setAnalysis(updated);
       setSelectedSubtitleTrackId(trackId);
@@ -904,7 +936,7 @@ function CourseEditor({ job }: { job: Job }) {
     setActiveLab(next);
   }
 
-  async function proofreadSubtitles() {
+  async function proofreadSubtitles(automatic = false) {
     if (!analysis || !exportJob || exportJob.state !== "completed") return;
     const saved = subtitleDirty || !selectedSubtitleTrackId
       ? await saveSubtitles()
@@ -913,14 +945,22 @@ function CourseEditor({ job }: { job: Job }) {
     setError("");
     try {
       const quote = await api.subtitleProofreadQuote(job.id, exportJob.id);
-      if (!window.confirm(`Corriger ou traduire uniquement l’audio sélectionné avec ${quote.model} pour environ ${Number(quote.amount).toFixed(4)} ${quote.currency} ?`)) return;
+      if (!automatic && !window.confirm(`Corriger ou traduire uniquement l’audio sélectionné avec ${quote.model} pour environ ${Number(quote.amount).toFixed(4)} ${quote.currency} ?`)) return;
+      if (automatic) setNotice(`Correction automatique recommandée lancée · coût estimé ${Number(quote.amount).toFixed(4)} ${quote.currency}.`);
       setProofreadJob(await api.createSubtitleProofread(
         job.id,
         saved.analysis.checksum_sha256,
         exportJob.id,
         saved.trackId,
+        !automatic,
       ));
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Correction impossible."); }
+    } catch (reason) {
+      if (automatic) {
+        setNotice("La correction automatique nécessite une confirmation. Utilisez « Améliorer avec l’IA » pour la lancer.");
+      } else {
+        setError(reason instanceof Error ? reason.message : "Correction impossible.");
+      }
+    }
   }
 
   async function reanalyze() {
@@ -957,6 +997,8 @@ function CourseEditor({ job }: { job: Job }) {
     setExportJob(item);
     setSelectedParts(item.content?.part_indices || []);
     setSelectedSubtitleTrackId(null);
+    setSubtitleProofreadAt(null);
+    setAutoProofreadPending(false);
     setSubtitleDirty(false);
   }
 
@@ -972,6 +1014,7 @@ function CourseEditor({ job }: { job: Job }) {
     if (!track) return;
     setSelectedSubtitleTrackId(track.id);
     setSubtitleTrackName(track.name);
+    setSubtitleProofreadAt(track.proofread_at || null);
     setSubtitleDraft({
       language: track.language,
       font: track.font,
@@ -1006,6 +1049,8 @@ function CourseEditor({ job }: { job: Job }) {
         setSelectedSubtitleTrackId(null);
         setSubtitleDraft(null);
         setSubtitleTrackName("");
+        setSubtitleProofreadAt(null);
+        setAutoProofreadPending(false);
         setSubtitleDirty(false);
       }
       if (selectedVideoSubtitleTrackId === trackId) setSelectedVideoSubtitleTrackId("");
@@ -1029,6 +1074,8 @@ function CourseEditor({ job }: { job: Job }) {
       (track) => track.audio_export_job_id === selectedAudio.id,
     ).length;
     setSelectedSubtitleTrackId(crypto.randomUUID().replaceAll("-", ""));
+    setSubtitleProofreadAt(null);
+    setAutoProofreadPending(false);
     setSubtitleTrackName(defaultSubtitleTrackName(
       currentAnalysis.subtitles.language,
       selectedAudio.content?.title,
@@ -1084,6 +1131,8 @@ function CourseEditor({ job }: { job: Job }) {
       }
       const base = subtitleDraft || currentAnalysis.subtitles;
       setSelectedSubtitleTrackId(crypto.randomUUID().replaceAll("-", ""));
+      setSubtitleProofreadAt(null);
+      setAutoProofreadPending(false);
       setSubtitleTrackName(file.name.replace(/\.(srt|vtt|txt)$/i, "") || "Sous-titres importés");
       setSubtitleDraft({ ...base, cues });
       markSubtitleDirty();
@@ -1405,14 +1454,14 @@ function CourseEditor({ job }: { job: Job }) {
 
           {activeLab === "subtitles" && subtitleDraft && (
             <section className="studio-lab-panel subtitle-lab" role="tabpanel">
-              <header className="editor-heading"><div><span className="eyebrow">Sous-titres · optionnels</span><h2>Préparer le texte affiché dans la vidéo</h2><p>La correction IA porte uniquement sur l’audio sélectionné. Les nouvelles expressions arabes fiables enrichissent automatiquement le glossaire du projet pour les traitements suivants.</p></div><div className="project-header-actions"><button className="button accent compact" disabled={!selectedAudio || proofreadBusy || subtitleSaving} onClick={proofreadSubtitles}>{proofreadBusy ? "Correction en cours…" : "Améliorer avec l’IA · recommandé"}</button></div></header>
+              <header className="editor-heading"><div><span className="eyebrow">Sous-titres · optionnels</span><h2>Préparer le texte affiché dans la vidéo</h2><p>La correction IA porte uniquement sur l’audio sélectionné. Les nouvelles expressions arabes fiables enrichissent automatiquement le glossaire du projet pour les traitements suivants.</p></div><div className="project-header-actions"><button className="button accent compact" disabled={!selectedAudio || proofreadBusy || subtitleSaving} onClick={() => void proofreadSubtitles(false)}>{proofreadBusy ? "Correction en cours…" : "Améliorer avec l’IA · recommandé"}</button></div></header>
               <div className="subtitle-quality-note"><span aria-hidden="true">✦</span><div><strong>Correction IA recommandée</strong><p>Elle améliore la grammaire et les expressions arabes de cet extrait uniquement. Le coût estimé reste affiché avant confirmation.</p></div></div>
               <div className={`subtitle-save-status ${subtitleSaving ? "saving" : subtitleDirty ? "dirty" : "saved"}`} role="status"><span aria-hidden="true">{subtitleSaving ? "↻" : subtitleDirty ? "●" : "✓"}</span><div><strong>{subtitleSaving ? "Enregistrement sur le serveur…" : subtitleDirty ? "Modifications en attente" : "Toutes les modifications sont enregistrées"}</strong><small>{subtitleDirty ? "La sauvegarde automatique démarre après quelques secondes, ou utilisez « Sauvegarder la piste »." : "La piste est conservée dans ce projet et intégrée à la sauvegarde temporaire .dars."}</small></div></div>
               {proofreadJob && <div className={`export-status subtitle-proofread-progress ${proofreadJob.state}`} role="status"><div><span className={`job-state ${proofreadJob.state}`}>{proofreadJob.state}</span><strong>Correction IA des sous-titres</strong><small>{proofreadJob.error || proofreadJob.message}</small></div>{proofreadBusy && <div className="export-progress"><strong>{proofreadProgress}%</strong><div className="progress-track"><span style={{ width: `${proofreadProgress}%` }} /></div></div>}</div>}
               {selectedAudio && <div className="adjustment-source"><div><span>Audio sélectionné</span><strong>{selectedAudio.content?.title || "Extrait audio"}</strong><small>{scopedSubtitleCues.length} sous-titre{scopedSubtitleCues.length > 1 ? "s" : ""} · {formatDuration(selectedAudio.metrics.duration_seconds)}</small></div><audio controls preload="metadata" ref={subtitleAudioRef} src={api.artifactUrl(selectedAudio.id, "selection_audio")} /></div>}
               <section className="subtitle-track-library">
                 <header><div><span className="eyebrow">Pistes sauvegardées</span><h3>Versions disponibles pour cet audio</h3></div><button className="button secondary compact" disabled={proofreadBusy || subtitleSaving} onClick={() => void createSubtitleTrack()} type="button">＋ Nouvelle piste</button></header>
-                {subtitleTracks.length ? <div>{subtitleTracks.map((track) => <article className={selectedSubtitleTrackId === track.id ? "active" : ""} key={track.id}><button className="subtitle-track-select" disabled={proofreadBusy || subtitleSaving} onClick={() => void selectSubtitleTrack(track.id)} type="button"><strong>{track.name}</strong><small>{track.language.toUpperCase()} · {track.cues.length} sous-titre{track.cues.length > 1 ? "s" : ""}</small></button><button aria-label={`Supprimer la piste ${track.name}`} className="subtitle-track-delete" disabled={proofreadBusy || subtitleSaving} onClick={() => void deleteSubtitleTrack(track.id)} title="Supprimer cette piste" type="button">×</button></article>)}</div> : <p>La première piste est en cours d’enregistrement automatique.</p>}
+                {subtitleTracks.length ? <div>{subtitleTracks.map((track) => <article className={selectedSubtitleTrackId === track.id ? "active" : ""} key={track.id}><button className="subtitle-track-select" disabled={proofreadBusy || subtitleSaving} onClick={() => void selectSubtitleTrack(track.id)} type="button"><strong>{track.name}</strong><small>{track.language.toUpperCase()} · {track.cues.length} sous-titre{track.cues.length > 1 ? "s" : ""}{track.proofread_at ? " · ✓ corrigée par IA" : ""}</small></button><button aria-label={`Supprimer la piste ${track.name}`} className="subtitle-track-delete" disabled={proofreadBusy || subtitleSaving} onClick={() => void deleteSubtitleTrack(track.id)} title="Supprimer cette piste" type="button">×</button></article>)}</div> : <p>La première piste est en cours d’enregistrement automatique.</p>}
               </section>
               <section className="subtitle-import-panel">
                 <div><span className="eyebrow">Sous-titres existants</span><h3>Importer un fichier TXT, SRT ou VTT</h3><p>Un TXT est automatiquement découpé et horodaté depuis la transcription de l’audio. Les timecodes d’un SRT/VTT sont conservés. Utilisez ensuite le décalage pour affiner la synchronisation.</p></div>

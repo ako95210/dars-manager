@@ -188,6 +188,7 @@ export type SubtitleTrack = {
   color: string;
   background_color: string;
   position: "top" | "center" | "bottom";
+  proofread_at: string | null;
   cues: AnalysisSegment[];
   created_at: string;
   updated_at: string;
@@ -586,6 +587,7 @@ export const api = {
     audioExportJobId: string,
     name: string,
     subtitles: JobAnalysis["subtitles"],
+    proofreadAt: string | null,
   ) =>
     request<JobAnalysis>(`/api/jobs/${jobId}/analysis/subtitles`, {
       method: "PUT",
@@ -594,6 +596,7 @@ export const api = {
         track_id: trackId,
         audio_export_job_id: audioExportJobId,
         name,
+        proofread_at: proofreadAt,
         ...subtitles,
       }),
     }),
@@ -602,7 +605,7 @@ export const api = {
       method: "DELETE",
     }),
   subtitleProofreadQuote: (jobId: string, audioExportJobId: string) => request<{ model: string; amount: string; currency: string }>(`/api/jobs/${jobId}/analysis/subtitles/proofread-quote?audio_export_job_id=${encodeURIComponent(audioExportJobId)}`),
-  createSubtitleProofread: (jobId: string, checksumSha256: string, audioExportJobId: string, subtitleTrackId: string) => request<Job>(`/api/jobs/${jobId}/analysis/subtitles/proofread`, { method: "POST", body: JSON.stringify({ checksum_sha256: checksumSha256, audio_export_job_id: audioExportJobId, subtitle_track_id: subtitleTrackId, cost_confirmed: true }) }),
+  createSubtitleProofread: (jobId: string, checksumSha256: string, audioExportJobId: string, subtitleTrackId: string, costConfirmed: boolean) => request<Job>(`/api/jobs/${jobId}/analysis/subtitles/proofread`, { method: "POST", body: JSON.stringify({ checksum_sha256: checksumSha256, audio_export_job_id: audioExportJobId, subtitle_track_id: subtitleTrackId, cost_confirmed: costConfirmed }) }),
   subtitleSuggestions: (jobId: string, childId: string) => request<{ analysis_checksum: string; cues: AnalysisSegment[]; learned_glossary_terms: string[] }>(`/api/jobs/${jobId}/analysis/subtitles/proofread/${childId}`),
   semanticReanalysisQuote: (jobId: string) =>
     request<SemanticReanalysisQuote>(`/api/jobs/${jobId}/analysis/reanalysis-quote`),
