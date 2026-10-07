@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import hashlib
-import math
 from pathlib import Path
 from typing import Any, Literal
 
@@ -280,21 +279,23 @@ def create_job_from_asset(
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     cost_decision = None
+    transcription_billed_seconds = 0
     transcription_amount_nanos = 0
     analysis_input_tokens = 0
     analysis_output_tokens = 0
     analysis_amount_nanos = 0
     if transcription_mode == "cloud":
+        transcription_billed_seconds = estimated_transcription_billed_seconds(
+            payload.estimated_duration_seconds or 0,
+            settings.transcription_chunk_seconds,
+            settings.transcription_chunk_overlap_seconds,
+        )
         transcription_quote = quote_usage(
             db,
             provider="openai",
             service="transcription",
             model=settings.transcription_model,
-            quantity=estimated_transcription_billed_seconds(
-                payload.estimated_duration_seconds or 0,
-                settings.transcription_chunk_seconds,
-                settings.transcription_chunk_overlap_seconds,
-            ),
+            quantity=transcription_billed_seconds,
             unit="audio_second",
         )
         transcription_amount_nanos = transcription_quote.amount_nanos
@@ -365,7 +366,7 @@ def create_job_from_asset(
                     provider="openai",
                     service="transcription",
                     model=settings.transcription_model,
-                    quantity=math.ceil(payload.estimated_duration_seconds or 0),
+                    quantity=transcription_billed_seconds,
                     unit="audio_second",
                     status="estimated",
                     idempotency_key=f"transcription:{job.id}:estimate",

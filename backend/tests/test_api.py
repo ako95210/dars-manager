@@ -641,7 +641,7 @@ class ApiTests(unittest.TestCase):
             project_cost = next(
                 item for item in summary.json()["projects"] if item["project_id"] == project_id
             )
-            self.assertEqual(project_cost["estimated_cost"], "0.060960")
+            self.assertEqual(project_cost["estimated_cost"], "0.061960")
             self.assertEqual(project_cost["operations"], 3)
 
             with SessionLocal() as db:

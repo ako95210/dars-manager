@@ -213,6 +213,8 @@ class Worker:
                     "chunk_count": call.chunk_count,
                     "checksum_sha256": call.checksum_sha256,
                     "checkpoint_reused": call.reused,
+                    "provider_request_ids": list(call.request_ids),
+                    "automatic_retry_count": call.retry_count,
                 },
             )
             reconcile_job_estimates(db, job.id, "transcription")

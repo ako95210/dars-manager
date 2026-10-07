@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import math
 import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
@@ -20,6 +21,9 @@ class ProviderTranscription:
     segments: tuple[TranscriptSegment, ...]
     duration_seconds: float
     request_id: str | None = None
+    request_ids: tuple[str, ...] = ()
+    billed_duration_seconds: float | None = None
+    retry_count: int = 0
     reused: bool = False
 
 
@@ -57,6 +61,8 @@ class TranscriptionCall:
     duration_seconds: float
     checksum_sha256: str
     request_id: str | None
+    request_ids: tuple[str, ...]
+    retry_count: int
     reused: bool
 
 
@@ -137,6 +143,63 @@ def _subtitle_segments_from_words(words: object) -> tuple[TranscriptSegment, ...
     return tuple(cues)
 
 
+def _segments_from_response(
+    response: object,
+    duration: float,
+) -> list[TranscriptSegment]:
+    segments: list[TranscriptSegment] = []
+    for raw in _value(response, "segments", ()) or ():
+        text = str(_value(raw, "text", "")).strip()
+        if not text:
+            continue
+        start = max(0.0, float(_value(raw, "start", 0.0) or 0.0))
+        end = min(duration, max(start, float(_value(raw, "end", start) or start)))
+        if end > start:
+            segments.append(TranscriptSegment(start, end, text))
+    if segments:
+        return segments
+    word_segments = _subtitle_segments_from_words(_value(response, "words", ()) or ())
+    if word_segments:
+        return list(word_segments)
+    text = str(_value(response, "text", "")).strip()
+    return [TranscriptSegment(0.0, duration, text)] if text else []
+
+
+def _repeat_key(text: str) -> str:
+    return " ".join(
+        text.casefold().strip(" \t\n.,;:!?…،؛؟'\"“”«»()[]{}").split()
+    )
+
+
+def _repetition_windows(
+    segments: list[TranscriptSegment],
+    *,
+    limit: int = 3,
+) -> list[tuple[float, float]]:
+    """Detect obvious ASR loops made of identical consecutive segments."""
+    windows: list[tuple[float, float]] = []
+    index = 0
+    while index < len(segments):
+        key = _repeat_key(segments[index].text)
+        end = index + 1
+        while end < len(segments) and key and _repeat_key(segments[end].text) == key:
+            end += 1
+        repetitions = end - index
+        word_count = len(key.split())
+        if repetitions >= 3 and (word_count >= 2 or repetitions >= 5):
+            windows.append((segments[index].start, segments[end - 1].end))
+            if len(windows) >= limit:
+                break
+        index = end
+    return windows
+
+
+def _transcript_quality(segments: list[TranscriptSegment]) -> tuple[int, int, int]:
+    keys = [_repeat_key(segment.text) for segment in segments if _repeat_key(segment.text)]
+    words = [word for key in keys for word in key.split()]
+    return len(set(keys)), len(set(words)), len(words)
+
+
 class OpenAIWhisperProvider:
     provider = "openai"
 
@@ -159,13 +222,12 @@ class OpenAIWhisperProvider:
             client = OpenAI(api_key=api_key, timeout=timeout_seconds, max_retries=0)
         self.client = client
 
-    def transcribe(
+    def _request(
         self,
         path: Path,
         language: str,
-        *,
-        prompt: str | None = None,
-    ) -> ProviderTranscription:
+        prompt: str | None,
+    ) -> object:
         with path.open("rb") as audio:
             request = dict(
                 file=audio,
@@ -176,31 +238,70 @@ class OpenAIWhisperProvider:
             )
             if prompt:
                 request["prompt"] = prompt
-            response = self.client.audio.transcriptions.create(**request)
+            return self.client.audio.transcriptions.create(**request)
+
+    def transcribe(
+        self,
+        path: Path,
+        language: str,
+        *,
+        prompt: str | None = None,
+    ) -> ProviderTranscription:
+        response = self._request(path, language, prompt)
         duration = float(_value(response, "duration", 0.0) or audio_duration(path))
-        word_segments = _subtitle_segments_from_words(_value(response, "words", ()) or ())
-        raw_segments = _value(response, "segments", ()) or ()
-        segments: list[TranscriptSegment] = []
-        for raw in raw_segments:
-            text = str(_value(raw, "text", "")).strip()
-            if not text:
+        segments = _segments_from_response(response, duration)
+        request_ids = [str(_value(response, "_request_id", "") or "")]
+        billed_duration = duration
+        retry_count = 0
+        for window_index, (loop_start, loop_end) in enumerate(
+            _repetition_windows(segments),
+            start=1,
+        ):
+            repair_start = max(0.0, loop_start - 2.0)
+            repair_end = min(duration, loop_end + 2.0)
+            if repair_end <= repair_start:
                 continue
-            start = max(0.0, float(_value(raw, "start", 0.0) or 0.0))
-            end = max(start, float(_value(raw, "end", start) or start))
-            segments.append(TranscriptSegment(start, end, text))
-        # Provider segments carry the complete transcript. Word timestamp lists
-        # can omit short words and contractions on difficult or multilingual
-        # recordings, so they are only a fallback when no segment was returned.
-        if not segments and word_segments:
-            segments = list(word_segments)
-        if not segments:
-            text = str(_value(response, "text", "")).strip()
-            if text:
-                segments.append(TranscriptSegment(0.0, duration, text))
+            with tempfile.TemporaryDirectory(dir=path.parent) as temporary:
+                repair_path = Path(temporary) / f"loop-retry-{window_index}.wav"
+                _encode_wav_range(path, repair_path, repair_start, repair_end)
+                retry_response = self._request(repair_path, language, prompt)
+                retry_duration = audio_duration(repair_path)
+            retry_count += 1
+            billed_duration += retry_duration
+            request_ids.append(str(_value(retry_response, "_request_id", "") or ""))
+            retry_segments = [
+                TranscriptSegment(
+                    repair_start + segment.start,
+                    min(duration, repair_start + segment.end),
+                    segment.text,
+                )
+                for segment in _segments_from_response(retry_response, retry_duration)
+            ]
+            original_window = [
+                segment
+                for segment in segments
+                if repair_start <= segment.start + (segment.end - segment.start) / 2 < repair_end
+            ]
+            if (
+                retry_segments
+                and not _repetition_windows(retry_segments, limit=1)
+                and _transcript_quality(retry_segments) > _transcript_quality(original_window)
+            ):
+                segments = [
+                    segment
+                    for segment in segments
+                    if not repair_start <= segment.start + (segment.end - segment.start) / 2 < repair_end
+                ]
+                segments.extend(retry_segments)
+                segments.sort(key=lambda item: (item.start, item.end))
+        request_ids = [request_id for request_id in request_ids if request_id]
         return ProviderTranscription(
             segments=tuple(segments),
             duration_seconds=duration,
-            request_id=str(_value(response, "_request_id", "") or "") or None,
+            request_id=request_ids[0] if request_ids else None,
+            request_ids=tuple(request_ids),
+            billed_duration_seconds=billed_duration,
+            retry_count=retry_count,
         )
 
 
@@ -387,9 +488,15 @@ def transcribe_in_chunks(
                         model=provider.model,
                         chunk_index=chunk.index,
                         chunk_count=len(chunks),
-                        duration_seconds=chunk.duration_seconds,
+                        duration_seconds=(
+                            result.billed_duration_seconds
+                            if result.billed_duration_seconds is not None
+                            else chunk.duration_seconds
+                        ),
                         checksum_sha256=chunk.checksum_sha256,
                         request_id=result.request_id,
+                        request_ids=result.request_ids,
+                        retry_count=result.retry_count,
                         reused=result.reused,
                     )
                 )

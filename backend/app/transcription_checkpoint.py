@@ -81,6 +81,12 @@ class CheckpointingTranscriptionProvider:
                 ),
                 duration_seconds=float(payload["duration_seconds"]),
                 request_id=payload.get("request_id"),
+                request_ids=tuple(payload.get("request_ids") or ()),
+                billed_duration_seconds=float(
+                    payload.get("billed_duration_seconds")
+                    or payload["duration_seconds"]
+                ),
+                retry_count=int(payload.get("retry_count", 0)),
                 reused=True,
             )
         except Exception:
@@ -117,7 +123,10 @@ class CheckpointingTranscriptionProvider:
             "provider": self.provider,
             "model": self.model,
             "request_id": result.request_id,
+            "request_ids": list(result.request_ids),
             "duration_seconds": result.duration_seconds,
+            "billed_duration_seconds": result.billed_duration_seconds,
+            "retry_count": result.retry_count,
             "segments": [asdict(segment) for segment in result.segments],
         }
         checkpoint.write_text(

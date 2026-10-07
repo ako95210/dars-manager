@@ -65,6 +65,41 @@ class FakeOpenAIClient:
         self.audio.transcriptions = FakeTranscriptions()
 
 
+class LoopRetryTranscriptions:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def create(self, **_kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            duration = 20.0
+            segments = [
+                {"start": 0.0, "end": 4.0, "text": "Introduction normale."},
+                {"start": 5.0, "end": 8.0, "text": "à l'éducation"},
+                {"start": 8.0, "end": 11.0, "text": "à l'éducation"},
+                {"start": 11.0, "end": 14.0, "text": "à l'éducation"},
+                {"start": 15.0, "end": 19.0, "text": "Conclusion normale."},
+            ]
+        else:
+            duration = 13.0
+            segments = [
+                {"start": 0.0, "end": 4.0, "text": "Contexte repris."},
+                {"start": 4.0, "end": 8.0, "text": "Cours sur le mariage."},
+                {"start": 8.0, "end": 13.0, "text": "Cours sur la croyance authentique."},
+            ]
+        return type(
+            "Response",
+            (),
+            {
+                "duration": duration,
+                "text": " ".join(item["text"] for item in segments),
+                "segments": segments,
+                "words": [],
+                "_request_id": f"req-loop-{self.calls}",
+            },
+        )()
+
+
 class BoundaryProvider:
     provider = "fake"
     model = "boundary-test"
@@ -194,6 +229,35 @@ class TranscriptionTests(unittest.TestCase):
                 "verbose_json",
             )
             self.assertEqual(client.audio.transcriptions.arguments["prompt"], "Sunna, hadith")
+
+    def test_openai_provider_retries_an_obvious_repetition_loop(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.wav"
+            silent_wav(source, 20)
+            transcriptions = LoopRetryTranscriptions()
+            client = type(
+                "LoopRetryClient",
+                (),
+                {"audio": type("Audio", (), {"transcriptions": transcriptions})()},
+            )()
+
+            result = OpenAIWhisperProvider(api_key="", client=client).transcribe(
+                source,
+                "fr",
+            )
+
+            self.assertEqual(transcriptions.calls, 2)
+            self.assertEqual(result.retry_count, 1)
+            self.assertEqual(result.request_ids, ("req-loop-1", "req-loop-2"))
+            self.assertAlmostEqual(result.billed_duration_seconds or 0, 33.0, places=1)
+            self.assertNotIn(
+                "à l'éducation",
+                " ".join(segment.text for segment in result.segments),
+            )
+            self.assertIn(
+                "Cours sur le mariage.",
+                " ".join(segment.text for segment in result.segments),
+            )
 
 
 if __name__ == "__main__":
