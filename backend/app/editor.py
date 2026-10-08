@@ -132,13 +132,23 @@ class VideoExportRequest(AudioExportRequest):
     image_job_id: str | None = Field(default=None, min_length=32, max_length=32)
     output_format: str = Field(pattern=r"^(16:9|1:1|9:16)$")
     title: str = Field(default="", max_length=300)
+    description: str = Field(default="", max_length=5_000)
     speaker: str = Field(default="", max_length=180)
     date: str = Field(default="", max_length=80)
     episode: str = Field(default="", max_length=80)
 
-    @field_validator("title", "speaker", "date", "episode", mode="before")
+    @field_validator("title", "description", "speaker", "date", "episode", mode="before")
     @classmethod
     def strip_values(cls, value: str) -> str:
+        return value.strip()
+
+
+class VideoMetadataUpdate(BaseModel):
+    description: str = Field(default="", max_length=5_000)
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def strip_description(cls, value: str) -> str:
         return value.strip()
 
 
@@ -275,6 +285,24 @@ def mark_video_backup_downloaded(
     job.updated_at = utc_now().timestamp()
     manager.state_store.save(job.record())
     return {"downloaded_at": downloaded_at}
+
+
+@router.put("/videos/{video_job_id}/metadata")
+def update_video_metadata(
+    video_job_id: str,
+    update: VideoMetadataUpdate,
+    user: User = Depends(require_client),
+) -> dict[str, Any]:
+    job = owned_completed_job(user.id, video_job_id)
+    if job.tool != "video_render":
+        raise HTTPException(status_code=422, detail="Ce contenu n'est pas une vidéo.")
+    values = job.options.get("values", {})
+    values = dict(values) if isinstance(values, dict) else {}
+    values["description"] = update.description
+    job.options["values"] = values
+    job.updated_at = utc_now().timestamp()
+    manager.state_store.save(job.record())
+    return job.public()
 
 
 @router.get("/{job_id}/exports/recovery")
@@ -1436,6 +1464,11 @@ def create_video_export(
     validate_export_ranges(source_job, analysis_payload, ranges)
     values = {
         "title": request.title or " · ".join(str(part.get("title", "")) for part in selected),
+        "description": request.description or "\n\n".join(
+            str(part.get("description", "")).strip()
+            for part in selected
+            if str(part.get("description", "")).strip()
+        ),
         "speaker": request.speaker,
         "date": request.date,
         "episode": request.episode,

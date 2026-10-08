@@ -532,6 +532,8 @@ function CourseEditor({ job }: { job: Job }) {
   const [generatingImage, setGeneratingImage] = useState(false);
   const [videoFormat, setVideoFormat] = useState<"16:9" | "1:1" | "9:16">("16:9");
   const [videoValues, setVideoValues] = useState({ title: "", speaker: "", date: "", episode: "" });
+  const [videoDescription, setVideoDescription] = useState("");
+  const [savingVideoDescription, setSavingVideoDescription] = useState(false);
   const [renderingVideo, setRenderingVideo] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const selectedAudio = exportJob?.state === "completed" ? exportJob : null;
@@ -756,6 +758,16 @@ function CourseEditor({ job }: { job: Job }) {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [videoJob?.id, videoJob?.state]);
+
+  useEffect(() => {
+    if (!videoJob) return;
+    const suggested = parts
+      .filter((part) => videoJob.content?.part_indices.includes(part.index))
+      .map((part) => part.description.trim())
+      .filter(Boolean)
+      .join("\n\n");
+    setVideoDescription(videoJob.content?.description || suggested);
+  }, [videoJob?.id]);
 
   useEffect(() => {
     if (!archiveJob || terminalStates.has(archiveJob.state)) return;
@@ -1205,6 +1217,23 @@ function CourseEditor({ job }: { job: Job }) {
     }
   }
 
+  async function saveVideoDescription() {
+    if (!videoJob || videoJob.state !== "completed") return;
+    setSavingVideoDescription(true);
+    setError("");
+    setNotice("");
+    try {
+      const updated = await api.updateVideoMetadata(videoJob.id, videoDescription);
+      setVideoJob(updated);
+      setVideoDescription(updated.content?.description || "");
+      setNotice("La description de la vidéo est enregistrée pour sa diffusion.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Enregistrement de la description impossible.");
+    } finally {
+      setSavingVideoDescription(false);
+    }
+  }
+
   async function createImage() {
     if (!selectedTemplate) return;
     const title = videoValues.title.trim() || exportJob?.content?.title || analysis?.parts[0]?.title || "Cours audio";
@@ -1582,7 +1611,7 @@ function CourseEditor({ job }: { job: Job }) {
           {activeLab === "distribution" && videoReady && videoJob && (
             <section className="studio-lab-panel distribution-lab" role="tabpanel">
               <header className="editor-heading"><div><span className="eyebrow">Diffusion</span><h2>Publier ou récupérer le contenu final</h2><p>Téléchargez la vidéo immédiatement. Les connexions YouTube et Telegram seront configurées ici.</p></div></header>
-              <section className="final-content-card"><video controls preload="metadata" src={api.artifactUrl(videoJob.id, "video")} /><div><span>Contenu prêt</span><h3>{videoJob.content?.title || "Vidéo du cours"}</h3><p>Conservez le fichier ou préparez sa publication sur un canal connecté.</p><div>{videoJob.artifacts.includes("video") && <a className="button accent" download href={api.artifactUrl(videoJob.id, "video")} onClick={() => void api.markVideoBackupDownloaded(videoJob.id)}>Télécharger la vidéo</a>}{videoJob.artifacts.includes("cover") && <a className="button secondary" download href={api.artifactUrl(videoJob.id, "cover")}>Télécharger l’image</a>}</div></div></section>
+              <section className="final-content-card"><video controls preload="metadata" src={api.artifactUrl(videoJob.id, "video")} /><div><span>Contenu prêt</span><h3>{videoJob.content?.title || "Vidéo du cours"}</h3><label className="video-description-field">Description de la vidéo<textarea maxLength={5000} onChange={(event) => setVideoDescription(event.target.value)} placeholder="Présentez le contenu du cours pour YouTube, Telegram ou un autre canal." rows={6} value={videoDescription} /></label><small className="video-description-status">{videoDescription === (videoJob.content?.description || "") ? "Description enregistrée" : "Modifications non enregistrées"}</small><div><button className="button primary" disabled={savingVideoDescription || videoDescription === (videoJob.content?.description || "")} onClick={() => void saveVideoDescription()} type="button">{savingVideoDescription ? "Enregistrement…" : "Enregistrer la description"}</button>{videoJob.artifacts.includes("video") && <a className="button accent" download href={api.artifactUrl(videoJob.id, "video")} onClick={() => void api.markVideoBackupDownloaded(videoJob.id)}>Télécharger la vidéo</a>}{videoJob.artifacts.includes("cover") && <a className="button secondary" download href={api.artifactUrl(videoJob.id, "cover")}>Télécharger l’image</a>}</div></div></section>
               <div className="distribution-connectors">
                 <article><span className="connector-mark youtube">▶</span><div><strong>YouTube</strong><p>Connecter une chaîne, choisir la visibilité et publier la vidéo.</p></div><button className="button secondary" disabled>À configurer</button></article>
                 <article><span className="connector-mark telegram">➤</span><div><strong>Telegram</strong><p>Connecter un bot administrateur et publier dans une chaîne.</p></div><button className="button secondary" disabled>À configurer</button></article>

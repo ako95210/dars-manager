@@ -40,6 +40,7 @@ export type Job = {
   parent_job_id?: string | null;
   content?: {
     title: string;
+    description?: string;
     part_indices: number[];
     ranges?: [number, number][];
     template_id?: string | null;
@@ -756,6 +757,11 @@ export const api = {
   markVideoBackupDownloaded: (jobId: string) =>
     request<{ downloaded_at: string }>(`/api/jobs/video-backups/${jobId}/downloaded`, {
       method: "POST",
+    }),
+  updateVideoMetadata: (jobId: string, description: string) =>
+    request<Job>(`/api/jobs/videos/${jobId}/metadata`, {
+      method: "PUT",
+      body: JSON.stringify({ description }),
     }),
   importArchive: async (
     projectId: string,

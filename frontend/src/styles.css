@@ -342,6 +342,9 @@ select:focus { border-color: #50b99a; box-shadow: 0 0 0 4px rgba(48, 212, 154, .
 .final-content-card > div > span { color: #178160; font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .final-content-card h3 { margin: 7px 0 5px; font-size: 18px; }
 .final-content-card p { color: var(--muted); font-size: 11px; }
+.video-description-field { display: grid; gap: 6px; margin-top: 14px; color: #596579; font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.video-description-field textarea { min-height: 120px; padding: 11px 12px; resize: vertical; color: var(--ink); font: inherit; font-size: 11px; font-weight: 500; line-height: 1.55; text-transform: none; }
+.video-description-status { display: block; margin-top: 6px; color: var(--muted); font-size: 9px; }
 .final-content-card > div > div { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .final-content-card a { margin: 0; text-decoration: none; }
 .distribution-connectors { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 14px; }

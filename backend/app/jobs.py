@@ -65,6 +65,9 @@ class Job:
                 "title": (
                     values.get("title", "") if isinstance(values, dict) else ""
                 ) or "Vidéo du cours",
+                "description": (
+                    values.get("description", "") if isinstance(values, dict) else ""
+                ),
                 "part_indices": list(self.options.get("part_indices", [])),
             }
         elif self.tool == "image_generation":

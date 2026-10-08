@@ -1367,7 +1367,11 @@ class ApiTests(unittest.TestCase):
             video_job_id = video_requested.json()["id"]
             self.assertEqual(
                 video_requested.json()["content"],
-                {"title": "Titre du rendu", "part_indices": [1]},
+                {
+                    "title": "Titre du rendu",
+                    "description": "Résumé corrigé",
+                    "part_indices": [1],
+                },
             )
 
             def fake_cover(_source, output, **kwargs) -> None:
@@ -1398,6 +1402,19 @@ class ApiTests(unittest.TestCase):
             self.assertIsNotNone(rendered)
             self.assertEqual(rendered.state, "completed")
             self.assertEqual(rendered.metrics["template_version"], 2)
+            metadata = client.put(
+                f"/api/jobs/videos/{video_job_id}/metadata",
+                json={"description": "Description prête pour la diffusion."},
+            )
+            self.assertEqual(metadata.status_code, 200, metadata.text)
+            self.assertEqual(
+                metadata.json()["content"]["description"],
+                "Description prête pour la diffusion.",
+            )
+            self.assertEqual(
+                manager.get(user_id, video_job_id).options["values"]["description"],
+                "Description prête pour la diffusion.",
+            )
             rendered_video = client.get(f"/api/jobs/{video_job_id}/artifacts/video")
             self.assertEqual(rendered_video.status_code, 200, rendered_video.text)
             self.assertEqual(rendered_video.content, b"rendered-video")
