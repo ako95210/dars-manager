@@ -121,6 +121,49 @@ class SubtitleTests(unittest.TestCase):
             self.assertLessEqual(caption.count("\n"), 1)
             self.assertLessEqual(bounds[2] - bounds[0], round(FORMAT_SIZES["16:9"][0] * 0.84))
 
+    def test_adjacent_short_cues_are_grouped_for_a_slower_reading_rhythm(self) -> None:
+        source = {
+            "font": "sans",
+            "font_size": 32,
+            "cues": [
+                {"start": 0.0, "end": 2.0, "text": "Première idée du rappel"},
+                {"start": 2.1, "end": 4.0, "text": "qui se poursuit naturellement"},
+                {"start": 4.1, "end": 6.0, "text": "sur une deuxième ligne"},
+                {"start": 8.0, "end": 10.0, "text": "Après une vraie pause"},
+            ],
+        }
+
+        prepared = prepare_subtitles(source, FORMAT_SIZES["16:9"])
+
+        self.assertIsNotNone(prepared)
+        self.assertEqual(len(prepared["cues"]), 2)
+        self.assertEqual(prepared["cues"][0], {
+            "start": 0.0,
+            "end": 6.0,
+            "text": (
+                "Première idée du rappel qui se poursuit naturellement "
+                "sur une deuxième ligne"
+            ),
+        })
+        self.assertEqual(prepared["cues"][1]["text"], "Après une vraie pause")
+
+    def test_grouped_subtitle_never_exceeds_six_seconds_or_eighteen_words(self) -> None:
+        cues = [
+            {"start": index * 2.0, "end": index * 2.0 + 2.0, "text": f"bloc court numéro {index}"}
+            for index in range(5)
+        ]
+
+        prepared = prepare_subtitles(
+            {"font": "sans", "font_size": 32, "cues": cues},
+            FORMAT_SIZES["16:9"],
+        )
+
+        self.assertIsNotNone(prepared)
+        self.assertGreater(len(prepared["cues"]), 1)
+        for cue in prepared["cues"]:
+            self.assertLessEqual(cue["end"] - cue["start"], 6.0)
+            self.assertLessEqual(len(cue["text"].split()), 18)
+
     def test_proofreader_preserves_number_and_order(self) -> None:
         class Client:
             responses = SimpleNamespace(create=lambda **_kwargs: SimpleNamespace(

@@ -19,6 +19,9 @@ FORMAT_SIZES = {
     "9:16": (720, 1280),
 }
 SUBTITLE_FRAME_RATE = 10
+MAX_SUBTITLE_SCREEN_SECONDS = 6.0
+MAX_SUBTITLE_SCREEN_WORDS = 18
+MAX_SUBTITLE_CUE_GAP_SECONDS = 0.45
 
 
 def font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -195,12 +198,31 @@ def prepare_subtitles(
             chunks.append(current)
         return chunks or [text]
 
-    cues: list[dict[str, Any]] = []
+    source_cues: list[dict[str, Any]] = []
     for cue in subtitles.get("cues", []):
         start, end = float(cue["start"]), float(cue["end"])
         text = " ".join(str(cue.get("text", "")).split())
         if end <= start or not text:
             continue
+        if source_cues:
+            previous = source_cues[-1]
+            gap = start - float(previous["end"])
+            combined = f"{previous['text']} {text}".strip()
+            combined_duration = end - float(previous["start"])
+            if (
+                -0.05 <= gap <= MAX_SUBTITLE_CUE_GAP_SECONDS
+                and combined_duration <= MAX_SUBTITLE_SCREEN_SECONDS
+                and len(combined.split()) <= MAX_SUBTITLE_SCREEN_WORDS
+                and fits(combined)
+            ):
+                previous["end"] = end
+                previous["text"] = combined
+                continue
+        source_cues.append({"start": start, "end": end, "text": text})
+
+    cues: list[dict[str, Any]] = []
+    for cue in source_cues:
+        start, end, text = float(cue["start"]), float(cue["end"]), str(cue["text"])
         chunks = split_text(text)
         total_weight = sum(max(1, len(chunk)) for chunk in chunks)
         cursor = start
